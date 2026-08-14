@@ -1,6 +1,12 @@
 /**
- * Thinking frame: streaming display, collapsed by default to the LAST TWO
- * lines (the TUI parity rule) with a one-tap expand to the full text.
+ * Thinking frame: streaming display, collapsed by default to the tail of the
+ * text (the TUI parity rule) with a one-tap expand to the full text.
+ *
+ * The collapsed box is PINNED to exactly two visual lines (min-height +
+ * line-clamp, both against leading-4): a logical "line" of the tail slice
+ * wraps to up to 4–5 rows on narrow screens, so a content-sized box grows
+ * 0→5 rows while streaming and makes the whole timeline jitter — worst on
+ * phones. With a fixed height the clip changes, the layout never does.
  *
  * Why two lines and not zero: a fully-collapsed thinking block hides the
  * signal users actually want mid-turn (what the model is reasoning about
@@ -21,6 +27,8 @@ export function ThinkingFrame({ text, streaming = false }: { text: string; strea
   const [expanded, setExpanded] = useState(false);
   const body = expanded ? text : thinkingTailLines(text);
   const canExpand = body !== text;
+  const bodyClass =
+    'mt-1 font-mono text-[11px] leading-4 whitespace-pre-wrap text-neutral-500' + (expanded ? '' : ' line-clamp-2 min-h-8');
   return (
     <div className="mb-2 max-w-full rounded border border-dashed border-neutral-700/70 px-3 py-1.5 sm:max-w-[92%]">
       <button
@@ -31,7 +39,7 @@ export function ThinkingFrame({ text, streaming = false }: { text: string; strea
       >
         thinking{streaming ? ' …' : ''}{expanded ? ' ▾' : canExpand ? ' ▸' : ''}
       </button>
-      <div className="mt-1 font-mono text-[11px] whitespace-pre-wrap text-neutral-500">
+      <div className={bodyClass}>
         {body}
         {streaming ? (
           <span className="stream-caret ml-0.5 inline-block h-3 w-[5px] translate-y-0.5 bg-neutral-500" />
