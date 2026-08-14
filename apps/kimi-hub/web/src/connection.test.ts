@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 import {
   extractTokenFromLocation,
   persistTokenChoice,
+  probeAuthlessHub,
   readTokenChoice,
   resetTokenChoice,
   resolveHubOrigin,
@@ -98,5 +99,31 @@ describe('token choice persistence (the "" authless sentinel)', () => {
     // requires a token and loop the failing connect forever.
     resetTokenChoice(storage);
     expect(readTokenChoice(storage)).toBeNull();
+  });
+});
+
+describe('probeAuthlessHub', () => {
+  const fakeResponse = (status: number): Response => ({ status }) as Response;
+
+  it('returns true when the hub answers the bare probe with 200 (authless)', async () => {
+    const seen: string[] = [];
+    const fetchImpl: typeof fetch = async (input) => {
+      if (typeof input === 'string') seen.push(input);
+      return fakeResponse(200);
+    };
+    await expect(probeAuthlessHub('http://hub:58630', fetchImpl)).resolves.toBe(true);
+    expect(seen).toEqual(['http://hub:58630/hub/api/agents']);
+  });
+
+  it('returns false when the hub gates with 401', async () => {
+    const fetchImpl: typeof fetch = async () => fakeResponse(401);
+    await expect(probeAuthlessHub('http://hub:58630', fetchImpl)).resolves.toBe(false);
+  });
+
+  it('returns false on network failure instead of throwing', async () => {
+    const fetchImpl: typeof fetch = async () => {
+      throw new Error('connection refused');
+    };
+    await expect(probeAuthlessHub('http://hub:58630', fetchImpl)).resolves.toBe(false);
   });
 });

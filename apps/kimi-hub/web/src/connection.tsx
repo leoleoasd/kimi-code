@@ -16,7 +16,9 @@
  *      credential" and every transport omits the `Authorization` header /
  *      `kimi-hub.bearer.*` subprotocol for it (never `Bearer ` empty). The
  *      sentinel must never collapse into "absent": `null` (nothing stored) is
- *      the only value that shows the token-entry form.
+ *      the only value that shows the token-entry form. A hub page load with no
+ *      stored token is probed once via `probeAuthlessHub`: an authless hub
+ *      answers bare, so the sentinel is applied WITHOUT surfacing the form.
  *
  * Everything the app talks to sits on the hub origin: `GET /hub/api/agents`
  * for the roster, and `${hubOrigin}/agents/{agentId}` as the base URL for the
@@ -24,7 +26,15 @@
  * to an agent. `disconnect` clears the stored token and lands back here.
  */
 
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react';
 
 export const TOKEN_STORAGE_KEY = 'kimi-hub.token';
 export const ORIGIN_STORAGE_KEY = 'kimi-hub.origin';
@@ -63,6 +73,22 @@ function readStoredOrigin(): string {
     return localStorage.getItem(ORIGIN_STORAGE_KEY) ?? '';
   } catch {
     return '';
+  }
+}
+
+/**
+ * Bypass probe: an authless hub (`--dangerous-bypass-auth`) answers
+ * `GET /hub/api/agents` with 200 even without credentials, a token-gated hub
+ * with 401. One bare probe on load lets the UI skip the token-entry form
+ * when the hub doesn't require a token. `fetchImpl` keeps it unit-testable.
+ */
+export async function probeAuthlessHub(hubOrigin: string, fetchImpl: typeof fetch = fetch): Promise<boolean> {
+  try {
+    const res = await fetchImpl(`${hubOrigin}/hub/api/agents`);
+    return res.status === 200;
+  } catch {
+    // Unreachable / proxy-gated / TLS failure — fall back to the form.
+    return false;
   }
 }
 
@@ -148,6 +174,9 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     }
   });
   const [originError, setOriginError] = useState<string | null>(null);
+  // With no stored/URL token, the hub's auth posture is unknown: probe it
+  // once before deciding whether the token-entry form ever renders.
+  const [probeDone, setProbeDone] = useState(() => token !== null);
 
   /** Shared tail of both connect paths: validate the origin, persist, apply. */
   const applyConnection = useCallback((nextToken: string, nextOrigin: string) => {
@@ -169,6 +198,21 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     setHubOrigin(resolved);
     setToken(nextToken);
   }, []);
+
+  useEffect(() => {
+    if (probeDone) {
+      return;
+    }
+    let cancelled = false;
+    void probeAuthlessHub(hubOrigin).then((authless) => {
+      if (cancelled) return;
+      if (authless) applyConnection('', readStoredOrigin());
+      setProbeDone(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [probeDone, hubOrigin, applyConnection]);
 
   const connect = useCallback(
     (nextToken: string, nextOrigin: string) => {
@@ -202,8 +246,12 @@ export function ConnectionProvider({ children }: { children: ReactNode }) {
     <ConnectionContext.Provider value={value}>
       {value !== null ? (
         children
-      ) : (
+      ) : probeDone ? (
         <ConnectScreen onConnect={connect} onAuthless={continueAuthless} error={originError} />
+      ) : (
+        <div className="flex h-screen items-center justify-center text-xs text-neutral-600">
+          connecting…
+        </div>
       )}
     </ConnectionContext.Provider>
   );
