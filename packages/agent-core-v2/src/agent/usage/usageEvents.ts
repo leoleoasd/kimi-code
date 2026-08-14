@@ -1,6 +1,8 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
 import { Event2 } from '#/app/event/event2';
 
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
+
 import type { UsageStatus } from './usage';
 
 export interface AgentStatusUpdatedPayload {
@@ -12,6 +14,7 @@ export interface AgentStatusUpdatedPayload {
   thinkingEffort?: string;
   maxContextTokens?: number;
   contextTokens?: number;
+  permission?: PermissionMode;
 }
 
 export class AgentStatusUpdated extends Event2<AgentStatusUpdatedPayload> {

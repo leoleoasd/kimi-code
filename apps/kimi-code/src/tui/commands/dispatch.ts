@@ -48,6 +48,7 @@ import { handleAddDirCommand } from './add-dir';
 import { parseSlashInput } from './parse';
 import { handlePluginsCommand } from './plugins';
 import { handleProviderCommand } from './provider';
+import { handleRemoteCommand, registerRemoteSlashRunner } from './remote';
 import {
   findBuiltInSlashCommand,
   resolveSlashCommandAvailability,
@@ -98,6 +99,7 @@ export {
 export { handleSwarmCommand } from './swarm';
 export { handleFeedbackCommand, showMcpServers, showStatusReport, showUsage } from './info';
 export { handlePluginsCommand } from './plugins';
+export { handleRemoteCommand } from './remote';
 export { handleReloadCommand, handleReloadTuiCommand } from './reload';
 export { handleGoalCommand } from './goal';
 export {
@@ -298,6 +300,19 @@ function dispatchInlineSkillCombo(host: SlashCommandHost, text: string): boolean
   return true;
 }
 
+/**
+ * Awaitable slash-only twin of `dispatchInput` for the remote command bridge
+ * (`remote-bridge.ts`): the HTTP result should carry the lines a command
+ * produced, so the caller awaits the handler instead of fire-and-forgetting.
+ */
+export async function runSlashCommand(host: SlashCommandHost, input: string): Promise<void> {
+  await executeSlashCommand(host, input);
+}
+
+// Hand the bridge the awaited runner (see `registerRemoteSlashRunner` in
+// `remote.ts` for why this goes through a slot instead of an import edge).
+registerRemoteSlashRunner(runSlashCommand);
+
 async function executeSlashCommand(host: SlashCommandHost, input: string): Promise<void> {
   const parsedCommand = parseSlashInput(input);
   const intent = resolveSlashCommandInput({
@@ -424,6 +439,7 @@ const SESSION_REQUIRING_COMMANDS: ReadonlySet<BuiltinSlashCommandName> = new Set
   'goal',
   'init',
   'plan',
+  'remote',
   'swarm',
   'undo',
   'web',
@@ -605,6 +621,9 @@ async function handleBuiltInSlashCommand(
       return;
     case 'web':
       await handleWebCommand(host);
+      return;
+    case 'remote':
+      await handleRemoteCommand(host, args);
       return;
     default:
       host.showError(`Unknown slash command: /${String(name)}`);

@@ -24,9 +24,12 @@ import type { Event2 } from '@moonshot-ai/agent-core-v2';
  *   edge), `context.spliced`, `task.notified`, `plan.revision`, and the
  *   `permission.approval.*` pair (v1 surfaces approvals through the
  *   `requestApproval` callback, never as events).
- * - `prompt.*`: the v2 prompt service publishes them on the agent bus, but in
- *   v1 they are synthesized by the daemon services layer onto the global
- *   `IEventService` — the in-process SDK client never sees them.
+ * - `prompt.submitted`: nobody publishes it on the v2 agent bus (v1's daemon
+ *   services layer synthesizes it onto the global `IEventService` — the
+ *   in-process SDK client never saw it). The remaining prompt lifecycle
+ *   (`prompt.queued` / `prompt.completed` / `prompt.aborted` /
+ *   `prompt.steered`) DOES cross: clients that render the engine-side prompt
+ *   FIFO (e.g. the TUI queue strip) depend on it.
  */
 const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'agent.activity.updated',
@@ -36,9 +39,6 @@ const DROPPED_DOMAIN_EVENT_TYPES: ReadonlySet<string> = new Set([
   'permission.approval.requested',
   'permission.approval.resolved',
   'prompt.submitted',
-  'prompt.completed',
-  'prompt.aborted',
-  'prompt.steered',
 ]);
 
 /**

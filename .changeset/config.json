@@ -10,7 +10,11 @@
     "@moonshot-ai/vis",
     "@moonshot-ai/vis-server",
     "@moonshot-ai/vis-web",
-    "@moonshot-ai/kimi-inspect"
+    "@moonshot-ai/kimi-inspect",
+    "@moonshot-ai/kimi-hub",
+    "@moonshot-ai/kimi-hub-server",
+    "@moonshot-ai/kimi-hub-web",
+    "@moonshot-ai/remote-tunnel"
   ],
   "snapshot": {
     "useCalculatedVersion": true,

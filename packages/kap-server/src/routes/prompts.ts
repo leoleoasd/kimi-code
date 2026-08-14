@@ -2,6 +2,7 @@ import { join } from 'node:path';
 
 import {
   IBootstrapService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
@@ -34,6 +35,7 @@ import {
   type ISessionScopeHandle,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
+import { newMessageId } from '@moonshot-ai/agent-core-v2/agent/contextMemory/messageId';
 import { ErrorCode } from '../protocol/error-codes';
 import { projectPromptContentParts } from '../services/messages/messageProjection';
 import {
@@ -115,6 +117,7 @@ async function resolvePromptFromSession(session: ISessionScopeHandle, agentId?: 
     profile: agent.accessor.get(IAgentProfileService),
     toolPolicy: agent.accessor.get(IAgentToolPolicyService),
     permissionMode: agent.accessor.get(IAgentPermissionModeService),
+    goal: agent.accessor.get(IAgentGoalService),
   };
 }
 
@@ -202,6 +205,13 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
         [ErrorCode.SESSION_NOT_FOUND]: {},
         [ErrorCode.PROMPT_ID_CONFLICT]: {},
         [ErrorCode.PROMPT_ALREADY_COMPLETED]: { dataSchema: z.object({ aborted: z.literal(false) }) },
+        [ErrorCode.GOAL_ALREADY_EXISTS]: {},
+        [ErrorCode.GOAL_NOT_FOUND]: {},
+        [ErrorCode.GOAL_STATUS_INVALID]: {},
+        [ErrorCode.GOAL_NOT_RESUMABLE]: {},
+        [ErrorCode.GOAL_OBJECTIVE_EMPTY]: {},
+        [ErrorCode.GOAL_OBJECTIVE_TOO_LONG]: {},
+        [ErrorCode.GOAL_UNSUPPORTED_AGENT]: {},
       },
       description: 'Submit a prompt to a session',
       tags: ['prompts'],
@@ -279,6 +289,55 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             }
             throw error;
           }
+        }
+        // Goal fields dispatch before the prompt is minted, so an objective's
+        // first turn is adopted by the goal it creates. Ordering and inputs
+        // mirror `applySessionAgentConfig` (objective before control, `resume`
+        // asks to continue); the engine's own validation and lifecycle
+        // conflicts (empty/oversized objective, existing goal, missing goal,
+        // unsupported agent) propagate to `sendMappedError` unchanged.
+        if (req.body.goal_objective !== undefined && req.body.goal_control === 'cancel') {
+          throw new Error2(
+            ErrorCodes.REQUEST_INVALID,
+            "goal_objective conflicts with goal_control 'cancel': the objective starts a new goal while 'cancel' discards the current one; send them in separate submissions",
+          );
+        }
+        if (req.body.goal_objective !== undefined) {
+          await resolved.goal.createGoal({ objective: req.body.goal_objective });
+        }
+        if (req.body.goal_control !== undefined) {
+          switch (req.body.goal_control) {
+            case 'pause':
+              await resolved.goal.pauseGoal({});
+              break;
+            case 'resume':
+              await resolved.goal.resumeGoal({ continueIfPaused: true, continueIfBlocked: true });
+              break;
+            case 'cancel':
+              await resolved.goal.cancelGoal({});
+              break;
+          }
+        }
+        if (req.body.goal_objective === undefined && req.body.goal_control !== undefined) {
+          // A control-only submission acts on the goal itself: pause/resume/
+          // cancel launch no turn for the placeholder `content` (it is never a
+          // user message), so no prompt is minted and the queue is untouched.
+          // Reply with a receipt in the PromptSubmitResult shape whose
+          // `status: 'blocked'` says exactly that — never a fake 'running'.
+          const receiptId = newMessageId();
+          reply.send(
+            okEnvelope(
+              {
+                prompt_id: receiptId,
+                user_message_id: receiptId,
+                status: 'blocked',
+                content: req.body.content,
+                created_at: new Date().toISOString(),
+              },
+              req.id,
+            ),
+          );
+          return;
         }
         const parts = contentToCoreParts(resolvedContent);
         if (req.body.skills !== undefined) {
@@ -538,6 +597,31 @@ function sendMappedError(
         return;
       case 'skill.type_unsupported':
         reply.send(errEnvelope(ErrorCode.SKILL_NOT_ACTIVATABLE, err.message, requestId, err.stack));
+        return;
+      case 'goal.already_exists':
+        reply.send(errEnvelope(ErrorCode.GOAL_ALREADY_EXISTS, err.message, requestId, err.stack));
+        return;
+      case 'goal.not_found':
+        reply.send(errEnvelope(ErrorCode.GOAL_NOT_FOUND, err.message, requestId, err.stack));
+        return;
+      case 'goal.status_invalid':
+        reply.send(errEnvelope(ErrorCode.GOAL_STATUS_INVALID, err.message, requestId, err.stack));
+        return;
+      case 'goal.not_resumable':
+        reply.send(errEnvelope(ErrorCode.GOAL_NOT_RESUMABLE, err.message, requestId, err.stack));
+        return;
+      case 'goal.objective_empty':
+        reply.send(errEnvelope(ErrorCode.GOAL_OBJECTIVE_EMPTY, err.message, requestId, err.stack));
+        return;
+      case 'goal.objective_too_long':
+        reply.send(
+          errEnvelope(ErrorCode.GOAL_OBJECTIVE_TOO_LONG, err.message, requestId, err.stack),
+        );
+        return;
+      case 'goal.unsupported_agent':
+        reply.send(
+          errEnvelope(ErrorCode.GOAL_UNSUPPORTED_AGENT, err.message, requestId, err.stack),
+        );
         return;
       case 'auth.provisioning_required':
         reply.send({

@@ -1,0 +1,39 @@
+{
+  "name": "@moonshot-ai/remote-tunnel",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Reverse WebSocket tunnel multiplexing HTTP + WS traffic between a hub and outbound-connected kimi-code agents",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./hub": {
+      "types": "./src/hub/index.ts",
+      "default": "./src/hub/index.ts"
+    },
+    "./agent": {
+      "types": "./src/agent/index.ts",
+      "default": "./src/agent/index.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "ulid": "^3.0.1",
+    "ws": "^8.18.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0"
+  }
+}

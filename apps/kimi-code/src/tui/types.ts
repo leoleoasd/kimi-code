@@ -85,6 +85,14 @@ export interface AppState {
   /** Current goal snapshot for the footer badge; null/undefined when no active goal. */
   goal?: GoalSnapshot | null;
   mcpServersSummary: string | null;
+  /**
+   * Prompts waiting in the ENGINE-side FIFO, submitted from another surface
+   * (a hub web UI / remote-control client driving this same session). The
+   * TUI's own queue lives in `TUIState.queuedMessages`; this list mirrors the
+   * engine reality via `prompt.queued` / `prompt.submitted` /
+   * `prompt.completed` / `prompt.aborted` / `prompt.steered` events.
+   */
+  engineQueuedPrompts: EngineQueuedPrompt[];
   /** Optional banner shown below the welcome panel; null means no banner to render. */
   banner?: BannerState | null;
 }
@@ -282,6 +290,12 @@ export interface QueuedMessage {
   readonly skillArgs?: string;
   /** Skills to activate together with this queued message's prompt. */
   readonly inlineSkillActivations?: readonly InlineSkillActivation[];
+}
+
+/** One prompt waiting in the engine-side FIFO — see AppState.engineQueuedPrompts. */
+export interface EngineQueuedPrompt {
+  readonly promptId: string;
+  readonly text: string;
 }
 
 /**

@@ -6,6 +6,12 @@ The Kimi Code server, backed by the DI × Scope agent engine (`@moonshot-ai/agen
 
 No comments — no file headers, no section banners, no statement-level narration; the code is the source of truth. The only exception is JSDoc attached to exported symbols (it flows into the generated `.d.ts` and IDE hover). Lint-suppression directives (`oxlint-disable` / `eslint-disable`) are allowed where they suppress an active rule for a deliberate pattern; other tooling directives (`@ts-expect-error`, `@ts-ignore`, …) stay banned — fix the underlying type problem instead. Enforced by `scripts/check-no-comments.mjs` (part of `pnpm lint`).
 
+## Host-injection seams (fork)
+
+`startServer` normally bootstraps its own App scope; an embedding host with a live engine (the TUI's `/remote connect`) injects it via `ServerStartOptions.core` — bootstrap-time options then stay the host's call and `close()` releases only server-owned resources (the scope and the engine-level drains/disposals stay the host's).
+
+`ServerStartOptions.commandBridge` (`src/transport/commandBridge.ts`) is the other host-injection seam: the slash-command GRAMMAR belongs to the host (the TUI's registry + dispatch), not to kap-server, so remote clients run it through `POST /sessions/{id}:command` (raw line in, surfaced lines out) and enumerate it through `GET /sessions/{id}/commands` (composer hints). Unbridged servers answer `40421 command.unavailable` and an empty catalog — never a fallback interpreter.
+
 ## Routes
 
 - Session create/resume/fork routes compose `ISessionIndex` → `IWorkspaceLifecycleService.handlerFor` → the handler's `ISessionLifecycleService`, and the fs routes resolve session → handler → the Workspace-scope fs services. One exception: `fs:search` also accepts a workspace reference (registered id or absolute root) in the `{session_id}` slot, so a not-yet-created draft session's `@` file mention resolves the workspace handler directly; the first-class session-less form is `POST /api/v1/workspace/fs:search` (the workspace reference travels in the body).

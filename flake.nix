@@ -76,12 +76,16 @@
         ./packages/oauth
         ./packages/pi-tui
         ./packages/protocol
+        ./packages/remote-tunnel
         ./packages/telemetry
         ./packages/transcript
         ./packages/tree-sitter-bash
         ./apps/kimi-code
         ./apps/vscode
         ./apps/kimi-inspect
+        ./apps/kimi-hub
+        ./apps/kimi-hub/server
+        ./apps/kimi-hub/web
         ./apps/vis
         ./apps/vis/server
         ./apps/vis/web
@@ -103,12 +107,16 @@
         "@moonshot-ai/klient"
         "@moonshot-ai/pi-tui"
         "@moonshot-ai/protocol"
+        "@moonshot-ai/remote-tunnel"
         "@moonshot-ai/kimi-telemetry"
         "@moonshot-ai/transcript"
         "@moonshot-ai/tree-sitter-bash"
         "@moonshot-ai/kimi-code"
         "kimi-code"
         "@moonshot-ai/kimi-inspect"
+        "@moonshot-ai/kimi-hub"
+        "@moonshot-ai/kimi-hub-server"
+        "@moonshot-ai/kimi-hub-web"
         "@moonshot-ai/vis"
         "@moonshot-ai/vis-server"
         "@moonshot-ai/vis-web"

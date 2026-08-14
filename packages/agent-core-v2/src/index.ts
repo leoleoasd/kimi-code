@@ -348,6 +348,8 @@ export * from '#/agent/tools/goal/set-goal-budget/set-goal-budget';
 import '#/agent/tools/goal/set-goal-budget/setGoalBudgetTool';
 export * from '#/agent/tools/goal/update-goal/update-goal';
 import '#/agent/tools/goal/update-goal/updateGoalTool';
+export * from '#/agent/tools/notify-user/notify-user';
+import '#/agent/tools/notify-user/notifyUserTool';
 export * from '#/agent/goal/goalDeadlineScheduler';
 import '#/agent/goal/goalDeadlineSchedulerService';
 export * from '#/agent/goal/goal';

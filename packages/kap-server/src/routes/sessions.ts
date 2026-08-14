@@ -42,6 +42,8 @@ import {
   getSessionGoalResponseSchema,
   listSessionChildrenResponseSchema,
   sessionAbortResponseSchema,
+  sessionCommandCatalogResponseSchema,
+  sessionCommandResultSchema,
   sessionStatusResponseSchema,
   sessionWarningsResponseSchema,
   startBtwSessionResponseSchema,
@@ -49,6 +51,7 @@ import {
   undoSessionResponseSchema,
   updateSessionProfileRequestSchema,
 } from '../protocol/rest-session';
+import type { SessionCommandBridge } from '../transport/commandBridge';
 import {
   emptySessionUsage,
   sessionSchema,
@@ -157,12 +160,27 @@ const sessionActionRequestSchema = z.preprocess(
     instruction: z.string().optional(),
     count: z.number().int().positive().optional(),
     page_size: z.number().int().min(1).max(100).optional(),
+    input: z.string().min(1).optional(),
   }),
 );
 
+export interface RegisterSessionsRoutesDeps {
+  /**
+   * Host-injected slash-command bridge (`startServer({ commandBridge })`; see
+   * `transport/commandBridge.ts`) — powers the `:command` action and the
+   * `/commands` catalog. Without it the action answers `40418` and the
+   * catalog is empty.
+   */
+  readonly commandBridge?: SessionCommandBridge;
+}
+
 const detailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 
-export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void {
+export function registerSessionsRoutes(
+  app: SessionRouteHost,
+  core: Scope,
+  deps?: RegisterSessionsRoutesDeps,
+): void {
   const createRoute = defineRoute(
     {
       method: 'POST',
@@ -590,6 +608,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           sessionAbortResponseSchema,
           startBtwSessionResponseSchema,
           archiveSessionResponseSchema,
+          sessionCommandResultSchema,
         ]),
       },
       errors: {
@@ -598,6 +617,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         [ErrorCode.SESSION_BUSY]: {},
         [ErrorCode.COMPACTION_UNABLE]: {},
         [ErrorCode.SESSION_UNDO_UNAVAILABLE]: {},
+        [ErrorCode.COMMAND_UNAVAILABLE]: {},
       },
       description: 'Run a session action',
       tags: ['sessions'],
@@ -608,7 +628,7 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
         const { tail } = req.params;
         const parsed = parseActionSuffix({
           tail,
-          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore'] as const,
+          allowedActions: ['fork', 'compact', 'undo', 'abort', 'btw', 'archive', 'restore', 'command'] as const,
           resourceLabel: 'session',
         });
         if (parsed.kind !== 'action') {
@@ -711,6 +731,32 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
           return;
         }
 
+        if (parsed.action === 'command') {
+          // The host-injected bridge owns the grammar + every policy call
+          // (unknown word, busy gate, wrong-session, interactive degrade) —
+          // the route only shuttles the raw line in and the lines back out.
+          const bridge = deps?.commandBridge;
+          if (bridge === undefined) {
+            reply.send(
+              errEnvelope(
+                ErrorCode.COMMAND_UNAVAILABLE,
+                'this agent does not expose slash commands (no command bridge injected)',
+                req.id,
+              ),
+            );
+            return;
+          }
+          if (req.body.input === undefined) {
+            reply.send(
+              buildValidationEnvelope([{ path: 'input', message: 'input is required' }], req.id),
+            );
+            return;
+          }
+          const result = await bridge.execute(parsed.id, req.body.input);
+          reply.send(okEnvelope(result, req.id));
+          return;
+        }
+
         if (parsed.action === 'restore') {
           const restoreHandler = await programForSession(core.accessor, parsed.id);
           const restored =
@@ -752,6 +798,30 @@ export function registerSessionsRoutes(app: SessionRouteHost, core: Scope): void
     sessionActionRoute.path,
     sessionActionRoute.options,
     sessionActionRoute.handler as Parameters<SessionRouteHost['post']>[2],
+  );
+
+  // The slash-command catalog the session's composer can offer (bridge-owned;
+  // static per host). Deliberately answers an empty list — not an error —
+  // when no bridge is injected, so clients can render "no commands here"
+  // without special-casing transport failures.
+  const listCommandsRoute = defineRoute(
+    {
+      method: 'GET',
+      path: '/sessions/{session_id}/commands',
+      params: sessionIdParamSchema,
+      success: { data: sessionCommandCatalogResponseSchema },
+      description: 'List the slash commands this agent exposes',
+      tags: ['sessions'],
+      operationId: 'listSessionCommands',
+    },
+    async (req, reply) => {
+      reply.send(okEnvelope({ commands: deps?.commandBridge?.catalog() ?? [] }, req.id));
+    },
+  );
+  app.get(
+    listCommandsRoute.path,
+    listCommandsRoute.options,
+    listCommandsRoute.handler as Parameters<SessionRouteHost['get']>[2],
   );
 
   const listChildrenRoute = defineRoute(

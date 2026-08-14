@@ -13,6 +13,7 @@ import {
 } from '#/session/agentLifecycle/agentLifecycle';
 import { IAgentStateService } from '#/agent/state/agentState';
 import { IEventDispatcher } from '#/state/eventDispatcher';
+import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { IAgentPermissionModeService, type PermissionModeChangedContext } from './permissionMode';
 import {
   permissionModeConfiguredKey,
@@ -49,7 +50,14 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     const changed = mode !== previousMode;
     if (!changed && this.agentState.get(permissionModeConfiguredKey)) return;
     void this.dispatcher.dispatch(new PermissionSetMode({ mode }));
-    if (changed) this._onDidChangeMode.fire({ mode, previousMode });
+    if (changed) {
+      this._onDidChangeMode.fire({ mode, previousMode });
+      // Publish the mode slice live (never on replay), so clients tracking
+      // `agent.status.updated` (the TUI badge, kap-server's transcript meta)
+      // see a change made from ANY surface: local dispatch, a sibling client,
+      // or the command bridge.
+      void this.dispatcher.dispatch(new AgentStatusUpdated({ permission: mode }));
+    }
   }
 
   setModeAndBroadcast(mode: PermissionMode): void {

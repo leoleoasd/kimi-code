@@ -5,21 +5,37 @@ import { join } from 'node:path';
 
 import { pino } from 'pino';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { WebSocket } from 'ws';
 
 import {
+  bootstrap,
+  drainQueryStoreDisposals,
+  drainSessionIndexMirror,
+  drainSessionMetadataWrites,
+  getLiveSessionById,
+  IAgentLifecycleService,
   IBootstrapService,
+  IEventBus,
   IFileSystemStorageService,
   IHostRequestHeaders,
   InMemoryStorageService,
   IOAuthToolkit,
+  ISessionIndexMirror,
+  ISessionLifecycleService,
   ITelemetryService,
+  IWorkspaceLifecycleService,
+  logSeed,
   noopTelemetryService,
+  resolveLoggingConfig,
+  type DomainEvent,
+  type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
 import { listLiveServerInstances } from '../src/instanceRegistry';
+import { drainGlobalSearchDisposals } from '../src/search/searchService';
 import { listenWithPortRetry, type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
-import { authedFetch } from './helpers/auth';
+import { authedFetch, authHeaders } from './helpers/auth';
 
 describe('server-v2 boot', () => {
   let server: RunningServer | undefined;
@@ -231,6 +247,160 @@ describe('server-v2 boot', () => {
 
     expect(() => core.accessor.get(IBootstrapService)).toThrow();
     expect(await listLiveServerInstances(home)).toEqual([]);
+  });
+});
+
+/**
+ * `startServer({ core })` — the injection seam for hosts that already own a
+ * bootstrapped App scope (the TUI's `/remote connect`): the server must serve
+ * THAT live engine and leave its teardown to the host.
+ */
+describe('server-v2 injected core', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let scope: Scope | undefined;
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (scope !== undefined) {
+      // The host (this test) owns the scope: run the same engine teardown the
+      // owned-core server close() would have.
+      try {
+        await scope.accessor.get(ISessionIndexMirror).drain();
+        scope.dispose();
+        await drainSessionIndexMirror();
+        await drainGlobalSearchDisposals();
+        await drainQueryStoreDisposals();
+        await drainSessionMetadataWrites();
+      } catch {
+        // best-effort teardown; the home removal below must still run
+      }
+      scope = undefined;
+    }
+    if (home !== undefined) {
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function bootInjectedServer(): Promise<string> {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-injected-'));
+    ({ app: scope } = bootstrap(
+      { homeDir: home, clientIdentity: TEST_HOST_IDENTITY },
+      logSeed(resolveLoggingConfig({ homeDir: home, env: process.env })),
+    ));
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      core: scope,
+    });
+    return `http://127.0.0.1:${server.port}`;
+  }
+
+  it('serves REST and WS over the SAME live scope the host injected', async () => {
+    const base = await bootInjectedServer();
+    expect(server?.core).toBe(scope);
+
+    // (a) A session created over server REST is live through the injected scope.
+    const created = await fetch(`${base}/api/v1/sessions`, {
+      method: 'POST',
+      headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
+      body: JSON.stringify({ metadata: { cwd: home } }),
+    } as never);
+    const createdBody = (await created.json()) as { code: number; data: { id: string } };
+    expect(createdBody.code).toBe(0);
+    const sessionId = createdBody.data.id;
+    const live = getLiveSessionById((scope as Scope).accessor, sessionId);
+    expect(live).toBeDefined();
+
+    // (b) Events published on the injected scope reach a /api/v1/ws subscriber.
+    const token = (server as RunningServer).authTokenService.getToken();
+    const ws = new WebSocket(`ws://127.0.0.1:${(server as RunningServer).port}/api/v1/ws`, [
+      `kimi-code.bearer.${token}`,
+    ]);
+    const closed = new Promise<void>((resolve) => ws.once('close', () => resolve()));
+    const frames: Record<string, unknown>[] = [];
+    const waiters: ((frame: Record<string, unknown>) => void)[] = [];
+    ws.on('message', (data) => {
+      const frame = JSON.parse((data as Buffer).toString('utf8')) as Record<string, unknown>;
+      const waiter = waiters.shift();
+      if (waiter !== undefined) waiter(frame);
+      else frames.push(frame);
+    });
+    const nextFrame = (pred: (frame: Record<string, unknown>) => boolean): Promise<Record<string, unknown>> =>
+      new Promise((resolve, reject) => {
+        const hit = frames.findIndex(pred);
+        if (hit >= 0) {
+          resolve(frames.splice(hit, 1)[0]!);
+          return;
+        }
+        const waiter = (frame: Record<string, unknown>): void => {
+          if (pred(frame)) {
+            clearTimeout(timer);
+            resolve(frame);
+            return;
+          }
+          frames.push(frame);
+          waiters.push(waiter);
+        };
+        const timer = setTimeout(() => {
+          const index = waiters.indexOf(waiter);
+          if (index >= 0) waiters.splice(index, 1);
+          reject(new Error('timeout waiting for ws frame'));
+        }, 5000);
+        waiters.push(waiter);
+      });
+    await nextFrame((f) => f['type'] === 'server_hello');
+    ws.send(
+      JSON.stringify({
+        type: 'client_hello',
+        id: 'h1',
+        payload: { client_id: 'injected-core-test', subscriptions: [sessionId], token },
+      }),
+    );
+    await nextFrame((f) => f['type'] === 'ack' && f['id'] === 'h1');
+
+    // The session created over REST has no agents yet — materialize main so
+    // there is an event bus to publish on.
+    const main = await live!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
+    main.accessor
+      .get(IEventBus)
+      .publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+    const event = await nextFrame((f) => f['type'] === 'turn.started');
+    expect(event['session_id']).toBe(sessionId);
+
+    ws.close();
+    await closed;
+  });
+
+  it('close() releases server resources but leaves the injected scope alive', async () => {
+    const base = await bootInjectedServer();
+    const meta = await authedFetch(server as RunningServer, base, '/api/v1/meta');
+    expect(meta.status).toBe(200);
+
+    await (server as RunningServer).close();
+    server = undefined;
+
+    // Server-owned state went away: the instance registration is released and
+    // the port no longer serves.
+    expect(await listLiveServerInstances(home as string)).toEqual([]);
+    await expect(fetch(`${base}/api/v1/healthz`)).rejects.toThrow();
+
+    // The injected scope is NOT disposed (the double-dispose regression
+    // guard): the host can still resolve services and create sessions through
+    // it directly.
+    expect(() => (scope as Scope).accessor.get(IBootstrapService)).not.toThrow();
+    const handler = await (scope as Scope).accessor
+      .get(IWorkspaceLifecycleService)
+      .handlerFor({ root: home as string });
+    const created = await handler.accessor.get(ISessionLifecycleService).create({ workDir: home as string });
+    expect(getLiveSessionById((scope as Scope).accessor, created.id)).toBeDefined();
   });
 });
 

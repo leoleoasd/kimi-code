@@ -57,6 +57,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
+import { notifyRemoteSessionChanged } from './commands/remote';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
@@ -282,6 +283,7 @@ function createInitialAppState(input: KimiTUIStartupInput): AppState {
     sessionTitle: null,
     goal: null,
     mcpServersSummary: null,
+    engineQueuedPrompts: [],
     banner: undefined,
   };
 }
@@ -1740,6 +1742,17 @@ export class KimiTUI {
       options?.imageAttachmentIds !== undefined && options.imageAttachmentIds.length > 0
         ? options.imageAttachmentIds
         : undefined;
+    // Register the engine-visible prompt text (same join as the engine's
+    // turn.started payload) BEFORE the local echo, so a same-surface turn
+    // event never re-renders this bubble — while hub/remote-control turns do.
+    this.sessionEventHandler.recordLocalPromptText(
+      Array.isArray(options?.parts)
+        ? options.parts
+            .filter((part) => part.type === 'text')
+            .map((part) => part.text)
+            .join('')
+        : input,
+    );
     this.appendTranscriptEntry({
       id: nextTranscriptId(),
       kind: 'user',
@@ -2321,6 +2334,10 @@ export class KimiTUI {
       goal: goalResult.goal,
     });
     this.syncAdditionalDirs(session);
+    // The universal session-switch funnel: the ACTIVE session joins the
+    // `/remote connect` bridge's union scope (a no-op when never bridged and
+    // on repeats).
+    notifyRemoteSessionChanged(session.id);
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
@@ -2514,6 +2531,9 @@ export class KimiTUI {
     this.cacheHint.resetRuntime();
     this.streamingUI.discardPending();
     this.clearQueuedMessages();
+    // Engine-queue entries key prompts of the outgoing session — drop them the
+    // same way the local queue is dropped (updateQueueDisplay below repaints).
+    this.state.appState.engineQueuedPrompts = [];
     this.state.swarmModeEntry = undefined;
     this.streamingUI.resetToolCallState();
     this.streamingUI.resetToolUi();
@@ -3337,11 +3357,13 @@ export class KimiTUI {
   updateQueueDisplay(): void {
     this.state.queueContainer.clear();
     const queued = this.state.queuedMessages;
-    if (queued.length === 0) return;
+    const engineQueue = this.state.appState.engineQueuedPrompts;
+    if (queued.length === 0 && engineQueue.length === 0) return;
 
     this.state.queueContainer.addChild(
       new QueuePaneComponent({
         messages: queued,
+        engineQueue,
         isCompacting: this.state.appState.isCompacting,
         isStreaming: this.state.appState.streamingPhase !== 'idle',
         canSteerImmediately: !this.deferUserMessages,

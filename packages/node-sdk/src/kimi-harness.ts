@@ -6,6 +6,7 @@ import {
   withTelemetryContext,
   type ExperimentalFeatureState,
 } from '@moonshot-ai/agent-core';
+import type { Scope } from '@moonshot-ai/agent-core-v2';
 
 import { capabilityRpc, Session } from '#/session';
 import type { KimiAuthFacade } from '#/auth';
@@ -67,6 +68,14 @@ export interface KimiHarnessRuntimeOptions {
    * leave it undefined and ingestion falls back to env/built-in defaults.
    */
   readonly imageLimits?: ImageLimits | undefined;
+  /**
+   * The in-process agent-core-v2 App scope the rpc client bootstrapped
+   * (v2 engine only; undefined on the v1 engine). Read-only: embedding hosts
+   * pass it to kap-server's `startServer({ core })` so an HTTP/WS surface
+   * serves the same live engine (`/remote connect`) — the harness stays the
+   * scope's owner; `close()` disposes it.
+   */
+  readonly engineScope?: Scope;
 }
 
 export class KimiHarness {
@@ -89,6 +98,12 @@ export class KimiHarness {
    */
   readonly imageLimits: ImageLimits | undefined;
 
+  /**
+   * The in-process v2 engine scope behind this harness (read-only), or
+   * undefined on the v1 engine. See {@link KimiHarnessRuntimeOptions.engineScope}.
+   */
+  readonly engineScope: Scope | undefined;
+
   constructor(
     private readonly rpc: SDKRpcClientBase,
     options: KimiHarnessRuntimeOptions,
@@ -103,6 +118,7 @@ export class KimiHarness {
     this.closeImpl = options.onClose;
     this.sessionStartedProperties = options.sessionStartedProperties ?? {};
     this.imageLimits = options.imageLimits;
+    this.engineScope = options.engineScope;
   }
 
   get sessions(): ReadonlyMap<string, Session> {

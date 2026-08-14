@@ -648,6 +648,13 @@ export const capabilityChangedEventSchema = z.object({
   }),
 });
 
+export const userNotifyEventSchema = z.object({
+  type: z.literal('event.user.notify'),
+  notificationId: z.string(),
+  title: z.string(),
+  body: z.string(),
+});
+
 export const diUnitChangedEventSchema = z.object({
   type: z.literal('event.di.unit_changed'),
   scope: z.string().min(1),
@@ -990,6 +997,7 @@ export const agentEventSchema = z.discriminatedUnion('type', [
   diUnitChangedEventSchema,
   pluginChangedEventSchema,
   capabilityChangedEventSchema,
+  userNotifyEventSchema,
   goalUpdatedEventSchema,
   skillActivatedEventSchema,
   pluginCommandActivatedEventSchema,

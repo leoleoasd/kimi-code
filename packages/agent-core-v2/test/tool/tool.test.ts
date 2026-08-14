@@ -3372,6 +3372,7 @@ describe('Agent tools', () => {
         }),
       ).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "mode": "auto", "time": "<time>" }
+        [emit] agent.status.updated        { "permission": "auto" }
         [wire] tools.register_user_tool    { "name": "Lookup", "description": "Look up a short test value.", "parameters": { "type": "object", "properties": { "query": { "type": "string" } }, "required": [ "query" ], "additionalProperties": false }, "time": "<time>" }
         [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Look up moon" } ], "origin": { "kind": "user" }, "time": "<time>" }

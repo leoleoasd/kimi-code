@@ -1,0 +1,39 @@
+{
+  "name": "@moonshot-ai/kimi-hub-server",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Hub server: agent tunnel registry + per-agent protocol-transparent proxy + web UI host",
+  "license": "MIT",
+  "type": "module",
+  "imports": {
+    "#/*": "./src/*.ts"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "dev": "tsx watch src/main.ts",
+    "build": "tsdown",
+    "build:native": "node scripts/build-native.mjs",
+    "build:native:smoke": "node scripts/build-native.mjs --smoke",
+    "start": "node dist/main.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "clean": "rm -rf dist dist-native"
+  },
+  "dependencies": {
+    "@moonshot-ai/remote-tunnel": "workspace:^",
+    "fastify": "^5.1.0",
+    "ulid": "^3.0.1",
+    "ws": "^8.18.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@types/ws": "^8.18.0",
+    "postject": "1.0.0-alpha.6",
+    "tsx": "^4.21.0"
+  }
+}

@@ -33,6 +33,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { installErrorHandler } from './error-handler';
 import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
 import { transformOpenApiDocument } from './openapi/transforms';
+import type { SessionCommandBridge } from './transport/commandBridge';
 import { registerRequestLogging } from './requestLogging';
 import { resolveRequestId } from './request-id';
 import { registerApiV1Routes } from './routes/registerApiV1Routes';
@@ -105,6 +106,20 @@ export interface ServerStartOptions {
   readonly pluginMarketplaceUrl?: string;
   readonly configPath?: string;
   /**
+   * Inject an already-bootstrapped engine App scope instead of bootstrapping
+   * a new one: the server serves the host's live engine (e.g. the TUI's
+   * in-process v2 scope for `/remote connect`), and `close()` releases only
+   * server-owned resources — the scope itself, its services, and the
+   * engine-level drains stay the host's responsibility. When set, the
+   * bootstrap-time inputs of this call are inert: `configPath`, `seeds`,
+   * `skillDirs`, and the `hostIdentity`-driven engine client identity /
+   * request headers were the host's call when it bootstrapped the scope
+   * (`hostIdentity` still feeds the routes). `homeDir` must match the
+   * scope's own — storage-derived paths (token store, event journals,
+   * instance registry) are resolved from it.
+   */
+  readonly core?: Scope;
+  /**
    * Override the instance-registry directory — used in tests that need the
    * registry OUTSIDE `homeDir` (e.g. folder-picker fixtures browsing the home
    * dir). Defaults to `<homeDir>/server/instances`.
@@ -175,6 +190,15 @@ export interface ServerStartOptions {
    * endpoint unintentionally; the CLI's `kimi web` host passes true.
    */
   readonly telemetry?: boolean;
+  /**
+   * Host-injected slash-command bridge: powers `POST /sessions/{id}:command`
+   * and `GET /sessions/{id}/commands` so remote clients (the hub web UI) can
+   * run + enumerate the host's own `/…` command grammar (see
+   * `transport/commandBridge.ts`). The TUI behind `/remote connect` injects
+   * its dispatch here; leave unset for headless servers (`:command` then
+   * answers `40418 command.unavailable`, the catalog is empty).
+   */
+  readonly commandBridge?: SessionCommandBridge;
 }
 
 export interface RunningServer {
@@ -233,20 +257,32 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  const { app: core } = bootstrap(
-    {
-      homeDir,
-      configPath,
-      clientIdentity: opts.hostIdentity,
-      args: {
-        requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
-        skillDirs: opts.skillDirs,
-        displayName: opts.hostIdentity.displayName,
-        replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+  // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
+  // rooted at `homeDir`, so the Store facades above it (append-log, atomic
+  // document, blob) — and in turn session metadata, wire records, blobs, and
+  // the session index — all persist to disk. A host-injected `opts.core` is
+  // used as-is instead: the host bootstrapped that scope itself, so the
+  // bootstrap-time inputs are its call (see the option's doc).
+  const ownsCore = opts.core === undefined;
+  const core =
+    opts.core ??
+    bootstrap(
+      {
+        homeDir,
+        configPath,
+        clientIdentity: opts.hostIdentity,
+        args: {
+          // Default host identity headers derived from `hostIdentity`: outbound
+          // requests (model, WebSearch, registry refresh) carry the host
+          // product's User-Agent + X-Msh-* set.
+          requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
+          skillDirs: opts.skillDirs,
+          displayName: opts.hostIdentity.displayName,
+          replyStyleGuide: opts.hostIdentity.replyStyleGuide,
+        },
       },
-    },
-    [...logSeed(logging), ...(opts.seeds ?? [])],
-  );
+      [...logSeed(logging), ...(opts.seeds ?? [])],
+    ).app;
 
   let telemetry: ServerTelemetry = {};
   if (opts.telemetry === true) {
@@ -344,14 +380,29 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       );
     }
     try {
-      await drainSessionMetadataWrites();
-      await core.accessor.get(ISessionIndexMirror).drain();
       fsWatchBridge.dispose();
-      core.dispose();
-      await drainSessionIndexMirror();
-      await drainGlobalSearchDisposals();
-      await drainQueryStoreDisposals();
-      await drainSessionMetadataWrites();
+      // An injected core stays the host's: skip every engine-level disposal
+      // and drain — the host's own teardown runs them. Only the owned-core
+      // path below shuts the engine down.
+      if (ownsCore) {
+        // Settle session metadata writes first: requests have stopped, and a
+        // queued write must land before the mirror flushes its summary and the
+        // scope disposal marks the service disposed.
+        await drainSessionMetadataWrites();
+        // Drain the session-index mirror while the query store is still open:
+        // requests have stopped, so no new summaries arrive and the queue just
+        // needs its final flush to land in the read model.
+        await core.accessor.get(ISessionIndexMirror).drain();
+        core.dispose();
+        // `core.dispose()` runs the mirror's, the search service's and the query
+        // store's synchronous `dispose()`, whose drains/closes are asynchronous —
+        // await them before releasing the instance registration (and before
+        // embedding hosts tear down homeDir).
+        await drainSessionIndexMirror();
+        await drainGlobalSearchDisposals();
+        await drainQueryStoreDisposals();
+        await drainSessionMetadataWrites();
+      }
     } finally {
       await registration.release();
     }
@@ -467,6 +518,7 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     transcriptService,
     dangerousBypassAuth: opts.disableAuth === true,
     webTitle: opts.webTitle,
+    commandBridge: opts.commandBridge,
   });
 
   await registerApiV2Routes(app, core);

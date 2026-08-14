@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { IEventBus } from '#/app/event/eventBus';
 import { IAgentPermissionModeService } from '#/agent/permissionMode/permissionMode';
 
 import { recordingTelemetry, type TelemetryRecord } from '../../app/telemetry/stubs';
@@ -37,5 +38,20 @@ describe('setModeAndBroadcast', () => {
     expect(ctx.get(IAgentPermissionModeService).mode).toBe('manual');
     expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: true } });
     expect(records).toContainEqual({ event: 'yolo_toggle', properties: { agent_id: 'main', enabled: false } });
+  });
+
+  it('publishes the permission slice of agent.status.updated on every actual change (never on no-change)', async () => {
+    records = [];
+    ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
+    const published: { permission?: string }[] = [];
+    ctx.get(IEventBus).subscribe((event) => {
+      if (event.type === 'agent.status.updated' && 'permission' in event) published.push(event);
+    });
+
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    await ctx.rpc.setPermission({ mode: 'yolo' });
+    await ctx.rpc.setPermission({ mode: 'manual' });
+
+    expect(published.map((event) => event.permission)).toEqual(['yolo', 'manual']);
   });
 });

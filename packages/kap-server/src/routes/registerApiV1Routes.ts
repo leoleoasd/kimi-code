@@ -7,6 +7,7 @@ import { ulid } from 'ulid';
 
 import { okEnvelope } from '../envelope';
 import type { MetaFeature } from '../protocol/rest-meta';
+import type { SessionCommandBridge } from '../transport/commandBridge';
 import { type IConnectionRegistry } from '../transport/ws/connectionRegistry';
 import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBroadcaster';
 import type { TranscriptService } from '../services/transcript/transcriptService';
@@ -88,6 +89,11 @@ export interface RegisterApiV1RoutesOptions {
    * CLI's `--web-title` flag).
    */
   readonly webTitle?: string;
+  /**
+   * Host-injected slash-command bridge (`startServer({ commandBridge })`) —
+   * forwarded to the sessions routes for `:command` + `/commands`.
+   */
+  readonly commandBridge?: SessionCommandBridge;
 }
 
 export async function registerApiV1Routes(
@@ -134,6 +140,7 @@ export async function registerApiV1Routes(
       registerSessionsRoutes(
         apiV1 as unknown as Parameters<typeof registerSessionsRoutes>[0],
         core,
+        { commandBridge: opts.commandBridge },
       );
       registerRuntimeRoutes(apiV1 as unknown as Parameters<typeof registerRuntimeRoutes>[0], core);
       registerSessionExportRoute(
