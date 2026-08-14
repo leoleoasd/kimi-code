@@ -36,7 +36,16 @@ need() {
   fi
 }
 need curl
-need unzip
+if ! command -v unzip >/dev/null 2>&1; then
+  if command -v python3 >/dev/null 2>&1; then
+    EXTRACT=(python3 -m zipfile -e)
+  else
+    echo "install.sh: missing required command: unzip (or python3 with zipfile)" >&2
+    exit 1
+  fi
+else
+  EXTRACT=(unzip -q -o)
+fi
 
 # OS/arch → the <target> triple used in the release asset names.
 case "$(uname -s)" in
@@ -78,7 +87,11 @@ install_zip() {
   curl -fsSL "$BASE_URL/$zip_file" -o "$tmp/$zip_file"
   expected="$(curl -fsSL "$BASE_URL/$zip_file.sha256")"
   sha256_check "$tmp/$zip_file" "$expected"
-  (cd "$tmp" && unzip -q -o "$zip_file")
+  if [ "${EXTRACT[0]}" = "unzip" ]; then
+    (cd "$tmp" && unzip -q -o "$zip_file")
+  else
+    python3 -m zipfile -e "$tmp/$zip_file" "$tmp"
+  fi
   mkdir -p "$INSTALL_DIR"
   install -m 0755 "$tmp/$exec_name" "$INSTALL_DIR/$exec_name"
   echo "install.sh: installed $exec_name → $INSTALL_DIR/$exec_name"
