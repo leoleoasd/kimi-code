@@ -73,6 +73,13 @@ export interface TranscriptWsHandlers {
    * its own session-title caches; this layer owns no cache of its own.
    */
   onSessionMetaUpdated?: (meta: SessionMetaUpdated) => void;
+  /**
+   * `agent.created` / `agent.disposed` on our session — the REST transcript
+   * page is the only source of the agent roster, so the consumer refetches it
+   * (e.g. a newly spawned subagent joins the tab list without a manual
+   * refresh).
+   */
+  onAgentLifecycle?: (kind: 'created' | 'disposed') => void;
 }
 
 /** The consumable bits of a global `session.meta.updated` frame. */
@@ -259,6 +266,16 @@ export class TranscriptWs {
       case 'resync_required': {
         const sessionId = (frame.payload as { session_id?: unknown } | undefined)?.session_id;
         if (sessionId === this.sessionId) this.handlers.onResyncRequired();
+        return;
+      }
+      case 'agent.created':
+      case 'agent.disposed': {
+        // Frame type IS the event type; the envelope session matches our
+        // socket's own scope (session-scoped agents may still see others'
+        // frames before the filter bites, so compare id anyway).
+        if (readNonEmptyString(frame.session_id) === this.sessionId) {
+          this.handlers.onAgentLifecycle?.(frame.type === 'agent.created' ? 'created' : 'disposed');
+        }
         return;
       }
       case 'session.meta.updated': {

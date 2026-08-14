@@ -499,11 +499,13 @@ function parsePromptQueueItem(value: unknown): PromptQueueItem | undefined {
 }
 
 export async function fetchPromptQueue(
-  endpoint: HttpEndpoint & { sessionId: string },
+  endpoint: HttpEndpoint & { sessionId: string; agentId?: string },
 ): Promise<PromptQueue> {
   const data = await getJson({
     ...endpoint,
-    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts`,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts${
+      endpoint.agentId === undefined ? '' : `?agent_id=${encodeURIComponent(endpoint.agentId)}`
+    }`,
   });
   const p = (data ?? {}) as Record<string, unknown>;
   if (!Array.isArray(p['queued'])) throw new Error('prompt queue: unexpected response shape');
@@ -522,13 +524,16 @@ export async function fetchPromptQueue(
  * (prompt.already_completed) reply carries `data: { aborted: false }`: the
  * prompt resolved between the last poll and this call, which is exactly the
  * desired end state — accepted as a no-op success, like `:dismiss`'s 40909.
+ * `agentId` targets the queue the prompt sits on (queues are per agent).
  */
 export async function abortQueuedPrompt(
-  endpoint: HttpEndpoint & { sessionId: string; promptId: string },
+  endpoint: HttpEndpoint & { sessionId: string; promptId: string; agentId?: string },
 ): Promise<void> {
   await postJson({
     ...endpoint,
-    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts/${encodeURIComponent(endpoint.promptId)}:abort`,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts/${encodeURIComponent(endpoint.promptId)}:abort${
+      endpoint.agentId === undefined ? '' : `?agent_id=${encodeURIComponent(endpoint.agentId)}`
+    }`,
     acceptCodes: [0, 40903],
   });
 }

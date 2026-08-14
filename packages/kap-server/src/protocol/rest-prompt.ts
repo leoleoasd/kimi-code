@@ -73,6 +73,7 @@ export type PromptSubmitResult = z.infer<typeof promptSubmitResultSchema>;
 
 export const promptSteerRequestSchema = z.object({
   prompt_ids: z.array(z.string().min(1)).min(1),
+  agent_id: z.string().min(1).optional(),
 });
 export type PromptSteerRequest = z.infer<typeof promptSteerRequestSchema>;
 
