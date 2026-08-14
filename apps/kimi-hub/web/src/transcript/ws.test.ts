@@ -145,6 +145,67 @@ describe('TranscriptWs session.meta.updated', () => {
   });
 });
 
+describe('TranscriptWs agent lifecycle', () => {
+  it('agent.created / agent.disposed frames for this session fire the handler', () => {
+    const seen: string[] = [];
+    const channel = new TranscriptWs({
+      url: BASE,
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      handlers: {
+        onOps: () => {},
+        onResyncRequired: () => {},
+        onReconnected: () => {},
+        onAgentLifecycle: (kind) => seen.push(kind),
+      },
+    });
+    const socket = FakeWs.instances.pop()!;
+    socket.emitFrame({
+      type: 'agent.created',
+      seq: 11,
+      session_id: 's1',
+      timestamp: '2026-08-14T00:00:00.000Z',
+      payload: { type: 'agent.created', agentId: 'sub2', sessionId: 's1' },
+    });
+    socket.emitFrame({
+      type: 'agent.disposed',
+      seq: 12,
+      session_id: 's1',
+      timestamp: '2026-08-14T00:00:01.000Z',
+      payload: { type: 'agent.disposed', agentId: 'sub2', sessionId: 's1' },
+    });
+    expect(seen).toEqual(['created', 'disposed']);
+    channel.close();
+  });
+
+  it('agent.lifecycle frames routed to another session are ignored', () => {
+    const seen: string[] = [];
+    const channel = new TranscriptWs({
+      url: BASE,
+      sessionId: 's1',
+      agentId: 'main',
+      WebSocketImpl: FakeWs,
+      handlers: {
+        onOps: () => {},
+        onResyncRequired: () => {},
+        onReconnected: () => {},
+        onAgentLifecycle: (kind) => seen.push(kind),
+      },
+    });
+    const socket = FakeWs.instances.pop()!;
+    socket.emitFrame({
+      type: 'agent.created',
+      seq: 13,
+      session_id: 's2',
+      timestamp: '2026-08-14T00:00:02.000Z',
+      payload: { type: 'agent.created', agentId: 'sub9', sessionId: 's2' },
+    });
+    expect(seen).toEqual([]);
+    channel.close();
+  });
+});
+
 describe('TranscriptWs auth subprotocol', () => {
   it('offers the kimi-hub.bearer subprotocol for a real token', () => {
     const { channel, socket } = openChannel(() => {}, { token: 'tok-9' });

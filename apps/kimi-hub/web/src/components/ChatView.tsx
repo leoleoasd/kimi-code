@@ -51,6 +51,7 @@ import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
 import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
+import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
 import { collapseMarkerRuns, markerLabel } from './markers';
@@ -116,12 +117,16 @@ export function ChatView({
     state.meta.activity === 'turn' ||
     items.some((item) => item.kind === 'turn' && item.state === 'running');
 
-  // The engine-owned prompt queue (active turn + FIFO) feeding the strip.
+  // The engine-owned prompt queue (active turn + FIFO) feeding the strip,
+  // keyed per viewed agent: queues live on agents, not sessions, so the
+  // subagent tab shows the subagent's own queue (the web composer still only
+  // writes to main — same targeting as before).
   // ChatView mounts ONLY for the selected (agent, session) and unmounts on
   // deselect, so this 2s poll never runs for idle background sessions.
+  const queueQueryKey = ['promptQueue', baseUrl, sessionId, transcriptAgentId] as const;
   const queue = useQuery({
-    queryKey: ['promptQueue', baseUrl, sessionId],
-    queryFn: () => fetchPromptQueue({ baseUrl, token, sessionId }),
+    queryKey: queueQueryKey,
+    queryFn: () => fetchPromptQueue({ baseUrl, token, sessionId, agentId: transcriptAgentId }),
     refetchInterval: 2000,
     enabled: sessionId !== '',
   });
@@ -136,12 +141,12 @@ export function ChatView({
   // the next queued prompt promoting within a tick).
   const abortTurn = async (): Promise<void> => {
     await abortSession({ baseUrl, token, sessionId });
-    await queryClient.invalidateQueries({ queryKey: ['promptQueue', baseUrl, sessionId] });
+    await queryClient.invalidateQueries({ queryKey: queueQueryKey });
   };
 
   const abortQueued = async (promptId: string): Promise<void> => {
-    await abortQueuedPrompt({ baseUrl, token, sessionId, promptId });
-    await queryClient.invalidateQueries({ queryKey: ['promptQueue', baseUrl, sessionId] });
+    await abortQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
+    await queryClient.invalidateQueries({ queryKey: queueQueryKey });
   };
 
   // Per-message rollback: the engine cuts by the count of trailing prompts
@@ -155,7 +160,7 @@ export function ChatView({
     if (count === undefined) return;
     await undoSession({ baseUrl, token, sessionId, count });
     setCommandNotice(`rolled back the last ${String(count)} prompt${count === 1 ? '' : 's'}`);
-    await queryClient.invalidateQueries({ queryKey: ['promptQueue', baseUrl, sessionId] });
+    await queryClient.invalidateQueries({ queryKey: queueQueryKey });
     await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
   };
 
@@ -252,11 +257,12 @@ export function ChatView({
         : await sendPromptWithImages({ baseUrl, token, sessionId, text, images });
     // Optimistic chip: the queue poll replays the same item authoritatively
     // — nothing needs to be carried until then. Never let this nicety fail
-    // the send UX (the REST already succeeded).
+    // the send UX (the REST already succeeded). Composed prompts always land
+    // on the MAIN agent's queue — key the chip there, not to the viewed tab.
     if (result.status === 'queued') {
       try {
         queryClient.setQueryData(
-          ['promptQueue', baseUrl, sessionId],
+          ['promptQueue', baseUrl, sessionId, 'main'],
           (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
             appendQueuedEntry(
               old as Parameters<typeof appendQueuedEntry>[0],
@@ -418,6 +424,7 @@ export function ChatView({
         queue={queue.data}
         onAbortQueued={(promptId) => void abortQueued(promptId).catch(setViewError)}
       />
+      <TodoListPanel todos={state.todos} />
       <Composer
         busy={running}
         baseUrl={baseUrl}
