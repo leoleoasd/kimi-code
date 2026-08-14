@@ -5,9 +5,11 @@ import { useState } from 'react';
 export function Badge({
   children,
   tone = 'neutral',
+  title,
 }: {
   children: React.ReactNode;
   tone?: 'neutral' | 'green' | 'amber' | 'red' | 'sky' | 'violet';
+  title?: string;
 }) {
   const tones: Record<string, string> = {
     neutral: 'bg-neutral-800 text-neutral-300',
@@ -18,7 +20,7 @@ export function Badge({
     violet: 'bg-violet-900/60 text-violet-300',
   };
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${tones[tone]}`}>
+    <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${tones[tone]}`} title={title}>
       {children}
     </span>
   );
