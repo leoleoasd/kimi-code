@@ -21,13 +21,33 @@ const MARKER_LABELS: Record<string, string> = {
 };
 
 /**
+ * The live phase question the chat header asks: is a compaction currently in
+ * flight — i.e. the newest compaction marker on the viewed agent's transcript
+ * is a bare `compaction.started` (no completed/cancelled after it). The
+ * transcript stream already carries every phase marker, so this needs no
+ * extra endpoint.
+ */
+export function compactionInProgress(items: readonly TranscriptItem[]): boolean {
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const item = items[i]!;
+    if (item.kind !== 'marker' || item.marker !== 'compaction') continue;
+    return (item.payload as { phase?: unknown } | undefined)?.phase === 'started';
+  }
+  return false;
+}
+
+/**
  * Marker kinds that never become a chat row: internal bookkeeping whose
  * substance already has a first-class surface (goal state → goal surfaces;
  * skill activation → the Skill tool frame; a cron fire → the turn it spawns).
  */
 const HIDDEN_MARKERS = new Set(['goal', 'skill', 'plugin_command', 'cron.fired']);
 
-export function markerLabel(marker: string): string {
+export function markerLabel(marker: string, payload?: unknown): string {
+  if (marker === 'compaction') {
+    const phase = (payload as { phase?: unknown } | undefined)?.phase;
+    return phase === 'started' ? 'compacting context…' : 'context compacted';
+  }
   return MARKER_LABELS[marker] ?? marker;
 }
 

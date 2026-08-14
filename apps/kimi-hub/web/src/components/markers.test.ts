@@ -9,13 +9,19 @@
 import { describe, expect, it } from 'vitest';
 import type { TranscriptItem } from '@moonshot-ai/transcript';
 
-import { collapseMarkerRuns, isVisibleMarker, markerLabel } from './markers';
+import { collapseMarkerRuns, compactionInProgress, isVisibleMarker, markerLabel } from './markers';
 
 describe('markerLabel', () => {
   it('maps known markers to friendly labels', () => {
     expect(markerLabel('undo')).toBe('conversation rolled back');
     expect(markerLabel('compact')).toBe('context compacted');
     expect(markerLabel('compaction')).toBe('context compacted');
+  });
+
+  it('a bare started compaction reads as in-flight; completed ones read as the outcome', () => {
+    expect(markerLabel('compaction', { phase: 'started' })).toBe('compacting context…');
+    expect(markerLabel('compaction', { phase: 'completed' })).toBe('context compacted');
+    expect(markerLabel('compaction', { phase: 'cancelled' })).toBe('context compacted');
   });
 
   it('falls back to the raw marker name as-is', () => {
@@ -25,8 +31,8 @@ describe('markerLabel', () => {
   });
 });
 
-function marker(id: string, kind: string): TranscriptItem {
-  return { kind: 'marker', markerId: id, marker: kind } as TranscriptItem;
+function marker(id: string, kind: string, payload?: unknown): TranscriptItem {
+  return { kind: 'marker', markerId: id, marker: kind, payload } as TranscriptItem;
 }
 
 function taskref(id: string): TranscriptItem {
@@ -90,5 +96,41 @@ describe('collapseMarkerRuns', () => {
     expect(rows[0]).toMatchObject({ repeat: 2, key: 'r1' });
     expect(rows[1]).toMatchObject({ repeat: 1, key: 'm1' });
     expect(rows[2]).toMatchObject({ repeat: 1, key: 'm2' });
+  });
+});
+
+describe('compactionInProgress', () => {
+  it('is false with no compaction marker at all', () => {
+    expect(compactionInProgress([])).toBe(false);
+    expect(compactionInProgress([turn('t1')])).toBe(false);
+  });
+
+  it('is true while the newest compaction marker is a bare started', () => {
+    expect(
+      compactionInProgress([
+        turn('t1'),
+        marker('m1', 'compaction', { phase: 'started' }),
+      ]),
+    ).toBe(true);
+  });
+
+  it('is false once a terminal phase lands (completed / cancelled / blocked)', () => {
+    for (const phase of ['completed', 'cancelled', 'blocked'] as const) {
+      expect(
+        compactionInProgress([
+          marker('m1', 'compaction', { phase: 'started' }),
+          marker('m2', 'compaction', { phase }),
+        ]),
+      ).toBe(false);
+    }
+  });
+
+  it('an earlier completed marker does not hide a later in-flight one', () => {
+    expect(
+      compactionInProgress([
+        marker('m1', 'compaction', { phase: 'completed' }),
+        marker('m2', 'compaction', { phase: 'started' }),
+      ]),
+    ).toBe(true);
   });
 });

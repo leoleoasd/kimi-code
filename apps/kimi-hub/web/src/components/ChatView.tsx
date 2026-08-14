@@ -54,7 +54,7 @@ import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
-import { collapseMarkerRuns, markerLabel } from './markers';
+import { collapseMarkerRuns, compactionInProgress, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
 export function ChatView({
@@ -99,6 +99,7 @@ export function ChatView({
     { onSessionMetaUpdated },
   );
   const items = state.items;
+  const compacting = compactionInProgress(items);
 
   // The header title shares the rail's session-info key: one WS-driven
   // invalidation at the App level flips both in real time.
@@ -336,6 +337,7 @@ export function ChatView({
         ) : null}
         {status.data?.planMode === true ? <Badge tone="amber">plan</Badge> : null}
         {status.data?.swarmMode === true ? <Badge tone="violet">swarm</Badge> : null}
+        {compacting ? <Badge tone="amber">compacting context…</Badge> : null}
         {state.meta.goal !== undefined && state.meta.goal.status !== 'complete' ? (
           <Badge tone="green" title={state.meta.goal.objective}>
             goal: {state.meta.goal.status}
@@ -561,7 +563,7 @@ function MarkerView({ marker, repeat }: { marker: TranscriptMarker; repeat: numb
     <div className="mb-3 flex items-center gap-2 text-[10px] text-neutral-600">
       <div className="h-px flex-1 bg-neutral-800" />
       <span>
-        {markerLabel(marker.marker)}
+        {markerLabel(marker.marker, marker.payload)}
         {repeat > 1 ? ` ×${repeat}` : ''}
       </span>
       {marker.at !== undefined ? <span>{relTime(Date.parse(marker.at))}</span> : null}
