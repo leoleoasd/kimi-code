@@ -15,13 +15,14 @@
  */
 
 import { once } from 'node:events';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { WebSocket, WebSocketServer } from 'ws';
 
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -36,6 +37,7 @@ import {
 import { SEA_WEB_MANIFEST_VERSION, seaWebAssetKey } from '../scripts/sea-manifest.mjs';
 import { connectBannerLines } from '../src/banner.js';
 import { startHub, type RunningHub } from '../src/index.js';
+import { openPushModule, type PushLogger, type PushModule } from '../src/push.js';
 import {
   createEmbeddedWebAssetStore,
   loadEmbeddedWebAssetManifest,
@@ -43,6 +45,18 @@ import {
   registerWebAssetRoutes,
   type EmbeddedWebAssetManifest,
 } from '../src/routes/webAssets.js';
+
+/* web-push makes real network calls; stub it so fanout tests drive the
+ * sendNotification outcomes they need and the hub boots never dial out. */
+const pushMocks = vi.hoisted(() => ({ sendNotification: vi.fn() }));
+vi.mock('web-push', () => {
+  const api = {
+    generateVAPIDKeys: () => ({ publicKey: 'test-vapid-public', privateKey: 'test-vapid-private' }),
+    setVapidDetails: () => undefined,
+    sendNotification: pushMocks.sendNotification,
+  };
+  return { ...api, default: api };
+});
 
 const HUB_TOKEN = 'hub-test-token';
 const LOCAL_TOKEN = 'local-test-token';
@@ -1283,5 +1297,97 @@ describe('embedded web assets (SEA store)', () => {
 
   it('(i) loadEmbeddedWebAssetManifest is null outside a SEA (vitest is not one)', () => {
     expect(loadEmbeddedWebAssetManifest()).toBeNull();
+  });
+});
+
+/* --------------------------- web push fanout --------------------------- */
+
+/**
+ * `openPushModule` failure handling: a permanently dead subscription (browser
+ * revoked → 404/410; retired VAPID binding → 400 VapidPkHashMismatch) is
+ * pruned from memory AND the persisted file, every failure is logged through
+ * the injected logger, and a dead endpoint never blocks the healthy ones.
+ */
+describe('web push fanout failure handling', () => {
+  interface PushWarning {
+    obj: {
+      endpointHost?: string;
+      statusCode?: number;
+      reason?: string;
+      pruned?: boolean;
+    };
+    msg?: string;
+  }
+
+  let dataDir: string;
+  let warnings: PushWarning[];
+  let push: PushModule;
+
+  const fakeSubscription = (endpoint: string): Parameters<PushModule['upsert']>[0] =>
+    ({ endpoint, keys: { p256dh: 'cDMyZA', auth: 'YXV0aA' } }) as never as Parameters<PushModule['upsert']>[0];
+
+  beforeAll(async () => {
+    dataDir = await mkdtemp(join(tmpdir(), 'kimi-hub-push-'));
+    warnings = [];
+    const logger: PushLogger = {
+      warn: (obj, msg) => {
+        warnings.push({ obj: obj as PushWarning['obj'], msg });
+      },
+    };
+    push = await openPushModule(dataDir, logger);
+  });
+
+  afterAll(async () => {
+    pushMocks.sendNotification.mockReset();
+    await push.flush(); // drain queued best-effort writes before removing the dir
+    await rm(dataDir, { recursive: true, force: true });
+  });
+
+  it('prunes a 400 VapidPkHashMismatch subscription, logs it, and still serves the healthy one', async () => {
+    const DEAD = 'https://web.push.apple.com/dead-endpoint';
+    const HEALTHY = 'https://web.push.apple.com/healthy-endpoint';
+    pushMocks.sendNotification.mockImplementation(async (sub: { endpoint: string }) => {
+      if (sub.endpoint === DEAD) {
+        const error = new Error('Received unexpected response code') as Error & { statusCode: number; body: string };
+        error.statusCode = 400;
+        error.body = '{"reason":"VapidPkHashMismatch"}';
+        throw error;
+      }
+      return { statusCode: 201, headers: {}, body: '' };
+    });
+    push.upsert(fakeSubscription(DEAD));
+    push.upsert(fakeSubscription(HEALTHY));
+    const sent = await push.fanout({ notificationId: 'n1', sessionId: 's1', title: 't', body: 'b', agentName: 'a' });
+    expect(sent).toBe(1);
+    expect(push.list().map((s) => s.endpoint)).toEqual([HEALTHY]);
+    // Persist is fire-and-forget (serialized internally): poll until the file catches up.
+    const persistedPath = join(dataDir, 'push-subscriptions.json');
+    await waitFor(() => {
+      try {
+        const persisted = JSON.parse(readFileSync(persistedPath, 'utf8')) as Array<{ endpoint: string }>;
+        return persisted.length === 1 && persisted[0]!.endpoint === HEALTHY;
+      } catch {
+        return false; // first persist (tmp + rename) hasn't landed yet
+      }
+    });
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]!.obj).toMatchObject({
+      endpointHost: 'web.push.apple.com',
+      statusCode: 400,
+      reason: 'VapidPkHashMismatch',
+      pruned: true,
+    });
+  });
+
+  it('logs but keeps the subscription on a transient failure (503, no reason)', async () => {
+    const FLAKY = 'https://fcm.googleapis.com/fcm/send/flaky';
+    pushMocks.sendNotification.mockRejectedValue(Object.assign(new Error('Received unexpected response code'), { statusCode: 503 }));
+    push.upsert(fakeSubscription(FLAKY));
+    const sent = await push.fanout({ notificationId: 'n2', sessionId: 's1', title: 't', body: 'b', agentName: 'a' });
+    expect(sent).toBe(0);
+    expect(push.list().map((s) => s.endpoint)).toContain(FLAKY);
+    expect(warnings.at(-1)!.obj).toMatchObject({ endpointHost: 'fcm.googleapis.com', statusCode: 503, pruned: false });
+    expect(warnings.at(-1)!.obj.reason).toBeUndefined();
+    push.remove(FLAKY);
   });
 });

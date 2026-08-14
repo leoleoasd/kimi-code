@@ -67,7 +67,12 @@ export async function showHubNotification(notify: NotifyPayload): Promise<void> 
  * Web Push handshake: fetch the hub's VAPID public key, subscribe, upsert the
  * registration. Server-side stores it so EVEN WITH THE PAGE CLOSED the hub
  * can `sendNotification` to this device. Idempotent: upserts reuse the
- * existing subscription (endpoint-equal) on every page load.
+ * existing subscription (endpoint-equal) on every page load — UNLESS the hub
+ * rotated its VAPID keypair: a subscription is bound to the application
+ * server key it was created with (APNs answers every send for a mismatched
+ * key with 400 VapidPkHashMismatch), so a stale one is unsubscribed and
+ * re-created with the current key. Notification permission was granted on
+ * this device already, so the re-subscribe needs no new prompt.
  */
 export async function ensurePushSubscription(
   hubBaseUrl: string,
@@ -85,6 +90,10 @@ export async function ensurePushSubscription(
     if (typeof publicKey !== 'string' || publicKey === '') return false;
     const applicationServerKey = urlBase64ToUint8Array(publicKey);
     let subscription = await registration.pushManager.getSubscription();
+    if (subscription !== null && !applicationServerKeysEqual(subscription.options.applicationServerKey, applicationServerKey)) {
+      await subscription.unsubscribe();
+      subscription = null;
+    }
     subscription ??= await registration.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: applicationServerKey as unknown as BufferSource,
@@ -103,6 +112,13 @@ export async function ensurePushSubscription(
     // roster-stream channel still covers the open page.
     return false;
   }
+}
+
+/** Byte equality between the stored subscription's key and the hub's current VAPID key. */
+function applicationServerKeysEqual(existing: ArrayBuffer | null, wanted: Uint8Array): boolean {
+  if (existing === null || existing.byteLength !== wanted.byteLength) return false;
+  const existingBytes = new Uint8Array(existing);
+  return existingBytes.every((byte, i) => byte === wanted[i]);
 }
 
 /** VAPID public keys travel as url-safe base64 without padding. */
