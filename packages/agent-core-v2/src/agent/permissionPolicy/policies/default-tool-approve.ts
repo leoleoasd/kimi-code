@@ -28,6 +28,8 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'SetGoalBudget',
   'UpdateGoal',
   'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
   'select_tools',
 ]);
 
