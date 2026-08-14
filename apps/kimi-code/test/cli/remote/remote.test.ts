@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { type HubConnection, IHubConnectionService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { registerRemoteCommand } from '#/cli/sub/remote';
-import { hubUiUrl, parseHubUrl, parseRemoteCommand, resolveHubToken, wireHubTools } from '#/cli/sub/remote/shared';
+import { DEFAULT_LOCAL_HUB_URL, hubUiUrl, parseHubUrl, parseRemoteCommand, resolveHubToken, wireHubTools } from '#/cli/sub/remote/shared';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 
 function makeProgram(): Command {
@@ -129,6 +129,21 @@ describe('parseRemoteCommand (/remote)', () => {
     });
   });
 
+  it('an omitted hub URL defaults to the local hub', () => {
+    expect(parseRemoteCommand('connect')).toEqual({
+      kind: 'connect',
+      hubUrl: DEFAULT_LOCAL_HUB_URL,
+      token: undefined,
+      name: undefined,
+    });
+    expect(parseRemoteCommand('connect --token t-1')).toEqual({
+      kind: 'connect',
+      hubUrl: DEFAULT_LOCAL_HUB_URL,
+      token: 't-1',
+      name: undefined,
+    });
+  });
+
   it('parses --token and --name values, both separated and =-joined', () => {
     expect(parseRemoteCommand('connect https://hub.example.com --token t-1 --name dev-box')).toEqual(
       {
@@ -182,18 +197,16 @@ describe('parseRemoteCommand (/remote)', () => {
       const parsed = parseRemoteCommand(args);
       expect(parsed.kind).toBe('error');
       if (parsed.kind === 'error') {
-        expect(parsed.message).toContain('/remote connect <hub-url>');
+        expect(parsed.message).toContain('/remote connect');
       }
     }
   });
 
-  it('errors with usage when `connect` or the hub URL is missing', () => {
-    for (const args of ['https://hub.example.com', 'connect', 'connect --token t']) {
-      const parsed = parseRemoteCommand(args);
-      expect(parsed.kind).toBe('error');
-      if (parsed.kind === 'error') {
-        expect(parsed.message).toContain('/remote connect <hub-url>');
-      }
+  it('errors with usage when the subcommand is missing', () => {
+    const parsed = parseRemoteCommand('https://hub.example.com');
+    expect(parsed.kind).toBe('error');
+    if (parsed.kind === 'error') {
+      expect(parsed.message).toContain('/remote connect');
     }
   });
 

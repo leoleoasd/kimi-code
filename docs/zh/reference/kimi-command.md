@@ -195,13 +195,13 @@ kimi web --port 58628    # 指定绑定端口
 
 生成新的持久化 bearer token（写入 `~/.kimi-code/server.token`），旧 token 立即失效。token 是整个 home 目录共享的，所有运行中的实例会在下一次鉴权校验时自动换用新 token，无需重启。
 
-### `kimi remote connect <hub-url>`
+### `kimi remote connect [hub-url]`
 
 把本机的某个会话桥接到运行中的 kimi hub 上，让 hub 的 web UI 可以在同一个页面里列出并控制它——和其他机器桥接过来的会话并列。连接是会话级的：hub 只能看到并驱动你桥接的那个会话，接触不到本机的其他内容。该命令会启动一个仅提供 API 的本地服务（与 [`kimi web`](#kimi-web) 是同一引擎，但不托管 web UI），并通过反向隧道主动外连 hub，因此本机无需监听任何可达端口。命令保持前台运行，收到 `SIGINT` / `SIGTERM` 时干净退出。
 
 ```sh
 kimi remote connect https://hub.example.com --token YOUR_HUB_TOKEN --session <session-id>
-kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --name dev-box
+kimi remote connect --token t --session session_abc123   # 省略地址时连接本机 hub（http://127.0.0.1:58630）
 ```
 
 | 选项 | 说明 |

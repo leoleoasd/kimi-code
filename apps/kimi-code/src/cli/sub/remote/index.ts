@@ -12,7 +12,7 @@ import type { Command } from 'commander';
 
 import { parseServerOptions, DEFAULT_SERVER_PORT } from '../web/shared';
 import { runRemoteConnect } from './run';
-import { HUB_TOKEN_ENV } from './shared';
+import { DEFAULT_LOCAL_HUB_URL, HUB_TOKEN_ENV } from './shared';
 
 interface RemoteConnectCliOptions {
   token?: string;
@@ -28,7 +28,10 @@ export function registerRemoteCommand(program: Command): void {
 
   remote
     .command('connect')
-    .argument('<hub-url>', 'Hub origin (http(s):// or ws(s)://).')
+    .argument(
+      '[hub-url]',
+      `Hub origin (http(s):// or ws(s)://); defaults to the local hub (${DEFAULT_LOCAL_HUB_URL}).`,
+    )
     .description('Start the local loopback server and dial out to a running kimi hub.')
     .requiredOption(
       '--session <id>',
@@ -41,10 +44,10 @@ export function registerRemoteCommand(program: Command): void {
       `Local server port (default ${DEFAULT_SERVER_PORT})`,
       String(DEFAULT_SERVER_PORT),
     )
-    .action(async (hubUrl: string, opts: RemoteConnectCliOptions) => {
+    .action(async (hubUrl: string | undefined, opts: RemoteConnectCliOptions) => {
       try {
         await runRemoteConnect({
-          hubUrl,
+          hubUrl: hubUrl ?? DEFAULT_LOCAL_HUB_URL,
           token: opts.token,
           name: opts.name,
           sessionId: opts.session,
