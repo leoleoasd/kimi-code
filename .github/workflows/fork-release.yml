@@ -16,10 +16,10 @@ on:
         required: true
         type: string
       prerelease:
-        description: 'Mark the release as a pre-release'
+        description: 'Mark the release as a pre-release (install.sh tracks the latest non-prerelease!)'
         required: false
         type: boolean
-        default: true
+        default: false
   push:
     tags:
       - 'fork-v*'
