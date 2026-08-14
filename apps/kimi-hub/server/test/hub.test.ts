@@ -1095,12 +1095,22 @@ describe('hub with bypass on (--dangerous-bypass-auth)', () => {
     ]);
   });
 
-  it('(e) still rejects a bad-Host roster-stream upgrade (the allowlist is NEVER bypassed)', async () => {
+  it('(e) bypass also lifts the Host allowlist (bad-Host HTTP + WS pass)', async () => {
+    const res = await fetch(`${ctx.hub.origin}/hub/api/agents`, {
+      headers: { host: 'evil.example.com' },
+    });
+    expect(res.status).toBe(200);
     const stream = new WebSocket(`${ctx.wsOrigin}/hub/api/stream`, {
       headers: { host: 'evil.example.com' },
     });
-    const [error] = (await once(stream, 'error')) as [Error];
-    expect(error.message).toContain('403');
+    try {
+      await once(stream, 'open');
+      stream.close();
+      await once(stream, 'close');
+    } catch (error) {
+      stream.close();
+      throw error;
+    }
   });
 
   it('(f) registers a tunnel agent carrying a WRONG token (registry trustAnyToken)', async () => {

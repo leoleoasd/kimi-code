@@ -119,7 +119,8 @@ requires it:
   the wire as part of a URL).
 
 `--dangerous-bypass-auth` (mirrors `kimi web`) skips that gate on BOTH ends of
-the wire and prints a loud banner warning; the Host allowlist stays on.
+the wire and prints a loud banner warning; the Host allowlist is lifted too
+(reverse proxies / tunnel domains forward arbitrary Host values).
 Browser surfaces drop their checks (HTTP hook + roster-stream/agents-relay WS
 upgrades), and `startHub` creates the tunnel registry with
 `trustAnyToken: true` (`createTunnelRegistry` option), so the
