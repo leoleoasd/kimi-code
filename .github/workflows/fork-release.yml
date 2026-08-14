@@ -69,6 +69,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Build hub web UI (embedded into the SEA blob)
+        run: pnpm --filter @moonshot-ai/kimi-hub-web run build
+
       - name: Build + smoke the hub SEA executable
         run: pnpm --filter @moonshot-ai/kimi-hub-server run build:native:smoke
 
