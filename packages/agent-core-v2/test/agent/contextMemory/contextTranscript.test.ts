@@ -86,6 +86,37 @@ describe('reduceContextTranscript', () => {
     expect(result.foldedLength).toBe(2);
   });
 
+  it('pins the engine turn ordinal (counted from turn.prompt records) onto the prompt message only', () => {
+    const result = reduceContextTranscript([
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u2')),
+      appendMessage(userMessage('note', { kind: 'task', taskId: 'task_1' } as PromptOrigin)),
+      ...assistantStep('s2', 'a2'),
+    ]);
+    const promptIndices = texts(result).flatMap((t, i) => (t === 'u1' || t === 'u2' ? [i] : []));
+    expect(promptIndices).toHaveLength(2);
+    expect(result.turnOrdinals[promptIndices[0]!]).toBe(0);
+    expect(result.turnOrdinals[promptIndices[1]!]).toBe(1);
+    // Steps, replies, and unpinned origins (a task notification folded INTO
+    // the open turn) carry no ordinal.
+    expect(result.turnOrdinals.filter((o) => o === undefined)).toHaveLength(result.entries.length - 2);
+    const taskIdx = texts(result).indexOf('note');
+    expect(result.turnOrdinals[taskIdx!]).toBeUndefined();
+  });
+
+  it('queues prompt ordinals FIFO when prompts arrive before their copies persist', () => {
+    const result = reduceContextTranscript([
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u1')),
+      appendMessage(userMessage('u2')),
+    ]);
+    expect(result.turnOrdinals).toEqual([0, 1]);
+  });
+
   it('compaction keeps the prefix and appends a user-role summary marker', () => {
     const result = reduceContextTranscript([
       appendMessage(userMessage('u1')),

@@ -13,6 +13,14 @@ import type { ContextMessage } from './types';
 export interface ContextTranscript {
   readonly entries: readonly ContextMessage[];
   readonly times: readonly (number | undefined)[];
+  /**
+   * Engine turn ordinals aligned 1:1 with `entries`: set on a turn's persisted
+   * prompt message (the ordinal counts `turn.prompt` records — matching the
+   * live engine numbering), `undefined` for every other entry. History
+   * consumers (the transcript cold fold) use it to pin turn ids to the
+   * engine's numbering instead of re-deriving them.
+   */
+  readonly turnOrdinals: readonly (number | undefined)[];
   readonly foldedLength: number;
 }
 
@@ -35,6 +43,8 @@ interface MutableMessage {
 interface MutableEntry {
   message: MutableMessage;
   time?: number;
+  /** Engine ordinal when this entry is a turn's persisted prompt message. */
+  turnOrdinal?: number;
 }
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
@@ -48,6 +58,9 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let foldedLength = 0;
   let clearFloor = 0;
   let openEntry: MutableEntry | undefined;
+  /** Queued engine ordinals announced by `turn.prompt` records, consumed in FIFO order by the next appended conversation message (the prompt's persisted copy). */
+  const pendingTurnOrdinals: number[] = [];
+  let turnOrdinalCounter = 0;
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
@@ -80,7 +93,9 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       push({ message: message as MutableMessage, time });
     },
     pushMessage: (message, time) => {
-      push(toMutableEntry(message, time));
+      const entry = toMutableEntry(message, time);
+      entry.turnOrdinal = pendingTurnOrdinals.shift();
+      push(entry);
     },
   });
 
@@ -120,6 +135,12 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         fold.appendMessage(record['message'] as ContextMessage, record.time);
         break;
       }
+      case 'turn.prompt':
+        // The next appended message is this prompt's persisted copy — it owns
+        // the engine's turn ordinal (record queue matches the enqueue order).
+        pendingTurnOrdinals.push(turnOrdinalCounter);
+        turnOrdinalCounter += 1;
+        break;
       case 'context.append_loop_event': {
         fold.loopEvent(record['event'] as LoopRecordedEvent, record.time);
         break;
@@ -160,6 +181,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     result: () => ({
       entries: transcript.map((e) => e.message),
       times: transcript.map((e) => e.time),
+      turnOrdinals: transcript.map((e) => e.turnOrdinal),
       foldedLength,
     }),
   };

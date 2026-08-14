@@ -18,6 +18,8 @@ import { IEventBus } from '#/app/event/eventBus';
 import { Emitter, Event } from '#/_base/event';
 import { IAgentProfileService, type ProfileData } from '#/agent/profile/profile';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
+import type { AgentProfile } from '#/app/agentProfileCatalog/agentProfileCatalog';
 import { IAgentToolActivationService } from '#/agent/toolActivation/toolActivation';
 import { AgentToolActivationService } from '#/agent/toolActivation/toolActivationService';
 import {
@@ -140,9 +142,11 @@ describe('AgentToolActivationService', () => {
   let savedContributions: readonly AgentToolContribution[];
   let disposables: DisposableStore;
   const profileData: {
+    profileName?: string;
     activeToolNames?: readonly string[];
     disallowedTools?: readonly string[];
   } = {};
+  const catalogDefs: Record<string, Pick<AgentProfile, 'tools'> | undefined> = {};
   const gateData: { disabledTools: readonly string[] } = { disabledTools: [] };
   const runtimeChangeEmitter = new Emitter<void>();
   const runtimeData = {
@@ -157,6 +161,12 @@ describe('AgentToolActivationService', () => {
       additionalServices: (reg) => {
         reg.definePartialInstance(IAgentProfileService, {
           data: () => profileData as ProfileData,
+          addActiveTool: (name: string) => {
+            profileData.activeToolNames = [...(profileData.activeToolNames ?? []), name];
+          },
+        });
+        reg.definePartialInstance(ISessionAgentProfileCatalog, {
+          get: (name: string) => catalogDefs[name] as AgentProfile | undefined,
         });
         reg.definePartialInstance(IEventBus, {
           subscribe: () => toDisposable(() => {}),
@@ -197,8 +207,10 @@ describe('AgentToolActivationService', () => {
     runtimeData.capabilities.add('process');
     _clearScopedRegistryForTests();
     _clearAgentToolContributionsForTests();
+    delete profileData.profileName;
     delete profileData.activeToolNames;
     delete profileData.disallowedTools;
+    for (const key of Object.keys(catalogDefs)) delete catalogDefs[key];
     gateData.disabledTools = [];
   });
 
@@ -397,6 +409,43 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Beta')).toBeUndefined();
   });
 
+  it('tops up a frozen (bind-time) tool set from the bound profile def after a resume', async () => {
+    profileData.profileName = 'agent';
+    profileData.activeToolNames = ['Alpha'];
+    catalogDefs['agent'] = { tools: ['Alpha', 'Beta'] };
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
+    const ix = createActivationHost();
+    const activation = ix.get(IAgentToolActivationService);
+    const registry = ix.get(IAgentToolRegistryService);
+
+    await activation.activate();
+
+    expect(registry.resolve('Alpha')).toBeInstanceOf(AlphaTool);
+    expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
+    expect(profileData.activeToolNames).toEqual(['Alpha', 'Beta']);
+
+    // The top-up is once per process: a mid-session removal is not fought.
+    profileData.activeToolNames = ['Alpha'];
+    await activation.activate();
+    expect(profileData.activeToolNames).toEqual(['Alpha']);
+  });
+
+  it('still honors disallowedTools over a topped-up profile def', async () => {
+    profileData.profileName = 'agent';
+    profileData.activeToolNames = ['Alpha'];
+    profileData.disallowedTools = ['Beta'];
+    catalogDefs['agent'] = { tools: ['Alpha', 'Beta'] };
+    registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
+    registerAgentToolService(IBetaTool, BetaTool, { name: 'Beta' });
+    const ix = createActivationHost();
+
+    await ix.get(IAgentToolActivationService).activate();
+
+    expect(ix.get(IAgentToolRegistryService).resolve('Beta')).toBeUndefined();
+    expect(betaConstructions).toBe(0);
+  });
+
   it('is idempotent and picks up newly allowed tools on re-activation', async () => {
     profileData.activeToolNames = ['Alpha'];
     registerAgentToolService(IAlphaTool, AlphaTool, { name: 'Alpha' });
@@ -487,6 +536,12 @@ describe('AgentToolActivationService', () => {
               },
               onDidChange: Event.None as Event<void>,
             } satisfies ISessionToolPolicyGate,
+          ],
+          [
+            ISessionAgentProfileCatalog,
+            {
+              get: (name: string) => catalogDefs[name] as AgentProfile | undefined,
+            } as ISessionAgentProfileCatalog,
           ],
         ],
       });

@@ -12,6 +12,7 @@ const PLAN_TOOLS = [
   'Grep',
   'WebSearch',
   'FetchURL',
+  'NotifyUser',
 ] as const;
 
 const PLAN_ROLE =

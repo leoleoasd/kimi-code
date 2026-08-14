@@ -10,6 +10,7 @@ import { AgentStatusUpdated } from '#/agent/usage/usageEvents';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 import { IAgentRuntimeService } from '#/agent/runtimeBinding/agentRuntime';
 
@@ -19,11 +20,13 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<AgentToolContribution, IDisposable>();
+  private profileDefSynced = false;
 
   constructor(
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionAgentProfileCatalog private readonly profileCatalog: ISessionAgentProfileCatalog,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IAgentRuntimeService private readonly runtime: IAgentRuntimeService,
     @IEventBus eventBus: IEventBus,
@@ -47,8 +50,23 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   }
 
   activate(): Promise<void> {
+    this.syncToolsFromProfileDef();
     this.activateRecords(this.contributions.items);
     return Promise.resolve();
+  }
+
+  private syncToolsFromProfileDef(): void {
+    if (this.profileDefSynced) return;
+    const data = this.profile.data();
+    if (data.profileName === undefined) return;
+    this.profileDefSynced = true;
+    const tools = this.profileCatalog.get(data.profileName)?.tools;
+    if (tools === undefined || data.activeToolNames === undefined) return;
+    for (const name of tools) {
+      if (!data.activeToolNames.includes(name)) {
+        this.profile.addActiveTool(name);
+      }
+    }
   }
 
   private activateRecords(records: readonly AgentToolContribution[]): void {

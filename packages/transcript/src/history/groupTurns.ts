@@ -65,6 +65,7 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
+  turnOrdinals?: readonly (number | undefined)[],
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
@@ -137,12 +138,49 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  const startTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
-    const ordinal = nextOrdinal;
-    nextOrdinal += 1;
+  const startTurn = (
+    origin: TurnOrigin,
+    prompt?: string,
+    attachmentIds?: string[],
+    engineOrdinal?: number,
+  ): TurnDraft => {
+    // An engine-announced ordinal pins the id to the live numbering (the
+    // backfill then merges turn-for-turn with live ops); otherwise the fold
+    // numbers sequentially past every ordinal announced so far.
+    const ordinal = engineOrdinal ?? nextOrdinal;
+    nextOrdinal = Math.max(ordinal + 1, nextOrdinal);
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;
+  };
+
+  /**
+   * Fold one task-notification message INTO the open turn as a user-role
+   * frame — mirrors the live projector's `onTaskNotified`: mid-turn arrivals
+   * never open a new turn (and never consume an engine ordinal); only an
+   * arrival while the engine was idle opens a dedicated turn, which the
+   * journal announces with its own `turn.prompt` record (→ ordinal hint).
+   */
+  const foldTaskNotificationIntoTurn = (message: HistoryMessage): void => {
+    const current = ensureTurn();
+    let step = current.steps.at(-1);
+    if (step === undefined) {
+      step = {
+        stepId: `${current.turnId}.${current.steps.length + 1}`,
+        ordinal: current.steps.length + 1,
+        frames: [],
+      };
+      current.steps.push(step);
+    }
+    const payload = message.origin as { taskId?: unknown } | undefined;
+    step.frames.push({
+      kind: 'text',
+      frameId: `${step.stepId}.f${step.frames.length + 1}`,
+      role: 'user',
+      text: textOf(message),
+      ...(typeof payload?.taskId === 'string' ? { taskId: payload.taskId } : {}),
+    });
+    syncTurnItem(items, current);
   };
 
   const pushMarker = (marker: string, payload?: unknown): void => {
@@ -151,14 +189,22 @@ export function groupMessagesIntoSnapshot(
     items.push(item);
   };
 
-  for (const message of messages) {
+  for (const [messageIndex, message] of messages.entries()) {
     if (message.role === 'system') continue;
     const originKind = message.origin?.kind;
+    const engineOrdinal = turnOrdinals?.[messageIndex];
 
     if (message.role === 'user') {
+      if (originKind === 'task' && engineOrdinal === undefined) {
+        foldTaskNotificationIntoTurn(message);
+        continue;
+      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          startTurn(mapOrigin(message));
+          // A real turn boundary: advance the grouping (and the ordinal).
+          // The steering text is internal — the boundary lands promptless,
+          // mirroring the live path's displayable-origin gate.
+          startTurn(mapOrigin(message), undefined, undefined, engineOrdinal);
         }
         continue;
       }
@@ -167,7 +213,7 @@ export function groupMessagesIntoSnapshot(
         const opening = isUserSlashPrompt(message) ? foldTurnOpeningInput(message) : undefined;
         pushMarker(markerKey, { text: opening?.text ?? textOf(message), origin: message.origin });
         if (opening !== undefined) {
-          startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+          startTurn(mapOrigin(message), opening.text, opening.attachmentIds, engineOrdinal);
         }
         continue;
       }
@@ -183,11 +229,11 @@ export function groupMessagesIntoSnapshot(
         });
         const callerMessage = { ...message, content: parts.slice(bundled.length) };
         const opening = foldTurnOpeningInput(callerMessage);
-        startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+        startTurn(mapOrigin(message), opening.text, opening.attachmentIds, engineOrdinal);
         continue;
       }
       const opening = foldTurnOpeningInput(message);
-      startTurn(mapOrigin(message), opening.text, opening.attachmentIds);
+      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, engineOrdinal);
       continue;
     }
 
