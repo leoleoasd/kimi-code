@@ -22,6 +22,8 @@ const PLAN_TOOLS = [
   'WebSearch',
   'FetchURL',
   'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
 ] as const;
 
 const PLAN_ROLE =

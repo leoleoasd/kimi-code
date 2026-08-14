@@ -46,6 +46,8 @@ const AGENT_TOOLS = [
   'SetGoalBudget',
   'UpdateGoal',
   'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
   'mcp__*',
 ] as const;
 
@@ -70,6 +72,8 @@ const CODER_TOOLS = [
   'FetchURL',
   'Write',
   'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
   'mcp__*',
 ] as const;
 
@@ -82,6 +86,8 @@ const EXPLORE_TOOLS = [
   'WebSearch',
   'FetchURL',
   'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
 ] as const;
 
 const CODER_ROLE =

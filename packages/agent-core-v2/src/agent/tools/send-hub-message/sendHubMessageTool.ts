@@ -9,8 +9,7 @@
  * to `isError` results rendered for the model. Bound at Agent scope.
  */
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   type HubPromptStatus,
   type HubRemoteAgent,
@@ -116,10 +115,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  ISendHubMessageTool,
-  SendHubMessageTool,
-  ScopeActivation.OnDemand,
-  'tools',
-);
+registerAgentToolService(ISendHubMessageTool, SendHubMessageTool, {
+  name: 'SendHubMessage',
+  domain: 'session',
+});
