@@ -1,34 +1,34 @@
 /**
- * Thinking frame: streaming display, collapsed by default to the tail of the
- * text (the TUI parity rule) with a one-tap expand to the full text.
+ * Thinking frame: streaming display, collapsed by default to the LAST TWO
+ * visual rows of the text, with a one-tap expand to the full text.
  *
- * The collapsed box is PINNED to exactly two visual lines (min-height +
- * line-clamp, both against leading-4): a logical "line" of the tail slice
- * wraps to up to 4–5 rows on narrow screens, so a content-sized box grows
- * 0→5 rows while streaming and makes the whole timeline jitter — worst on
- * phones. With a fixed height the clip changes, the layout never does.
+ * The collapsed box is a fixed two-row window (`h-8` = 2 × `leading-4`)
+ * whose content is bottom-anchored with top overflow clipped — no string
+ * slicing and no -webkit-line-clamp: a "logical" line wraps to up to 4–5
+ * rows on narrow screens, so the LAST two visual rows of the stream are
+ * always what shows, on any device width, and the surrounding layout never
+ * shifts while streaming.
  *
  * Why two lines and not zero: a fully-collapsed thinking block hides the
  * signal users actually want mid-turn (what the model is reasoning about
- * right now). The trailing lines cover that without eating the timeline.
+ * right now). The trailing rows cover that without eating the timeline.
  */
 
-import { useState } from 'react';
-
-/** The trailing display slice of a thinking block: split on hard newlines. */
-export function thinkingTailLines(text: string, lines = 2): string {
-  const trimmed = text.replace(/\s+$/, '');
-  if (trimmed === '') return '';
-  const parts = trimmed.split('\n');
-  return parts.slice(-lines).join('\n');
-}
+import { useLayoutEffect, useRef, useState } from 'react';
 
 export function ThinkingFrame({ text, streaming = false }: { text: string; streaming?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const body = expanded ? text : thinkingTailLines(text);
-  const canExpand = body !== text;
-  const bodyClass =
-    'mt-1 font-mono text-[11px] leading-4 whitespace-pre-wrap text-neutral-500' + (expanded ? '' : ' line-clamp-2 min-h-8');
+  // Measured clipping: the collapsed window truncates visually (wrapped
+  // rows), which simple line counting cannot predict — offer expand only
+  // when the bottom-anchored content block really overruns the window.
+  const clampRef = useRef<HTMLDivElement>(null);
+  const [clipped, setClipped] = useState(false);
+  useLayoutEffect(() => {
+    const el = clampRef.current;
+    setClipped(el !== null && el.offsetHeight > 2 * 16 + 1);
+  }, [text, expanded]);
+  const canExpand = expanded || clipped;
+  const body = expanded ? text : text.replace(/\s+$/, '');
   return (
     <div className="mb-2 max-w-full rounded border border-dashed border-neutral-700/70 px-3 py-1.5 sm:max-w-[92%]">
       <button
@@ -39,11 +39,22 @@ export function ThinkingFrame({ text, streaming = false }: { text: string; strea
       >
         thinking{streaming ? ' …' : ''}{expanded ? ' ▾' : canExpand ? ' ▸' : ''}
       </button>
-      <div className={bodyClass}>
-        {body}
-        {streaming ? (
-          <span className="stream-caret ml-0.5 inline-block h-3 w-[5px] translate-y-0.5 bg-neutral-500" />
-        ) : null}
+      <div
+        className={
+          expanded
+            ? 'mt-1 font-mono text-[11px] leading-4 whitespace-pre-wrap text-neutral-500'
+            : 'mt-1 relative h-8 overflow-hidden font-mono text-[11px] leading-4 text-neutral-500'
+        }
+      >
+        <div
+          ref={expanded ? undefined : clampRef}
+          className={expanded ? undefined : 'absolute inset-x-0 bottom-0 whitespace-pre-wrap'}
+        >
+          {body}
+          {streaming ? (
+            <span className="stream-caret ml-0.5 inline-block h-3 w-[5px] translate-y-0.5 bg-neutral-500" />
+          ) : null}
+        </div>
       </div>
     </div>
   );
