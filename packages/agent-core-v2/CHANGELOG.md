@@ -1,5 +1,16 @@
 # @moonshot-ai/agent-core-v2
 
+## 0.4.0
+
+### Minor Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add the Session-scoped `ISessionTitleService` for managed AI session titles: composes the excerpt sent to the platform chat_title tool from the main agent's conversation (the first user prompts, the strict `first_turn` pair, or the head+tail `digest` for multi-turn sessions; assistant segments keep only final text), persists the result with a `titleKind` (`replaceable` / `generated` / `custom`) that never overwrites a user-renamed title unless explicitly forced, and rebroadcasts `session.meta.updated`. Gated by the new experimental `auto_session_title` flag and a managed OAuth login.
+
+### Patch Changes
+
+- Updated dependencies [[`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629), [`4a93f70`](https://github.com/MoonshotAI/kimi-code/commit/4a93f70aa2cf5f70a88b4f8eeb2e409aab2c8f59)]:
+  - @moonshot-ai/kimi-code-oauth@0.4.0
+
 ## 0.3.2
 
 ### Patch Changes

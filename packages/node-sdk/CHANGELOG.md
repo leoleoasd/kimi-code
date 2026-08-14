@@ -1,5 +1,11 @@
 # @moonshot-ai/kimi-code-sdk
 
+## 0.18.0
+
+### Minor Changes
+
+- [#2351](https://github.com/MoonshotAI/kimi-code/pull/2351) [`6be2697`](https://github.com/MoonshotAI/kimi-code/commit/6be26978b123bacf1c5ebce52bbeb6f7b7ff0629) Thanks [@7Sageer](https://github.com/7Sageer)! - Add `generateSessionTitle` (v2 engine) for managed AI session titles: optional `force` regeneration over generated/custom titles and selectable conversation excerpts (`user_prompts` / `first_turn` / `digest`). Gated by the experimental `auto_session_title` flag and a managed OAuth login.
+
 ## 0.17.0
 
 ### Minor Changes
