@@ -39,6 +39,8 @@
     "#/tui/commands": "./src/tui/commands/index.ts",
     "#/cli/sub/web": "./src/cli/sub/web/index.ts",
     "#/cli/sub/web/*": "./src/cli/sub/web/*.ts",
+    "#/cli/sub/remote": "./src/cli/sub/remote/index.ts",
+    "#/cli/sub/remote/*": "./src/cli/sub/remote/*.ts",
     "#/generated/vis-web-asset": [
       "./src/generated/vis-web-asset.ts",
       "./src/generated/vis-web-asset.d.ts"
@@ -92,6 +94,7 @@
     "@moonshot-ai/migration-legacy": "workspace:^",
     "@moonshot-ai/minidb": "workspace:^",
     "@moonshot-ai/pi-tui": "workspace:^",
+    "@moonshot-ai/remote-tunnel": "workspace:^",
     "@moonshot-ai/vis-server": "workspace:^",
     "@moonshot-ai/vis-web": "workspace:*",
     "@types/semver": "^7.7.0",

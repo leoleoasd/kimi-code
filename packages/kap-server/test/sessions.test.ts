@@ -1688,3 +1688,124 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
     expect(fetched.body.data.id).toBe(id);
   });
 });
+
+/**
+ * The host-injected slash-command bridge: the route shuttles the raw composer
+ * line + session id to the bridge and envelopes the returned lines; a server
+ * without a bridge answers 40418 and an empty catalog.
+ */
+describe('server-v2 /api/v1/sessions :command', () => {
+  let server: RunningServer | undefined;
+  let home: string | undefined;
+  let base: string;
+  let bridge: {
+    calls: { sessionId: string; input: string }[];
+    catalog: () => { name: string; aliases: string[]; usage: string; description?: string }[];
+    execute: (
+      sessionId: string,
+      input: string,
+    ) => Promise<{ notices: string[]; errors: string[] }>;
+  };
+
+  beforeEach(async () => {
+    home = await mkdtemp(join(tmpdir(), 'kimi-server-v2-command-'));
+    bridge = {
+      calls: [],
+      catalog: () => [
+        { name: 'yolo', aliases: ['yes'], usage: '/yolo [on|off]', description: 'Toggle YOLO' },
+      ],
+      execute: async (sessionId, input) => {
+        bridge.calls.push({ sessionId, input });
+        return { notices: [`ran: ${input}`], errors: [] };
+      },
+    };
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      commandBridge: bridge,
+    });
+    base = `http://127.0.0.1:${server.port}`;
+  });
+
+  afterEach(async () => {
+    if (server !== undefined) {
+      await server.close();
+      server = undefined;
+    }
+    if (home !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      await rm(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 } as never);
+      home = undefined;
+    }
+  });
+
+  async function postJson<T>(
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      method: 'POST',
+      headers: authHeaders(
+        server as RunningServer,
+        body !== undefined ? { 'content-type': 'application/json' } : {},
+      ),
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  async function getJson<T>(path: string): Promise<{ status: number; body: Envelope<T> }> {
+    const res = await fetch(`${base}${path}`, {
+      headers: authHeaders(server as RunningServer),
+    } as never);
+    return { status: res.status, body: (await res.json()) as Envelope<T> };
+  }
+
+  it('shuttles the raw line + session id to the bridge and envelopes its lines', async () => {
+    const res = await postJson<{ notices: string[]; errors: string[] }>(
+      '/api/v1/sessions/ses-9:command',
+      { input: '/yolo on' },
+    );
+    expect(res.body.code).toBe(0);
+    expect(res.body.data).toEqual({ notices: ['ran: /yolo on'], errors: [] });
+    expect(bridge.calls).toEqual([{ sessionId: 'ses-9', input: '/yolo on' }]);
+  });
+
+  it('rejects a missing input with a validation envelope', async () => {
+    const res = await postJson('/api/v1/sessions/ses-9:command', {});
+    expect(res.body.code).toBe(40001);
+    expect(res.body.details?.[0]?.path).toBe('input');
+    expect(bridge.calls).toEqual([]);
+  });
+
+  it('serves the bridge catalog over GET /commands', async () => {
+    const res = await getJson<{ commands: { name: string; usage: string }[] }>(
+      '/api/v1/sessions/ses-9/commands',
+    );
+    expect(res.body.code).toBe(0);
+    expect(res.body.data.commands).toEqual([
+      { name: 'yolo', aliases: ['yes'], usage: '/yolo [on|off]', description: 'Toggle YOLO' },
+    ]);
+  });
+
+  it('answers 40418 for :command and an empty catalog without an injected bridge', async () => {
+    await (server as RunningServer).close();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home as string,
+      logLevel: 'silent',
+    });
+    base = `http://127.0.0.1:${server.port}`;
+
+    const ran = await postJson('/api/v1/sessions/ses-9:command', { input: '/yolo' });
+    expect(ran.body.code).toBe(40418);
+    const catalog = await getJson<{ commands: unknown[] }>('/api/v1/sessions/ses-9/commands');
+    expect(catalog.body.data.commands).toEqual([]);
+  });
+});
+

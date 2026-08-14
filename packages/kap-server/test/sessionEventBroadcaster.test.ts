@@ -1138,6 +1138,38 @@ describe('SessionEventBroadcaster', () => {
       ).toHaveLength(0);
     });
 
+    it('delivers event.user.notify (NotifyUser tool) addressed at its session, globally fanned', async () => {
+      sessions.set('s1', new FakeLifecycle());
+
+      const globalView = collectingTarget();
+      bc.addGlobalTarget(globalView.target);
+
+      eventBus.emit({
+        type: 'event.user.notify',
+        payload: {
+          notificationId: 'ntf-1',
+          sessionId: 's1',
+          agentId: 'main',
+          title: 'needs you',
+          body: 'the build failed',
+        },
+      });
+
+      await vi.waitFor(() => expect(globalView.envelopes).toHaveLength(1));
+      expect(globalView.envelopes[0]).toMatchObject({
+        type: 'event.user.notify',
+        session_id: 's1',
+        payload: {
+          notificationId: 'ntf-1',
+          sessionId: 's1',
+          agentId: 'main',
+          title: 'needs you',
+          body: 'the build failed',
+        },
+      });
+      expect(globalView.deliveries).toEqual(['immediate']);
+    });
+
     it('stops delivering after removeGlobalTarget', async () => {
       sessions.set('s1', new FakeLifecycle());
 

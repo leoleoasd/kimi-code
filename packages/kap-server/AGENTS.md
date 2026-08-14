@@ -2,6 +2,10 @@
 
 The Kimi Code server, backed by the DI × Scope agent engine (`@moonshot-ai/agent-core-v2` — four scopes, App/Workspace/Session/Agent). Exposes sessions over REST + WebSocket (`/api/v1` + `/api/v1/ws`); bootstrapped from `src/start.ts` and consumed by `apps/kimi-code`.
 
+`startServer` normally bootstraps its own App scope; an embedding host with a live engine (the TUI's `/remote connect`) injects it via `ServerStartOptions.core` — bootstrap-time options then stay the host's call and `close()` releases only server-owned resources (the scope and the engine-level drains/disposals stay the host's).
+
+`ServerStartOptions.commandBridge` (`src/transport/commandBridge.ts`) is the other host-injection seam: the slash-command GRAMMAR belongs to the host (the TUI's registry + dispatch), not to kap-server, so remote clients run it through `POST /sessions/{id}:command` (raw line in, surfaced lines out) and enumerate it through `GET /sessions/{id}/commands` (composer hints). Unbridged servers answer `40418 command.unavailable` and an empty catalog — never a fallback interpreter.
+
 ## Routes
 
 - Session create/resume/fork routes compose `ISessionIndex` → `IWorkspaceLifecycleService.handlerFor` → the handler's `ISessionLifecycleService`, and the fs routes resolve session → handler → the Workspace-scope fs services. One exception: `fs:search` also accepts a workspace reference (registered id or absolute root) in the `{session_id}` slot, so a not-yet-created draft session's `@` file mention resolves the workspace handler directly; the first-class session-less form is `POST /api/v1/workspace/fs:search` (the workspace reference travels in the body).

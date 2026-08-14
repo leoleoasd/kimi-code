@@ -4,8 +4,10 @@
  * Holds the agent's permission mode (`manual` / `yolo` / `auto`) in the `wire`
  * `PermissionModeModel`, mutating it only through the `permission.set_mode` Op
  * (`wire.dispatch(setMode({ mode }))`) and reading it through `wire.getModel`.
- * `setMode` emits `onDidChangeMode` after an actual change, and mode-aware
- * reminders are registered through the permission-mode injection helper.
+ * `setMode` emits `onDidChangeMode` after an actual change and publishes the
+ * `permission` slice of `agent.status.updated` live (replay stays silent —
+ * the Op's `apply` runs there, not this method), and mode-aware reminders are
+ * registered through the permission-mode injection helper.
  * `setModeAndBroadcast` is the user-facing entry: on top of `setMode` it
  * broadcasts the mode to every agent of the session through `agentLifecycle`
  * (main agent only) and tracks the `yolo_toggle` / `afk_toggle` transitions
@@ -18,6 +20,7 @@ import { Service } from '#/_base/di/service';
 import { LifecycleScope } from '#/app/scopes';
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
+import { IEventBus } from '#/app/event/eventBus';
 import { PermissionModeInjection } from '#/agent/permissionMode/injection/permissionModeInjection';
 import { IAgentScopeContext } from '#/agent/scopeContext/scopeContext';
 import { ITelemetryService } from '#/app/telemetry/telemetry';
@@ -45,6 +48,7 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     @IAgentScopeContext private readonly scopeContext: IAgentScopeContext,
     @IAgentLifecycleService private readonly agentLifecycle: IAgentLifecycleService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
+    @IEventBus private readonly eventBus?: IEventBus,
   ) {
     super();
     this._register(instantiation.createInstance(PermissionModeInjection, this));
@@ -59,7 +63,14 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     const changed = mode !== previousMode;
     if (!changed && this.wire.getModel(PermissionModeConfiguredModel)) return;
     this.wire.dispatch(setMode({ mode }));
-    if (changed) this._onDidChangeMode.fire({ mode, previousMode });
+    if (changed) {
+      this._onDidChangeMode.fire({ mode, previousMode });
+      // Publish the mode slice live (never on replay — replays re-run the Op's
+      // `apply`, not this method), so clients tracking `agent.status.updated`
+      // (the TUI badge, kap-server's transcript meta) see a change made from
+      // ANY surface: local dispatch, a sibling client, or the command bridge.
+      this.eventBus?.publish({ type: 'agent.status.updated', permission: mode });
+    }
   }
 
   setModeAndBroadcast(mode: PermissionMode): void {

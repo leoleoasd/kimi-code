@@ -81,6 +81,7 @@ import type { TasksBrowserController } from './tasks-browser';
 import { SubAgentEventHandler } from './subagent-event-handler';
 import type {
   AppState,
+  EngineQueuedPrompt,
   LivePaneState,
   QueuedMessage,
   ToolCallBlockData,
@@ -109,6 +110,7 @@ export interface SessionEventHost {
   recordSessionActivity(): void;
   noteStepUsage(usage: TokenUsage | undefined): void;
   noteCompactionFinished(): void;
+  updateQueueDisplay(): void;
   mountEditorReplacement(panel: Component & Focusable): void;
   restoreEditor(): void;
   restoreInputText(text: string): void;
@@ -121,6 +123,114 @@ export interface SessionEventHost {
   shiftQueuedMessage(): QueuedMessage | undefined;
   readonly btwPanelController: BtwPanelController;
   readonly tasksBrowserController: TasksBrowserController;
+}
+
+// ---------------------------------------------------------------------------
+// Engine-side prompt queue (`appState.engineQueuedPrompts`)
+// ---------------------------------------------------------------------------
+//
+// The queue strip below the editor shows this TUI's OWN client-side queue
+// (`state.queuedMessages`). Other surfaces — a hub web UI / remote-control
+// client driving the same session over kap-server — submit straight into the
+// ENGINE's per-agent FIFO, which only surfaces here through events:
+//
+// - `prompt.queued` — the v2 engine fact (agent-core-v2 `publishQueued`); not
+//   part of the v1 `Event` union, so `handleEvent` matches it before the typed
+//   switch. The engine publishes it only for user-origin prompts: plugin
+//   commands, skill activations, subagent turns use non-user origins, and cron
+//   / goal continuations / task notifications bypass the prompt queue.
+// - `prompt.submitted` — the v1 wire shape. `status` 'queued' mirrors
+//   `prompt.queued`; 'running' is the REMOVE signal: the launching of a queued
+//   prompt (v1 republishes the same promptId on launch). The v2 engine has no
+//   dedicated queued→launch event, so on v2 an entry lingers until its own
+//   terminal event — the strip errs on the side of showing a message that is
+//   about to run.
+// - `prompt.completed` / `prompt.aborted` settle a prompt (remove);
+//   `prompt.steered` absorbs pending prompts into the active turn (remove).
+//
+// Own-surface echoes exist and are displayed on purpose: ctrl-s steer and a
+// local-queue drain racing another launch both land in the engine FIFO, so
+// the strip simply echoes engine reality (steers are removed by the follow-up
+// `prompt.steered`).
+
+/** Runtime shape of the v2-only `prompt.queued` domain event
+ * (`packages/agent-core-v2/src/agent/prompt/promptService.ts`); not in the v1
+ * `Event` union, so it is matched structurally before the typed switch. */
+interface EnginePromptQueuedEvent {
+  readonly promptId: string;
+  readonly content: readonly unknown[];
+}
+
+const ENGINE_QUEUE_TEXT_CAP = 40;
+const ENGINE_QUEUE_MEDIA_PLACEHOLDER = '🖼';
+
+/**
+ * `[image #1] [video #2]`-style markers for media parts the engine strips
+ * from the turn's prompt text (mirrors the composer's paste-time
+ * placeholders; replay's own translation `mediaUrlPartToText` is richer —
+ * this deliberately only marks presence/type, no fetch).
+ */
+export function mediaPlaceholderSuffix(content: readonly unknown[] | undefined): string {
+  if (content === undefined) return '';
+  const markers: string[] = [];
+  let images = 0;
+  let videos = 0;
+  for (const part of content) {
+    if (typeof part !== 'object' || part === null || !('type' in part)) continue;
+    if ((part as { type?: unknown }).type === 'image_url') {
+      images += 1;
+      markers.push(`[image #${String(images)}]`);
+    } else if ((part as { type?: unknown }).type === 'video_url') {
+      videos += 1;
+      markers.push(`[video #${String(videos)}]`);
+    }
+  }
+  return markers.length === 0 ? '' : ` ${markers.join(' ')}`;
+}
+
+/** Compact a queued prompt's content parts into one display line (whitespace
+ * collapsed, ~40ch cap, 🖼 fallback for media-only prompts). */
+export function extractEngineQueuedText(content: readonly unknown[]): string {
+  const text = content
+    .filter(
+      (part): part is { type: 'text'; text: string } =>
+        typeof part === 'object' &&
+        part !== null &&
+        (part as { type?: unknown }).type === 'text' &&
+        typeof (part as { text?: unknown }).text === 'string',
+    )
+    .map((part) => part.text)
+    .join(' ')
+    .replaceAll(/\s+/g, ' ')
+    .trim();
+  const display = text.length === 0 ? ENGINE_QUEUE_MEDIA_PLACEHOLDER : text;
+  return display.length > ENGINE_QUEUE_TEXT_CAP ? `${display.slice(0, ENGINE_QUEUE_TEXT_CAP)}…` : display;
+}
+
+/** Append or replace (same position) the entry keyed by `promptId`. Returns
+ * the input unchanged when the stored text already matches, so callers can
+ * skip the repaint on repeat events. */
+export function upsertEngineQueuedPrompt(
+  list: readonly EngineQueuedPrompt[],
+  entry: EngineQueuedPrompt,
+): EngineQueuedPrompt[] {
+  const index = list.findIndex((item) => item.promptId === entry.promptId);
+  if (index === -1) return [...list, entry];
+  if (list[index]!.text === entry.text) return list as EngineQueuedPrompt[];
+  const next = list.slice();
+  next[index] = entry;
+  return next;
+}
+
+/** Drop every entry whose `promptId` is in `promptIds`. Returns the input
+ * unchanged when nothing matched. */
+export function removeEngineQueuedPrompts(
+  list: readonly EngineQueuedPrompt[],
+  promptIds: readonly string[],
+): EngineQueuedPrompt[] {
+  const drop = new Set(promptIds);
+  const next = list.filter((item) => !drop.has(item.promptId));
+  return next.length === list.length ? (list as EngineQueuedPrompt[]) : next;
 }
 
 export class SessionEventHandler {
@@ -156,6 +266,23 @@ export class SessionEventHandler {
   renderedSkillActivationIds: Set<string> = new Set();
   renderedPluginCommandActivationIds: Set<string> = new Set();
   renderedMcpServerStatusKeys: Map<string, string> = new Map();
+  /**
+   * FIFO of prompts this TUI just echoed locally (both queued and direct
+   * submissions), capped small. A `turn.started` carrying the same prompt
+   * text consumes one record and skips its user bubble — turns submitted
+   * from ANOTHER surface (a hub / remote-control UI driving this same
+   * session) render their user message from the event. A missed match only
+   * collapses two indistinguishable texts; it can never duplicate a bubble.
+   */
+  private recentLocalPromptTexts: string[] = [];
+  /**
+   * promptId → the queued prompt's content parts (engine `prompt.queued`).
+   * Fifo-consulted at `turn.started` (user origin) for media markers — the
+   * engine strips media from its `turn.started.prompt` payload, and the
+   * remote-echo bubble needs SOMETHING visual where a local paste would show
+   * its thumbnail. Purged on abort / steer / completion and on consumption.
+   */
+  private readonly pendingQueuedContents = new Map<string, readonly unknown[]>();
   mcpServerStatusSpinners: Map<string, MoonLoader> = new Map();
   mcpServers: Map<string, McpServerStatusSnapshot> = new Map();
   private goalCompletionAwaitingClear = false;
@@ -176,6 +303,8 @@ export class SessionEventHandler {
     this.renderedSkillActivationIds.clear();
     this.renderedPluginCommandActivationIds.clear();
     this.renderedMcpServerStatusKeys.clear();
+    this.recentLocalPromptTexts = [];
+    this.pendingQueuedContents.clear();
     this.mcpServers.clear();
     this.goalCompletionAwaitingClear = false;
     this.goalCompletionTurnEnded = false;
@@ -260,6 +389,24 @@ export class SessionEventHandler {
   handleEvent(event: Event, sendQueued: (item: QueuedMessage) => void): void {
     if (this.subAgentEventHandler.routeChildAgentEvent(event)) return;
 
+    // `prompt.queued` is a v2-only fact outside the v1 `Event` union — a typed
+    // `case` below would not typecheck, so match it structurally up front.
+    if ((event as { type: string }).type === 'prompt.queued') {
+      const queued = event as unknown as EnginePromptQueuedEvent;
+      // Remember content per queued prompt so the turn-begin echo can mark
+      // media the engine itself strips from `turn.started.prompt` (images,
+      // videos) — the engine only publishes queued events for user-origin
+      // prompts and dequeues them FIFO (v2 engine: `publishQueued`).
+      this.pendingQueuedContents.set(queued.promptId, queued.content);
+      this.applyEngineQueuePatch(
+        upsertEngineQueuedPrompt(this.host.state.appState.engineQueuedPrompts, {
+          promptId: queued.promptId,
+          text: extractEngineQueuedText(queued.content),
+        }),
+      );
+      return;
+    }
+
     if ('turnId' in event && event.turnId !== undefined) {
       this.host.streamingUI.setTurnId(String(event.turnId));
     }
@@ -302,6 +449,10 @@ export class SessionEventHandler {
         this.handleBackgroundTaskEvent(event); break;
       case 'cron.fired': this.handleCronFired(event); break;
       case 'mcp.server.status': this.renderMcpServerStatus(event.server); break;
+      case 'prompt.submitted': this.handlePromptSubmitted(event); break;
+      case 'prompt.completed':
+      case 'prompt.aborted': this.dropEngineQueuedPrompts([event.promptId]); break;
+      case 'prompt.steered': this.dropEngineQueuedPrompts(event.promptIds); break;
       case 'tool.list.updated': break;
       default: break;
     }
@@ -318,10 +469,86 @@ export class SessionEventHandler {
   // Private handlers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Record a prompt this TUI just echoed locally, BEFORE sending it. See the
+   * field doc on {@link recentLocalPromptTexts} for the dedup contract.
+   */
+  recordLocalPromptText(text: string): void {
+    this.recentLocalPromptTexts.push(text);
+    if (this.recentLocalPromptTexts.length > 16) this.recentLocalPromptTexts.shift();
+  }
+
+  private consumeLocalPromptText(text: string): boolean {
+    const index = this.recentLocalPromptTexts.indexOf(text);
+    if (index === -1) return false;
+    this.recentLocalPromptTexts.splice(index, 1);
+    return true;
+  }
+
+  /**
+   * `prompt.submitted`: 'queued' mirrors `prompt.queued` (upsert); the other
+   * statuses mean the queued prompt left the FIFO — the v1 daemon republishes
+   * the same promptId with 'running' on launch — so drop it from the strip.
+   */
+  private handlePromptSubmitted(event: Extract<Event, { type: 'prompt.submitted' }>): void {
+    if (event.status === 'queued') {
+      this.applyEngineQueuePatch(
+        upsertEngineQueuedPrompt(this.host.state.appState.engineQueuedPrompts, {
+          promptId: event.promptId,
+          text: extractEngineQueuedText(event.content),
+        }),
+      );
+      return;
+    }
+    this.dropEngineQueuedPrompts([event.promptId]);
+  }
+
+  private dropEngineQueuedPrompts(promptIds: readonly string[]): void {
+    for (const promptId of promptIds) this.pendingQueuedContents.delete(promptId);
+    this.applyEngineQueuePatch(
+      removeEngineQueuedPrompts(this.host.state.appState.engineQueuedPrompts, promptIds),
+    );
+  }
+
+  /** FIFO shift of the oldest remembered queued content (engine dequeues in order); `undefined` when none is remembered. */
+  private shiftOldestQueuedContent(): readonly unknown[] | undefined {
+    const first = this.pendingQueuedContents.keys().next();
+    if (first.done === true) return undefined;
+    const content = this.pendingQueuedContents.get(first.value);
+    this.pendingQueuedContents.delete(first.value);
+    return content;
+  }
+
+  private applyEngineQueuePatch(next: EngineQueuedPrompt[]): void {
+    if (next === this.host.state.appState.engineQueuedPrompts) return;
+    this.host.setAppState({ engineQueuedPrompts: next });
+    this.host.updateQueueDisplay();
+    this.host.state.ui.requestRender();
+  }
+
   private handleTurnBegin(event: TurnStartedEvent): void {
     this.currentTurnHasAssistantText = false;
     if (event.origin?.kind === 'plugin_command') {
       this.pluginCommandTurns.set(String(event.turnId), event.origin.pluginId);
+    }
+    // Own prompts are shown by the local echo at submit time; a user-origin
+    // turn whose prompt did NOT come from this TUI (a hub / remote-control UI
+    // driving the same live session) renders its user message from here.
+    if (event.origin?.kind === 'user' && event.prompt !== undefined) {
+      // FIFO-consume the matching queued content for EVERY user-origin turn
+      // (the engine dequeues in order) — the media markers ride the remote
+      // echo; the locally-sent path dedups against `recentLocalPromptTexts`
+      // and keeps its own (already thumbnail-rendered) local entry.
+      const queuedContent = this.shiftOldestQueuedContent();
+      if (!this.consumeLocalPromptText(event.prompt)) {
+        this.host.appendTranscriptEntry({
+          id: nextTranscriptId(),
+          kind: 'user',
+          turnId: undefined,
+          renderMode: 'plain',
+          content: event.prompt + mediaPlaceholderSuffix(queuedContent),
+        });
+      }
     }
     this.clearAgentSwarmProgress();
     this.host.streamingUI.resetToolUi();

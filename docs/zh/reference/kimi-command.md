@@ -133,7 +133,7 @@ kimi -p "List changed files" --output-format stream-json
 
 ## 子命令
 
-`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
+`kimi` 提供以下子命令：`login`（非交互式登录）、`acp`（ACP IDE 模式）、`web`（前台运行本地 REST/WebSocket/web 服务并打开 web UI）、`remote`（把本机会话挂到运行中的 kimi hub 上供远程控制）、`doctor`（校验配置文件）、`export`（导出会话）、`migrate`（迁移旧版数据）、`upgrade`（检查更新）、`provider`（管理供应商）。
 
 ### `kimi login`
 
@@ -194,6 +194,24 @@ kimi web --port 58628    # 指定绑定端口
 #### `kimi web rotate-token`
 
 生成新的持久化 bearer token（写入 `~/.kimi-code/server.token`），旧 token 立即失效。token 是整个 home 目录共享的，所有运行中的实例会在下一次鉴权校验时自动换用新 token，无需重启。
+
+### `kimi remote connect <hub-url>`
+
+把本机的某个会话桥接到运行中的 kimi hub 上，让 hub 的 web UI 可以在同一个页面里列出并控制它——和其他机器桥接过来的会话并列。连接是会话级的：hub 只能看到并驱动你桥接的那个会话，接触不到本机的其他内容。该命令会启动一个仅提供 API 的本地服务（与 [`kimi web`](#kimi-web) 是同一引擎，但不托管 web UI），并通过反向隧道主动外连 hub，因此本机无需监听任何可达端口。命令保持前台运行，收到 `SIGINT` / `SIGTERM` 时干净退出。
+
+```sh
+kimi remote connect https://hub.example.com --token YOUR_HUB_TOKEN --session <session-id>
+kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --name dev-box
+```
+
+| 选项 | 说明 |
+| --- | --- |
+| `--token <token>` | hub 共享凭据；未设置时回退到 `KIMI_HUB_TOKEN` 环境变量；hub 以 `--dangerous-bypass-auth` 运行时可省略 |
+| `--session <id>` | 要桥接的会话 id（必填）；hub 只能看到这个会话 |
+| `--name <name>` | 在 hub UI 中显示的 agent 名称；默认使用本机主机名 |
+| `--port <port>` | 本地 API 服务的绑定端口；默认 `58627`，被占用时按 `+1` 重试 |
+
+连接成功后，命令会打印 hub UI 链接（`<hub-url>#token=…`）；在浏览器中打开即可看到该会话与其他所有已接入机器并列。在交互式 TUI 会话中，改用 [`/remote connect`](./slash-commands.md#会话管理) 斜杠命令：它桥接当前会话且不退出 TUI，终端和 hub 同时驱动同一个活跃会话，另用 `/remote status` / `/remote disconnect` 管理连接。hub 本体是 `kimi-hub` 应用，目前从源码检出运行（`pnpm -C apps/kimi-hub build && pnpm -C apps/kimi-hub start`）；hub 启动时会打印它自己的 `--token` / `KIMI_HUB_TOKEN` 共享凭据。
 
 ### `kimi doctor`
 

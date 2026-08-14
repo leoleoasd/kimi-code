@@ -8,6 +8,7 @@ import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
+import { registerRemoteCommand } from './sub/remote';
 import { registerVisCommand } from './sub/vis';
 import { registerWebCommand } from './sub/web';
 
@@ -27,6 +28,10 @@ export function createProgram(
     .description('The Starting Point for Next-Gen Agents')
     .version(version, '-V, --version')
     .allowUnknownOption(false)
+    // Global options are only parsed BEFORE the subcommand name: flags after it
+    // belong to the subcommand. Without this, globals like `--session` / `--yes`
+    // would swallow same-named subcommand flags (e.g. `remote connect --session`).
+    .enablePositionalOptions()
     .configureHelp({ helpWidth: 100 })
     .helpOption('-h, --help', 'Show help.')
     .usage('[options] [command]')
@@ -117,6 +122,7 @@ export function createProgram(
   registerProviderCommand(program);
   registerAcpCommand(program);
   registerWebCommand(program);
+  registerRemoteCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);

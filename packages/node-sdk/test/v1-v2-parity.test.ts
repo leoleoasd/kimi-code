@@ -4086,6 +4086,13 @@ describe('v1↔v2 event & interaction parity', () => {
           const entry = projected as { type: string; code?: string };
           if (entry.type === 'turn.step.interrupted') return [];
           if (entry.type === 'error') return { type: entry.type, code: entry.code };
+          // Pinned engine-internal difference: v2 publishes the engine-side
+          // prompt lifecycle facts (`prompt.queued` / `prompt.completed` /
+          // `prompt.aborted` / `prompt.steered`) on the client-visible stream —
+          // clients like the TUI queue strip consume them — where v1's daemon
+          // synthesizes `prompt.*` only at its WS edge, so its in-process
+          // stream can never carry them.
+          if (entry.type.startsWith('prompt.')) return [];
           return entry;
         });
       const v1Projected = projectFailure(v1Events);

@@ -104,6 +104,9 @@ importers:
       '@moonshot-ai/pi-tui':
         specifier: workspace:^
         version: link:../../packages/pi-tui
+      '@moonshot-ai/remote-tunnel':
+        specifier: workspace:^
+        version: link:../../packages/remote-tunnel
       '@moonshot-ai/vis-server':
         specifier: workspace:^
         version: link:../vis/server
@@ -156,6 +159,80 @@ importers:
       node-pty:
         specifier: ^1.1.0
         version: 1.1.0
+
+  apps/kimi-hub:
+    devDependencies:
+      concurrently:
+        specifier: ^9.1.2
+        version: 9.2.1
+
+  apps/kimi-hub/server:
+    dependencies:
+      '@moonshot-ai/remote-tunnel':
+        specifier: workspace:^
+        version: link:../../../packages/remote-tunnel
+      fastify:
+        specifier: ^5.1.0
+        version: 5.8.5
+      ulid:
+        specifier: ^3.0.1
+        version: 3.0.2
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
+      postject:
+        specifier: 1.0.0-alpha.6
+        version: 1.0.0-alpha.6
+      tsx:
+        specifier: ^4.21.0
+        version: 4.21.0
+
+  apps/kimi-hub/web:
+    dependencies:
+      '@moonshot-ai/transcript':
+        specifier: workspace:^
+        version: link:../../../packages/transcript
+      '@tanstack/react-query':
+        specifier: ^5.74.4
+        version: 5.99.2(react@19.2.5)
+      react:
+        specifier: ^19.1.0
+        version: 19.2.5
+      react-dom:
+        specifier: ^19.1.0
+        version: 19.2.5(react@19.2.5)
+    devDependencies:
+      '@tailwindcss/vite':
+        specifier: ^4.1.4
+        version: 4.1.18(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      '@types/react':
+        specifier: ^19.1.2
+        version: 19.2.14
+      '@types/react-dom':
+        specifier: ^19.1.2
+        version: 19.2.3(@types/react@19.2.14)
+      '@vitejs/plugin-react':
+        specifier: ^4.4.1
+        version: 4.7.0(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      tailwindcss:
+        specifier: ^4.1.4
+        version: 4.1.18
+      typescript:
+        specifier: 6.0.2
+        version: 6.0.2
+      vite:
+        specifier: ^6.3.3
+        version: 6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3)
+      vitest:
+        specifier: 4.1.4
+        version: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
 
   apps/kimi-inspect:
     dependencies:
@@ -948,6 +1025,22 @@ importers:
       zod:
         specifier: ^4.3.6
         version: 4.3.6
+
+  packages/remote-tunnel:
+    dependencies:
+      ulid:
+        specifier: ^3.0.1
+        version: 3.0.2
+      ws:
+        specifier: ^8.18.0
+        version: 8.20.0
+      zod:
+        specifier: 'catalog:'
+        version: 4.3.6
+    devDependencies:
+      '@types/ws':
+        specifier: ^8.18.0
+        version: 8.18.1
 
   packages/telemetry: {}
 
@@ -13276,7 +13369,7 @@ snapshots:
       obug: 2.1.1
       std-env: 4.0.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@6.4.2(@types/node@22.19.17)(jiti@2.6.1)(lightningcss@1.32.0)(tsx@4.21.0)(yaml@2.8.3))
+      vitest: 4.1.4(@types/node@22.19.17)(@vitest/coverage-v8@4.1.4)(jsdom@25.0.1)(msw@2.15.0(@types/node@22.19.17)(typescript@6.0.2))(vite@8.0.8(@types/node@22.19.17)(esbuild@0.27.7)(jiti@2.6.1)(tsx@4.21.0)(yaml@2.8.3))
 
   '@vitest/expect@4.1.4':
     dependencies:

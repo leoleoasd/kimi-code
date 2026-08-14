@@ -146,6 +146,64 @@ describe('AgentTranscriptProjector', () => {
     expect(turn.state).toBe('completed');
   });
 
+  it('pairs the queued prompt media parts into turn-opening attachments (FIFO)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: DomainEvent): void => {
+      tx.apply(projector.map(event));
+    };
+
+    // p1 is steered away before any turn; its media must NOT leak into the
+    // next user turn — only p2's do.
+    feed(
+      ev({
+        type: 'prompt.queued',
+        promptId: 'p1',
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } }],
+        queueLength: 2,
+      }),
+    );
+    feed(
+      ev({
+        type: 'prompt.queued',
+        promptId: 'p2',
+        content: [
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+          { type: 'video_url', videoUrl: { url: 'kimi-file://file_abc?path=%2Ftmp%2Fclip.mp4' } },
+          { type: 'image_url', imageUrl: { url: 'https://example.com/pic.jpg' } },
+          { type: 'text', text: 'what is this?' },
+        ],
+        queueLength: 2,
+      }),
+    );
+    feed(
+      ev({ type: 'prompt.steered', activePromptId: 'p0', promptIds: ['p1'], content: [], steeredAt: 'now' }),
+    );
+    feed(ev({ type: 'turn.started', turnId: 3, origin: { kind: 'user' }, prompt: 'what is this?' }));
+
+    const turn = turnOps('t3', tx.getItems());
+    // Turn-anchored, NON-`att_<n>` ids (the cold fold's counter scheme must
+    // never alias live media on the healed merge).
+    expect(turn.attachmentIds).toEqual(['att-t3-1', 'att-t3-2', 'att-t3-3']);
+    const atts = tx.getAttachments();
+    expect(atts.get('att-t3-1')).toMatchObject({
+      mediaType: 'image/png',
+      source: { kind: 'url', url: 'data:image/png;base64,AAAA' },
+    });
+    expect(atts.get('att-t3-2')).toMatchObject({
+      mediaType: 'video/mp4',
+      source: { kind: 'file', fileId: 'file_abc' },
+    });
+    expect(atts.get('att-t3-3')).toMatchObject({
+      mediaType: 'image/jpeg',
+      source: { kind: 'url', url: 'https://example.com/pic.jpg' },
+    });
+
+    // And the terminal upsert preserves the link.
+    feed(ev({ type: 'turn.ended', turnId: 3, reason: 'completed' }));
+    expect(turnOps('t3', tx.getItems()).attachmentIds).toEqual(['att-t3-1', 'att-t3-2', 'att-t3-3']);
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     // The projector missed turn.started AND turn.step.started for step 2 —
@@ -1177,6 +1235,9 @@ describe('AgentTranscriptProjector', () => {
       }),
     );
     feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
+    // Insert-only splices (a fresh prompt appended to context) are already
+    // projected via turn/message events and must NOT produce an undo marker.
+    feed(ev({ type: 'context.spliced', start: 3, deleteCount: 0, messages: [{ role: 'user' }] }));
 
     const markers = tx
       .getItems()

@@ -17,6 +17,7 @@
 import { z } from 'zod';
 
 import { addUsage, type TokenUsage } from '#/kosong/contract/usage';
+import type { PermissionMode } from '#/agent/permissionPolicy/types';
 import { defineModel } from '#/wire/model';
 
 import type { UsageStatus } from './usage';
@@ -33,6 +34,7 @@ declare module '#/app/event/eventBus' {
       thinkingEffort?: string;
       maxContextTokens?: number;
       contextTokens?: number;
+      permission?: PermissionMode;
     };
   }
 }

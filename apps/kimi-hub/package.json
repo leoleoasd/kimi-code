@@ -1,0 +1,16 @@
+{
+  "name": "@moonshot-ai/kimi-hub",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Standalone hub: web UI + reverse-tunnel registry for remote-controlling kimi-code agents across machines",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"pnpm --filter @moonshot-ai/kimi-hub-server dev\" \"pnpm --filter @moonshot-ai/kimi-hub-web dev\"",
+    "build": "pnpm --filter @moonshot-ai/kimi-hub-web build && pnpm --filter @moonshot-ai/kimi-hub-server build",
+    "start": "pnpm --filter @moonshot-ai/kimi-hub-server run start"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

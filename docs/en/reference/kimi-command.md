@@ -133,7 +133,7 @@ In `stream-json` mode, regular replies produce an Assistant message; when the mo
 
 ## Subcommands
 
-`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
+`kimi` provides the following subcommands: `login` (non-interactive login), `acp` (ACP IDE mode), `web` (run the local REST/WebSocket/web service in the foreground and open the web UI), `remote` (attach this machine to a running kimi hub for remote control), `doctor` (validate configuration files), `export` (export a session), `migrate` (migrate legacy data), `upgrade` (check for updates), and `provider` (manage providers).
 
 ### `kimi login`
 
@@ -194,6 +194,24 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 #### `kimi web rotate-token`
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
+
+### `kimi remote connect <hub-url>`
+
+Bridge one of this machine's sessions to a running kimi hub so the hub's web UI can list and control that session — alongside sessions bridged from other machines — from one page. The connection is session-scoped: the hub can only see and drive the session you connect, nothing else on the machine. The command starts an API-only local server (the same engine as [`kimi web`](#kimi-web), without serving the web UI itself) and dials out to the hub over a reverse tunnel, so this machine never needs to listen on a reachable port. It stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
+
+```sh
+kimi remote connect https://hub.example.com --token YOUR_HUB_TOKEN --session <session-id>
+kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --name dev-box
+```
+
+| Option | Description |
+| --- | --- |
+| `--token <token>` | Shared hub credential; falls back to the `KIMI_HUB_TOKEN` environment variable; may be omitted when the hub runs with `--dangerous-bypass-auth` |
+| `--session <id>` | Session id to bridge (required); the hub sees only this session |
+| `--name <name>` | Agent name shown in the hub UI; defaults to this machine's hostname |
+| `--port <port>` | Bind port of the local API server; defaults to `58627`, retried with `+1` when busy |
+
+Once connected, the command prints the hub UI link (`<hub-url>#token=…`); open it in a browser to see the bridged session alongside every other connected machine. From an interactive TUI session, use the [`/remote connect`](./slash-commands.md#session-management) slash command instead: it bridges the current session without leaving the TUI, so the terminal and the hub drive the same live session, and `/remote status` / `/remote disconnect` manage the link. The hub itself is the `kimi-hub` app and currently runs from a source checkout (`pnpm -C apps/kimi-hub build && pnpm -C apps/kimi-hub start`); the hub prints its own `--token` / `KIMI_HUB_TOKEN` shared credential when it starts.
 
 ### `kimi doctor`
 

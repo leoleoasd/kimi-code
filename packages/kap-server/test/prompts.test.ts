@@ -4,16 +4,20 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
-  IAgentTitlePromptSource,
+  type DomainEvent,
   IAgentContextMemoryService,
+  IAgentGoalService,
   IAgentLifecycleService,
   IAgentProfileService,
+  IAgentTitlePromptSource,
   IAgentToolPolicyService,
+  IEventBus,
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { promptSubmitResultSchema } from '../src/protocol/rest-prompt';
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
 import { authHeaders } from './helpers/auth';
@@ -29,7 +33,7 @@ interface Envelope<T> {
 interface PromptItemWire {
   prompt_id: string;
   user_message_id: string;
-  status: 'running' | 'queued';
+  status: 'running' | 'queued' | 'blocked';
   content: unknown;
   created_at: string;
 }
@@ -922,5 +926,304 @@ describe('server-v2 /api/v1 prompts', () => {
       .get(IAgentToolPolicyService);
     expect(toolPolicy?.isToolActive('Bash')).toBe(false);
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
+  });
+
+  // ---------------------------------------------------------------- goal ---
+
+  function mainAgentOf(sessionId: string) {
+    const session = getLiveSessionById((server as RunningServer).core.accessor, sessionId);
+    if (session === undefined) throw new Error(`session ${sessionId} not found`);
+    const agent = session.accessor.get(IAgentLifecycleService).get('main');
+    if (agent === undefined) throw new Error('expected a live main agent');
+    return agent;
+  }
+
+  function goalOf(sessionId: string) {
+    return mainAgentOf(sessionId).accessor.get(IAgentGoalService).getGoal().goal;
+  }
+
+  function subscribeAgentEvents(sessionId: string) {
+    const eventBus = mainAgentOf(sessionId).accessor.get(IEventBus);
+    const events: DomainEvent[] = [];
+    return { events, unsubscribe: eventBus.subscribe((event) => events.push(event)) };
+  }
+
+  function hasUserText(sessionId: string, text: string): boolean {
+    return mainAgentOf(sessionId)
+      .accessor.get(IAgentContextMemoryService)
+      .get()
+      .some(
+        (m) =>
+          m.role === 'user' && m.content.some((p) => p.type === 'text' && p.text === text),
+      );
+  }
+
+  async function waitFor(cond: () => boolean, what: string, ms = 5000): Promise<void> {
+    const deadline = Date.now() + ms;
+    for (;;) {
+      if (cond()) return;
+      if (Date.now() >= deadline) throw new Error(`waitFor: ${what} not observed in time`);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+  }
+
+  function listPrompts(sessionId: string) {
+    return call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+      'GET',
+      `/api/v1/sessions/${sessionId}/prompts`,
+    );
+  }
+
+  // An active goal with no flying turn (the profile edge dispatches the
+  // objective without minting a prompt), so control submissions are not
+  // racing a stub-provider turn outcome.
+  async function createActiveGoal(objective: string): Promise<string> {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const profile = await call<unknown>('POST', `/api/v1/sessions/${id}/profile`, {
+      agent_config: { goal_objective: objective },
+    });
+    expect(profile.body.code).toBe(0);
+    expect(goalOf(id)?.status).toBe('active');
+    return id;
+  }
+
+  it('creates a goal from goal_objective and flies it with the submitted prompt', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const { events, unsubscribe } = subscribeAgentEvents(id);
+    try {
+      const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: 'refactor everything' }],
+        goal_objective: 'refactor everything',
+      });
+      expect(submitted.body.code).toBe(0);
+      expect(promptSubmitResultSchema.safeParse(submitted.body.data).success).toBe(true);
+      expect(submitted.body.data.prompt_id).toMatch(/^msg_/);
+      expect(submitted.body.data.user_message_id).toBe(submitted.body.data.prompt_id);
+      expect(submitted.body.data.status).toBe('running');
+      expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'refactor everything' }]);
+
+      // The objective reached the engine: created before the reply was sent.
+      expect(goalOf(id)?.objective).toBe('refactor everything');
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'goal.updated' && event.snapshot?.objective === 'refactor everything',
+        ),
+      ).toBe(true);
+
+      // The submission itself is the goal's first turn: its text lands in the
+      // main agent's context like a plain prompt's would.
+      await waitFor(
+        () => hasUserText(id, 'refactor everything'),
+        'objective text in context memory',
+      );
+    } finally {
+      unsubscribe.dispose();
+    }
+  });
+
+  it('leaves a plain submission goal-free', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'just chatting' }],
+    });
+    expect(submitted.body.code).toBe(0);
+    expect(promptSubmitResultSchema.safeParse(submitted.body.data).success).toBe(true);
+    expect(goalOf(id)).toBeNull();
+  });
+
+  it('rejects a second goal_objective while a goal exists (40913)', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'keep this one' }],
+      goal_objective: 'keep this one',
+    });
+    expect(first.body.code).toBe(0);
+
+    const second = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'replace it' }],
+      goal_objective: 'replace it',
+    });
+    expect(second.body.code).toBe(40913);
+    expect(second.body.msg).toContain('already exists');
+    // The conflict left the original goal untouched.
+    expect(goalOf(id)?.objective).toBe('keep this one');
+  });
+
+  it('rejects an invalid goal_objective with the engine validation codes', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const empty = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'nothing' }],
+      goal_objective: '   ',
+    });
+    expect(empty.body.code).toBe(40917);
+
+    const tooLong = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'nothing' }],
+      goal_objective: 'x'.repeat(4001),
+    });
+    expect(tooLong.body.code).toBe(40918);
+    expect(goalOf(id)).toBeNull();
+  });
+
+  it('rejects goal_objective + goal_control cancel as contradictory (40001)', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'start then drop' }],
+      goal_objective: 'start then drop',
+      goal_control: 'cancel',
+    });
+    expect(body.code).toBe(40001);
+    expect(body.msg).toContain('goal_objective');
+    expect(body.msg).toContain('goal_control');
+    expect(body.msg).toContain('cancel');
+    expect(goalOf(id)).toBeNull();
+  });
+
+  it('dispatches goal_control pause and answers a blocked receipt, minting no prompt', async () => {
+    const id = await createActiveGoal('long project');
+
+    const { events, unsubscribe } = subscribeAgentEvents(id);
+    try {
+      const paused = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: '/goal pause' }],
+        goal_control: 'pause',
+      });
+      expect(paused.body.code).toBe(0);
+      // The receipt stays contract-shaped but honest: 'blocked' — the control
+      // launched no turn for the placeholder content.
+      expect(promptSubmitResultSchema.safeParse(paused.body.data).success).toBe(true);
+      expect(paused.body.data.status).toBe('blocked');
+      expect(paused.body.data.prompt_id).toMatch(/^msg_/);
+      expect(paused.body.data.user_message_id).toBe(paused.body.data.prompt_id);
+      expect(paused.body.data.content).toEqual([{ type: 'text', text: '/goal pause' }]);
+
+      // The control reached the engine.
+      expect(goalOf(id)?.status).toBe('paused');
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'goal.updated' &&
+            event.change?.kind === 'lifecycle' &&
+            event.change.status === 'paused',
+        ),
+      ).toBe(true);
+
+      // Nothing was minted as a prompt, and the placeholder never became a
+      // user message.
+      const list = await listPrompts(id);
+      expect(list.body.data.active).toBeNull();
+      expect(list.body.data.queued).toEqual([]);
+      expect(hasUserText(id, '/goal pause')).toBe(false);
+    } finally {
+      unsubscribe.dispose();
+    }
+  });
+
+  it('dispatches goal_control resume and continues the paused goal', async () => {
+    const id = await createActiveGoal('long project');
+
+    // Pause via the REST control first.
+    const paused = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: '/goal pause' }],
+      goal_control: 'pause',
+    });
+    expect(paused.body.code).toBe(0);
+    expect(goalOf(id)?.status).toBe('paused');
+
+    const { events, unsubscribe } = subscribeAgentEvents(id);
+    try {
+      const resumed = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+        content: [{ type: 'text', text: '/goal resume' }],
+        goal_control: 'resume',
+      });
+      expect(resumed.body.code).toBe(0);
+      expect(promptSubmitResultSchema.safeParse(resumed.body.data).success).toBe(true);
+      expect(resumed.body.data.status).toBe('blocked');
+
+      // Resume flipped the goal back to active before the reply was sent.
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'goal.updated' &&
+            event.change?.kind === 'lifecycle' &&
+            event.change.status === 'active',
+        ),
+      ).toBe(true);
+      // ...and asked the engine to continue it (a goal-driven turn, not a
+      // minted prompt).
+      await waitFor(
+        () =>
+          events.some(
+            (event) =>
+              event.type === 'turn.started' &&
+              event.origin.kind === 'system_trigger' &&
+              event.origin.name === 'goal_continuation',
+          ),
+        'goal continuation turn',
+      );
+      const list = await listPrompts(id);
+      expect(list.body.data.active).toBeNull();
+      expect(list.body.data.queued).toEqual([]);
+    } finally {
+      unsubscribe.dispose();
+    }
+  });
+
+  it('dispatches goal_control cancel and clears the goal', async () => {
+    const id = await createActiveGoal('doomed goal');
+
+    const cancelled = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: '/goal cancel' }],
+      goal_control: 'cancel',
+    });
+    expect(cancelled.body.code).toBe(0);
+    expect(promptSubmitResultSchema.safeParse(cancelled.body.data).success).toBe(true);
+    expect(cancelled.body.data.status).toBe('blocked');
+
+    expect(goalOf(id)).toBeNull();
+    const list = await listPrompts(id);
+    expect(list.body.data.active).toBeNull();
+    expect(list.body.data.queued).toEqual([]);
+    expect(hasUserText(id, '/goal cancel')).toBe(false);
+  });
+
+  it('surfaces the engine goal.not_found error for controls without a goal', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: '/goal pause' }],
+      goal_control: 'pause',
+    });
+    expect(body.code).toBe(40914);
+    expect(body.msg).toBe('No current goal');
+  });
+
+  it('rejects goal_objective on a side-channel agent (40920)', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const child = await session.accessor.get(IAgentLifecycleService).fork('main');
+
+    const { body } = await call<null>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'side goal' }],
+      agent_id: child.id,
+      goal_objective: 'side goal',
+    });
+    expect(body.code).toBe(40920);
+    expect(body.msg).toContain('main agent');
   });
 });

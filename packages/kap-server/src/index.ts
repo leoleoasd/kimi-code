@@ -7,6 +7,11 @@ export { startServer } from './start';
 export type { ServerHostIdentity, ServerStartOptions, RunningServer } from './start';
 export { okEnvelope, errEnvelope } from './envelope';
 export type { Envelope } from './envelope';
+export type {
+  SessionCommandBridge,
+  SessionCommandInfo,
+  SessionCommandResult,
+} from './transport/commandBridge';
 export { classify } from './security/bindClassify';
 export type { BindClass } from './security/bindClassify';
 export { rotateServerToken, serverTokenPath } from './services/auth/persistentToken';

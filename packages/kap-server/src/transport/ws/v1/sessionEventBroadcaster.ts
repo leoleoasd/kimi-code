@@ -921,6 +921,21 @@ export class SessionEventBroadcaster {
       );
       return;
     }
+    if (event.type === 'event.user.notify') {
+      const payload = userNotifyPayload(event.payload);
+      if (payload === undefined) return;
+      // The NotifyUser tool's surface: fan out to every connection (the
+      // `event.` prefix makes isGlobalEvent match), addressed at the owning
+      // session like `session.meta.updated` so scope-filtered remote clients
+      // keep their perimeter.
+      void this.dispatchSessionEvent(payload.sessionId, {
+        type: 'event.user.notify',
+        ...payload,
+      } as Event).catch((error: unknown) =>
+        this.logDispatchError(payload.sessionId, 'event.user.notify', error),
+      );
+      return;
+    }
     if (event.type === 'event.di.unit_changed') {
       const payload = diUnitChangedPayload(event.payload);
       if (payload === undefined) return;
@@ -1373,14 +1388,15 @@ function legacyTaskEvent(event: DomainEvent, agentId: string, sessionId: string)
   return { ...event, type: legacyType, agentId, sessionId } as unknown as Event;
 }
 
-/** Session/workspace/config/di events are broadcast to every connection. */
+/** Session/workspace/config/di/user-notify events are broadcast to every connection. */
 function isGlobalEvent(type: string): boolean {
   return (
     type === 'session.meta.updated' ||
     type.startsWith('event.session.') ||
     type.startsWith('event.workspace.') ||
     type.startsWith('event.config.') ||
-    type.startsWith('event.di.')
+    type.startsWith('event.di.') ||
+    type.startsWith('event.user.')
   );
 }
 
@@ -1627,6 +1643,38 @@ function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined;
   const sessionId = (payload as { sessionId?: unknown }).sessionId;
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+}
+
+/** Validate the `event.user.notify` payload (NotifyUser tool). */
+function userNotifyPayload(
+  payload: unknown,
+):
+  | {
+      notificationId: string;
+      sessionId: string;
+      agentId: string;
+      title: string;
+      body: string;
+    }
+  | undefined {
+  if (typeof payload !== 'object' || payload === null) return undefined;
+  const candidate = payload as Record<string, unknown>;
+  if (
+    typeof candidate['notificationId'] !== 'string' ||
+    typeof candidate['sessionId'] !== 'string' ||
+    typeof candidate['agentId'] !== 'string' ||
+    typeof candidate['title'] !== 'string' ||
+    typeof candidate['body'] !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    notificationId: candidate['notificationId'],
+    sessionId: candidate['sessionId'],
+    agentId: candidate['agentId'],
+    title: candidate['title'],
+    body: candidate['body'],
+  };
 }
 
 const DI_UNIT_STATES: ReadonlySet<string> = new Set([

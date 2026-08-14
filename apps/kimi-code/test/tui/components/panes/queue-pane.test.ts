@@ -119,4 +119,40 @@ describe('QueuePaneComponent', () => {
     const output = stripAnsi(component.render(120).join('\n'));
     expect(output).toContain('ctrl-s to steer immediately');
   });
+
+  it('renders engine-side queued prompts as a separate muted block without hints', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: false,
+      messages: [{ text: 'my own queued prompt' }],
+      engineQueue: [
+        { promptId: 'p1', text: 'pasted from the hub web UI' },
+        { promptId: 'p2', text: 'another surface prompt' },
+      ],
+    });
+
+    const output = stripAnsi(component.render(120).join('\n'));
+    expect(output).toContain('❯ my own queued prompt');
+    expect(output).toContain('engine queue →');
+    expect(output).toContain('❯ pasted from the hub web UI');
+    expect(output).toContain('❯ another surface prompt');
+  });
+
+  it('shows the engine queue block even when the local queue is empty (no hint row)', () => {
+    const component = new QueuePaneComponent({
+      isCompacting: false,
+      isStreaming: true,
+      canSteerImmediately: true,
+      messages: [],
+      engineQueue: [{ promptId: 'p1', text: '🖼' }],
+    });
+
+    const lines = component.render(120).map(stripAnsi);
+    expect(lines).toHaveLength(3); // border + header + engine row
+    const output = lines.join('\n');
+    expect(output).toContain('engine queue →');
+    expect(output).toContain('❯ 🖼');
+    expect(output).not.toContain('↑ to edit');
+  });
 });

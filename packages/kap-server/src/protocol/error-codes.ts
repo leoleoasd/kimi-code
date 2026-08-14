@@ -72,6 +72,8 @@ export const ErrorCode = {
   TOOL_CALL_NOT_FOUND: 40416,
   /** 目录（models.dev catalog）中不存在该条目 */
   CATALOG_ENTRY_NOT_FOUND: 40417,
+  /** 该实例没有 slash-command 桥（宿主未注入 commandBridge，如 headless） */
+  COMMAND_UNAVAILABLE: 40418,
 
   /** session 有正在进行的 prompt，拒绝新请求 */
   SESSION_BUSY: 40901,

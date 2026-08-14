@@ -42,6 +42,7 @@ Some commands are only available in the idle state. Executing these commands whi
 | `/copy` | — | Copy the last assistant message to the clipboard | No |
 | `/add-dir [<path>]` | — | Add an extra workspace directory to the current session. Run without a path (or with `list`) to list configured directories. When adding, choose whether to remember the directory for the project in `.kimi-code/local.toml` | No |
 | `/web` | — | Open the current session in the web UI: pick a running server to connect to, or start a new foreground server after the TUI exits. See [`kimi web`](./kimi-command.md#kimi-web) | Yes |
+| `/remote connect <hub-url> [--token <t>] [--name <n>]` | — | Bridge the current session to a running kimi hub without leaving the TUI — the hub's web UI and the terminal drive the same live session. `/remote status` shows the link, `/remote disconnect` tears it down. See [`kimi remote connect`](./kimi-command.md#kimi-remote-connect) | No |
 
 ## Modes & Run Control
 

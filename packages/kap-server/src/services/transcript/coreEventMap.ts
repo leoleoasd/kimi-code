@@ -66,6 +66,8 @@
  */
 
 import type { DomainEvent } from '@moonshot-ai/agent-core-v2';
+import { parseKimiFileUrl } from '@moonshot-ai/agent-core-v2';
+import type { ContentPart } from '@moonshot-ai/agent-core-v2';
 import type {
   AgentRef,
   AgentUsageMeta,
@@ -74,6 +76,7 @@ import type {
   TextFrame,
   ToolCallFrame,
   ToolFrameProgress,
+  TranscriptAttachment,
   TranscriptFrame,
   TranscriptInteraction,
   TranscriptMarker,
@@ -115,6 +118,7 @@ type AgentActivityUpdatedEvent = Extract<DomainEvent, { type: 'agent.activity.up
 type PromptCompletedEvent = Extract<DomainEvent, { type: 'prompt.completed' }>;
 type PromptAbortedEvent = Extract<DomainEvent, { type: 'prompt.aborted' }>;
 type PromptSteeredEvent = Extract<DomainEvent, { type: 'prompt.steered' }>;
+type PromptQueuedEvent = Extract<DomainEvent, { type: 'prompt.queued' }>;
 
 /**
  * The v1-wire `prompt.submitted` shape (kap-server `protocol/events-zod.ts`).
@@ -192,6 +196,14 @@ export class AgentTranscriptProjector {
   private readonly interactions = new Map<string, TranscriptInteraction>();
   /** promptId → the prompt queue entity as last emitted (`prompt.upsert` replaces). */
   private readonly prompts = new Map<string, TranscriptPrompt>();
+  /**
+   * Queued-prompt content FIFO for turn ↔ prompt correlation: `prompt.queued`
+   * pushes, the next `turn.started` whose origin is `user` shifts (the engine
+   * dequeues in order per agent), `prompt.aborted` / `prompt.steered` purge.
+   * Drives the turn-opening attachment projection (images/videos pasted into
+   * the composer).
+   */
+  private readonly queuedPromptContents: { promptId: string; content: readonly ContentPart[] }[] = [];
   /** turnId → step usages reported so far; folded into the turn header at `turn.ended`. */
   private readonly stepUsageByTurn = new Map<string, StepUsage[]>();
   private markerSeq = 0;
@@ -257,6 +269,8 @@ export class AgentTranscriptProjector {
         return this.onAgentActivityUpdated(event);
       case 'prompt.submitted':
         return this.onPromptSubmitted(event);
+      case 'prompt.queued':
+        return this.onPromptQueued(event);
       case 'prompt.completed':
         return this.onPromptCompleted(event);
       case 'prompt.aborted':
@@ -282,8 +296,13 @@ export class AgentTranscriptProjector {
           }),
         ];
       case 'context.spliced':
-        // Known limitation: undo/clear projects as a bare 'undo' marker (raw
-        // payload attached); no `items.remove` reconstruction in v1.
+        // Insert-only splices (a fresh prompt/message appended to context) are
+        // already represented by the turn/message projections — mapping them
+        // to an 'undo' marker would fabricate a rollback per prompt. Only a
+        // removal (undo/clear/trailing cut/compaction rebuild) projects here.
+        // Known limitation: undo/clear still share this one bare 'undo' marker
+        // (raw payload attached); no `items.remove` reconstruction in v1.
+        if (event.deleteCount === 0) return [];
         return [this.markerOp('undo', restOf(event))];
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
@@ -303,19 +322,30 @@ export class AgentTranscriptProjector {
   }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
+    const origin = mapTurnOrigin(event.origin);
+    // Media parts pasted into the turn-opening user message become attachment
+    // entities + the header's `attachmentIds` (the web bubble renders them
+    // after the text). Ordering is the only correlation key: the engine
+    // dequeues prompts FIFO into user turns.
+    const queued = origin.kind === 'user' ? this.queuedPromptContents.shift() : undefined;
+    const attachments = queued === undefined ? [] : mediaAttachments(queued.content, n);
     this.currentTurn = {
       kind: 'turn',
       turnId,
       ordinal: n,
       state: 'running',
-      origin: mapTurnOrigin(event.origin),
+      origin,
       prompt: event.prompt,
+      attachmentIds: attachments.length > 0 ? attachments.map((a) => a.attachmentId) : undefined,
       startedAt: nowIso(),
     };
     this.currentStep = undefined;
     this.openText = undefined;
     this.openThinking = undefined;
-    return [{ op: 'turn.upsert', turn: this.currentTurn }];
+    return [
+      ...attachments.map((attachment) => ({ op: 'attachment.upsert' as const, attachment })),
+      { op: 'turn.upsert' as const, turn: this.currentTurn },
+    ];
   }
 
   private onTurnEnded(event: {
@@ -344,6 +374,7 @@ export class AgentTranscriptProjector {
       state,
       origin: prev?.origin ?? { kind: 'other' },
       prompt: prev?.prompt,
+      attachmentIds: prev?.attachmentIds,
       startedAt: prev?.startedAt,
       endedAt: nowIso(),
       durationMs: event.durationMs,
@@ -1257,6 +1288,16 @@ export class AgentTranscriptProjector {
 
   // ---------------------------------------------------------------- prompts
 
+  /**
+   * `prompt.queued` — the ONLY event carrying the queued prompt's content
+   * parts; capture for the turn-start attachment correlation (see the field
+   * doc). No prompt-queue entity here — `prompt.submitted` owns those.
+   */
+  private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {
+    this.queuedPromptContents.push({ promptId: event.promptId, content: event.content });
+    return [];
+  }
+
   private onPromptSubmitted(event: ProjectorPromptSubmittedEvent): TranscriptOperation[] {
     const prompt = this.upsertPrompt(event.promptId, () => ({
       promptId: event.promptId,
@@ -1285,6 +1326,7 @@ export class AgentTranscriptProjector {
   }
 
   private onPromptAborted(event: PromptAbortedEvent): TranscriptOperation[] {
+    this.purgeQueuedContent(event.promptId);
     const prompt = this.upsertPrompt(event.promptId, (prev) => ({
       promptId: event.promptId,
       status: 'aborted',
@@ -1307,6 +1349,7 @@ export class AgentTranscriptProjector {
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
+    for (const promptId of event.promptIds) this.purgeQueuedContent(promptId);
     const active = this.upsertPrompt(event.activePromptId, (prev) => ({
       promptId: event.activePromptId,
       status: prev?.status ?? 'running',
@@ -1339,6 +1382,11 @@ export class AgentTranscriptProjector {
     const prompt = build(this.prompts.get(promptId));
     this.prompts.set(promptId, prompt);
     return prompt;
+  }
+
+  private purgeQueuedContent(promptId: string): void {
+    const idx = this.queuedPromptContents.findIndex((entry) => entry.promptId === promptId);
+    if (idx >= 0) this.queuedPromptContents.splice(idx, 1);
   }
 
   // ---------------------------------------------------------------- interactions
@@ -1409,6 +1457,101 @@ function epochMsToIso(value: number): string {
 function restOf(event: { readonly type: string }): Record<string, unknown> {
   const { type: _type, ...rest } = event;
   return rest;
+}
+
+/**
+ * Engine `PromptOrigin` → transcript `TurnOrigin` (mirrors the cold-path
+ * `groupMessagesIntoSnapshot` origin mapping; payload kept verbatim).
+ */
+const IMAGE_MIME_BY_EXT: Readonly<Record<string, string>> = {
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+  avif: 'image/avif',
+  svg: 'image/svg+xml',
+};
+
+const VIDEO_MIME_BY_EXT: Readonly<Record<string, string>> = {
+  mp4: 'video/mp4',
+  webm: 'video/webm',
+  mov: 'video/quicktime',
+  m4v: 'video/x-m4v',
+};
+
+/**
+ * Media parts of the turn-opening user message → attachment entities,
+ * mirroring the cold path (`groupTurns.collectAttachments`) over the CORE
+ * content vocabulary (`image_url` / `video_url` urls instead of v1's
+ * `image`/`video` source-kinds). Id scheme is turn-anchored on purpose: the
+ * cold heuristic uses `att_<n>`, and overlapping ids on the healed merge
+ * would alias unrelated media together.
+ *
+ * Source mapping:
+ *   - `kimi-file://<id>[?path=…]` → `{kind:'file', fileId}` — bytes stream
+ *     from `/api/v1/files/{id}` at render time;
+ *   - `data:<mime>;base64,…` → `{kind:'url', url}` — the ONLY case carrying
+ *     bytes over the wire (bounded: the prompt pipeline pre-compresses
+ *     inline media; nothing else fetchable exists);
+ *   - `http(s)://…` → `{kind:'url', url}` — no bytes fetched here.
+ */
+function mediaAttachments(
+  parts: readonly ContentPart[],
+  turnOrdinal: number,
+): TranscriptAttachment[] {
+  const out: TranscriptAttachment[] = [];
+  for (const part of parts) {
+    let url: string | undefined;
+    let mediaFamily: 'image' | 'video';
+    if (part.type === 'image_url') {
+      url = part.imageUrl.url;
+      mediaFamily = 'image';
+    } else if (part.type === 'video_url') {
+      url = part.videoUrl.url;
+      mediaFamily = 'video';
+    } else {
+      continue;
+    }
+    const attachmentId = `att-t${turnOrdinal}-${out.length + 1}`;
+    const kimiFile = parseKimiFileUrl(url);
+    if (kimiFile !== undefined) {
+      out.push({
+        attachmentId,
+        mediaType: mimeFromPath(kimiFile.path, mediaFamily),
+        source: { kind: 'file', fileId: kimiFile.fileId },
+      });
+      continue;
+    }
+    if (url.startsWith('data:')) {
+      const mime = /^data:([^;,]+)/.exec(url)?.[1];
+      out.push({
+        attachmentId,
+        mediaType: mime ?? `${mediaFamily}/*`,
+        source: { kind: 'url', url },
+      });
+      continue;
+    }
+    if (url.startsWith('http://') || url.startsWith('https://')) {
+      out.push({
+        attachmentId,
+        mediaType: mimeFromPath(url, mediaFamily),
+        source: { kind: 'url', url },
+      });
+    }
+  }
+  return out;
+}
+
+function mimeFromPath(pathOrUrl: string | undefined, family: 'image' | 'video'): string {
+  const ext = pathOrUrl?.match(/\.([a-z0-9]{2,5})(?:[?#].*)?$/i)?.[1]?.toLowerCase();
+  if (ext !== undefined) {
+    const known =
+      family === 'image' ? IMAGE_MIME_BY_EXT[ext] : VIDEO_MIME_BY_EXT[ext];
+    if (known !== undefined) return known;
+  }
+  return `${family}/*`;
 }
 
 /**

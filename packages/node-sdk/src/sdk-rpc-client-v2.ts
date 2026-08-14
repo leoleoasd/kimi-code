@@ -552,6 +552,17 @@ export class SDKRpcClientV2 extends SDKRpcClientBase {
     return this.app.accessor;
   }
 
+  /**
+   * The App scope this client bootstrapped in-process (read-only): embedding
+   * hosts hand it to kap-server's `startServer({ core })` so an HTTP/WS
+   * surface serves THIS live engine instead of a second bootstrap over the
+   * same homeDir (the TUI's `/remote connect` is the driver). Ownership stays
+   * with this client — `close()` disposes the scope; the server never does.
+   */
+  get engineScope(): Scope {
+    return this.app;
+  }
+
   protected getRpc(): Promise<never> {
     throw new KimiError(
       ErrorCodes.NOT_IMPLEMENTED,
@@ -2428,6 +2439,8 @@ export function createKimiHarnessV2(options: KimiHarnessOptions): KimiHarness {
     // v1-core-owned ingestion limits; the v2 engine has no equivalent yet, so
     // ingestion falls back to env / built-in defaults like daemon-client hosts.
     imageLimits: undefined,
+    // `undefined` on the v1 harness (createKimiHarness leaves it unset).
+    engineScope: rpc.engineScope,
     sessionStartedProperties: options.sessionStartedProperties,
   });
 }

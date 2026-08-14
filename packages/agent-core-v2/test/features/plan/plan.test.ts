@@ -712,6 +712,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
+        [emit] agent.status.updated        { "permission": "yolo" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Inspect without mutating files" } ], "origin": { "kind": "user" }, "time": "<time>" }
@@ -789,6 +790,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
+        [emit] agent.status.updated        { "permission": "yolo" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "planMode": true }
         [wire] turn.prompt                 { "input": [ { "type": "text", "text": "Remove forbidden.txt" } ], "origin": { "kind": "user" }, "time": "<time>" }

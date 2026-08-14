@@ -11,7 +11,12 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createServerLogger, startServer, type ServerLogger } from '@moonshot-ai/kap-server';
+import {
+  createServerLogger,
+  startServer,
+  type RunningServer,
+  type ServerLogger,
+} from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
 import { type Command } from 'commander';
@@ -66,7 +71,13 @@ export interface WebCliOptions extends ServerCliOptions {
 
 export interface StartForegroundHooks {
   /** Fires once the server is listening, before the foreground runner blocks. */
-  onReady?: (origin: string) => void;
+  onReady?: (origin: string, server: RunningServer) => void;
+  /**
+   * Fires at the start of the signal-driven shutdown (SIGINT/SIGTERM), before
+   * the server closes — use it to tear down anything that depends on the
+   * server still listening (e.g. the hub tunnel of `kimi remote connect`).
+   */
+  onShutdown?: () => void | Promise<void>;
 }
 
 export interface WebCommandDeps {
@@ -226,16 +237,31 @@ export async function startServerForeground(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks = {},
 ): Promise<never> {
-  return runServerInProcess(options, hooks.onReady);
+  return runServerInProcess(options, hooks, true);
+}
+
+/**
+ * API-only variant (`kimi remote connect`): same foreground server, but no
+ * web UI assets are served or required — the controlling UI lives on the hub
+ * the tunnel dials out to.
+ */
+export async function startApiServerForeground(
+  options: ParsedServerOptions,
+  hooks: StartForegroundHooks = {},
+): Promise<never> {
+  return runServerInProcess(options, hooks, false);
 }
 
 /**
  * Start the server in the current process and block until shutdown.
- * `onReady` fires once the server is listening.
+ * `hooks.onReady` fires once the server is listening, `hooks.onShutdown` at
+ * the start of the signal-driven shutdown. `serveWebAssets` toggles the
+ * bundled web UI (`dist-web`).
  */
 async function runServerInProcess(
   options: ParsedServerOptions,
-  onReady?: (origin: string) => void,
+  hooks: StartForegroundHooks,
+  serveWebAssets: boolean,
 ): Promise<never> {
   const version = getVersion();
   // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
@@ -250,6 +276,7 @@ async function runServerInProcess(
     stopping = true;
     running?.logger.info({ reason }, 'server shutting down');
     try {
+      await hooks.onShutdown?.();
       await running?.close();
       await shutdownTelemetry({ timeoutMs: CLI_SHUTDOWN_TIMEOUT_MS });
     } catch (error) {
@@ -266,8 +293,8 @@ async function runServerInProcess(
   // logger, close }`, so adapt it to the `RoutedServer` surface the rest of
   // this runner consumes.
   const logger = createServerLogger({ level: options.logLevel });
-  const webAssetsDir = serverWebAssetsDir();
-  if (webAssetsDir === undefined) {
+  const webAssetsDir = serveWebAssets ? serverWebAssetsDir() : undefined;
+  if (serveWebAssets && webAssetsDir === undefined) {
     logger.info(
       'dev mode: web assets not built; starting the API server without the web UI',
     );
@@ -301,7 +328,11 @@ async function runServerInProcess(
     telemetry: true,
     webAssetsDir,
   });
-  logger.info('serving the REST/WS API and the bundled web UI');
+  logger.info(
+    serveWebAssets
+      ? 'serving the REST/WS API and the bundled web UI'
+      : 'serving the REST/WS API only (no web UI)',
+  );
   running = {
     address: `http://${v2.host}:${v2.port}`,
     logger,
@@ -319,7 +350,7 @@ async function runServerInProcess(
 
   running.logger.info({ address: running.address }, 'server ready');
 
-  onReady?.(running.address);
+  hooks.onReady?.(running.address, v2);
 
   return new Promise<never>(() => {
     // Keeps the event loop alive; the process ends via shutdown()/process.exit.

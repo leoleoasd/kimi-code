@@ -114,6 +114,18 @@ export interface ConfigWarningEvent {
 }
 
 /**
+ * The NotifyUser tool's surface: an out-of-band user notification published
+ * by the engine on the global event bus and fanned out to every connection
+ * (session-addressed so scope-filtered clients keep their perimeter).
+ */
+export interface UserNotifyEvent {
+  readonly type: 'event.user.notify';
+  readonly notificationId: string;
+  readonly title: string;
+  readonly body: string;
+}
+
+/**
  * DI unit state transition of the engine's scope tree, produced by
  * agent-core-v2's `IDebugCascadeService` (the L5 debug surface feed). Global:
  * carries no owning session and fans out to every connection.
@@ -210,6 +222,7 @@ export type AgentEvent =
   | SessionStatusChangedEvent
   | ConfigChangedEvent
   | ConfigWarningEvent
+  | UserNotifyEvent
   | DiUnitChangedEvent
   | PromptSubmittedEvent
   | BackgroundTaskStartedEvent

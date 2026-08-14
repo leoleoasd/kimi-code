@@ -40,6 +40,7 @@
 | `/copy` | — | 将最后一条 AI 回复复制到剪贴板 | 否 |
 | `/add-dir [<path>]` | — | 为当前会话添加额外的工作目录。不带路径（或传入 `list`）运行时列出已配置的目录。添加时可选择是否将目录记入项目的 `.kimi-code/local.toml` | 否 |
 | `/web` | — | 在 web UI 中打开当前会话：选择一个运行中的实例进行连接，或在 TUI 退出后新开一个前台服务器。参见 [`kimi web`](./kimi-command.md#kimi-web) | 是 |
+| `/remote connect <hub-url> [--token <t>] [--name <n>]` | — | 把当前会话桥接到运行中的 kimi hub 且不离开 TUI——hub 的 web UI 和终端同时驱动同一个活跃会话。`/remote status` 查看连接，`/remote disconnect` 断开。参见 [`kimi remote connect`](./kimi-command.md#kimi-remote-connect) | 否 |
 
 ## 模式与运行控制
 

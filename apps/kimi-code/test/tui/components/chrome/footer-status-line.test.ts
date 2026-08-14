@@ -40,6 +40,7 @@ const baseState: AppState = {
   availableModels: {},
   availableProviders: {},
   mcpServersSummary: null,
+  engineQueuedPrompts: [],
 };
 
 const payload: StatusLinePayload = {

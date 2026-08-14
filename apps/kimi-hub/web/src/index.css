@@ -1,0 +1,87 @@
+@import 'tailwindcss';
+
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  /* Fill the dynamic viewport; the app shell uses h-dvh so mobile browser
+     chrome collapsing/expanding does not leave dead bands. */
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: #0b0d10;
+  color: #d6dae0;
+  font-family:
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+  font-size: 13px;
+  /* No rubber-band scroll chain off the edge of the chat column. */
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2b313a transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2b313a;
+  border-radius: 4px;
+}
+
+/* Blinking caret pinned behind the text frame currently streaming. Pure CSS;
+   the frame text itself grows via plain React re-renders. */
+.stream-caret {
+  display: inline-block;
+  width: 0.55em;
+  margin-left: 1px;
+  color: #7dd3fc;
+  animation: stream-caret-blink 1s steps(2, start) infinite;
+  user-select: none;
+}
+
+@keyframes stream-caret-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* Small status pulse (running dot in the top bar / rail rows). */
+.pulse-dot {
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .stream-caret,
+  .pulse-dot {
+    animation: none;
+  }
+}

@@ -406,6 +406,14 @@ export const BUILTIN_SLASH_COMMANDS = [
     availability: 'always',
   },
   {
+    name: 'remote',
+    aliases: [],
+    description: 'Remote-control this session from a kimi hub while the TUI stays live',
+    priority: 40,
+    argumentHint: 'connect <hub-url> [--token <t>] | disconnect | status',
+    availability: 'idle-only',
+  },
+  {
     name: 'exit',
     aliases: ['quit', 'q'],
     description: 'Exit the application',
