@@ -98,6 +98,11 @@ function trackScopedSession(sid: string): void {
  * the first hello carries the union, and the tunnel client re-declares the
  * latest wanted scope on every reconnect.)
  */
+/** True while the hub tunnel carries traffic (mounted into the footer status line). */
+export function isRemoteConnected(): boolean {
+  return connection !== undefined && connection.tunnelState.kind === 'connected';
+}
+
 export function notifyRemoteSessionChanged(sid: string): void {
   const before = scopedSessionIds.length;
   trackScopedSession(sid);
