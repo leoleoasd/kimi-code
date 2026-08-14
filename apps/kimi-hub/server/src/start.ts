@@ -98,7 +98,7 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
     app.addContentTypeParser(contentType, { parseAs: 'buffer', bodyLimit: PROXY_BODY_LIMIT }, bufferParser);
   }
 
-  const push = await openPushModule(config.dataDir);
+  const push = await openPushModule(config.dataDir, app.log);
   registerHubApiRoutes(app, { registry, push });
   registerProxyRoutes(app, { registry });
 
