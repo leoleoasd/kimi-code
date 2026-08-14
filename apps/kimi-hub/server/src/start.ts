@@ -70,7 +70,12 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
   // presenting the banner token still work — any token value passes.
   const registry = createTunnelRegistry({ token: config.token, trustAnyToken: config.disableAuth });
   const allowlist = { boundHost: config.host, extra: parseAllowedHosts(env) };
-  const isHostAllowed = (host: string | undefined): boolean => isAllowedHost(host, allowlist);
+  // `--dangerous-bypass-auth` is the "I know exactly what this box exposes"
+  // mode: no credentials, no host allowlist — reverse proxies and tunnel
+  // domains forward arbitrary Host values, which no allowlist could
+  // anticipate. Everything else keeps DNS-rebinding defence.
+  const isHostAllowed = (host: string | undefined): boolean =>
+    config.disableAuth ? true : isAllowedHost(host, allowlist);
 
   // DNS-rebinding defence on HTTP as well (WS has its own in `ws.ts`),
   // before auth — matching kap-server's hook order.
