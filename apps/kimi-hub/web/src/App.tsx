@@ -34,6 +34,7 @@ import {
 } from './hub/api';
 import {
   askNotificationPermission,
+  ensurePushSubscription,
   notificationState,
   showHubNotification,
   type NotificationClickMessage,
@@ -62,6 +63,15 @@ export function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [notifyPerm, setNotifyPerm] = useState(notificationState);
+
+  // Web Push handshake: once permission is granted this device's subscription
+  // rides to the hub, so the closed-tab + background-session channels wake it
+  // without any page open. On every load; the hub upserts endpoint-equal.
+  useEffect(() => {
+    if (notificationState() === 'granted') {
+      void ensurePushSubscription(hubOrigin, token);
+    }
+  }, [hubOrigin, token]);
 
   // A notification click lands in the SW and is posted back here as a
   // (agentName, sessionId) selection; the boot-time URL carries the same for
@@ -220,7 +230,10 @@ export function App() {
             className="min-h-[36px] rounded border border-neutral-700 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800"
             title="enable OS notifications for agent alerts (the NotifyUser tool)"
             onClick={() => {
-              void askNotificationPermission().then(setNotifyPerm);
+              void askNotificationPermission().then((state) => {
+                setNotifyPerm(state);
+                if (state === 'granted') void ensurePushSubscription(hubOrigin, token);
+              });
             }}
           >
             🔔 Enable alerts

@@ -53,7 +53,6 @@ import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
-import { showHubNotification } from '../hub/notifications';
 import { collapseMarkerRuns, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
@@ -127,59 +126,10 @@ export function ChatView({
     enabled: sessionId !== '',
   });
 
-  // OS-level notifications, page-owned (this chat is open and permission was
-  // granted): a COMPLETED turn's busy→idle edge, and every newly appearing
-  // pending interaction, ping the device. Tags dedupe; the first load marks
-  // the backlog seen without firing.
-  const busyNow = status.data?.busy;
-  const prevBusyRef = useRef<boolean | undefined>(undefined);
-  useEffect(() => {
-    if (busyNow === undefined) return;
-    const was = prevBusyRef.current;
-    prevBusyRef.current = busyNow;
-    if (was !== true || busyNow !== false) return;
-    const last = [...state.items]
-      .reverse()
-      .find(
-        (item) =>
-          item.kind === 'turn' &&
-          (item.state === 'completed' || item.state === 'cancelled' || item.state === 'failed'),
-      );
-    if (last === undefined || last.kind !== 'turn' || last.state !== 'completed') return;
-    void showHubNotification({
-      notificationId: `idle/${sessionId}/${last.turnId}`,
-      sessionId,
-      agentId: agentIdFromBaseUrl(baseUrl),
-      agentName: agentName ?? 'agent',
-      title: 'agent finished',
-      body: (lastAssistantText(state.items) ?? '').slice(0, 160),
-    });
-  });
-
-  const seenPendingRef = useRef<Set<string> | undefined>(undefined);
-  useEffect(() => {
-    const pending = [...state.pendingInteractions];
-    if (seenPendingRef.current === undefined) {
-      seenPendingRef.current = new Set(pending);
-      return;
-    }
-    for (const id of pending) {
-      if (seenPendingRef.current.has(id)) continue;
-      seenPendingRef.current.add(id);
-      const interaction = state.interactions.get(id);
-      void showHubNotification({
-        notificationId: `interaction/${id}`,
-        sessionId,
-        agentId: agentIdFromBaseUrl(baseUrl),
-        agentName: agentName ?? 'agent',
-        title: 'agent is waiting for your input',
-        body:
-          interaction?.interactionKind === 'question'
-            ? 'a question is waiting for an answer'
-            : 'an approval is waiting for a decision',
-      });
-    }
-  }, [state.pendingInteractions, state.interactions, sessionId, baseUrl, agentName]);
+  // OS-level notifications are owned by the CONNECTOR (engine → tunnel → hub
+  // → Web Push): every connected session pings even when no chat page is
+  // open, so the page adds nothing here (the spirit of the push chain is
+  // "wake the device whose page isn't watching").
 
   // Both abort paths invalidate the queue query — the 2s poll would settle
   // on its own; this is a promptness nicety (the abort's drain freebie shows
