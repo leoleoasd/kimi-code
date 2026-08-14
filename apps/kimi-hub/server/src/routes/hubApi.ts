@@ -28,7 +28,7 @@ export function registerHubApiRoutes(app: FastifyInstance, opts: HubApiRouteOpti
 
   app.post('/hub/api/push/subscriptions', async (req) => {
     // The proxy's catch-all buffer parser leaves bodies unparsed here.
-    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : typeof req.body === 'string' ? req.body : '';
     let subscription: { endpoint?: unknown } | undefined;
     try {
       subscription = JSON.parse(raw) as { endpoint?: unknown };
@@ -43,7 +43,7 @@ export function registerHubApiRoutes(app: FastifyInstance, opts: HubApiRouteOpti
   });
 
   app.delete('/hub/api/push/subscriptions', async (req) => {
-    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : String(req.body ?? '');
+    const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : typeof req.body === 'string' ? req.body : '';
     let endpoint: string | undefined;
     try {
       endpoint = (JSON.parse(raw) as { endpoint?: string }).endpoint;
