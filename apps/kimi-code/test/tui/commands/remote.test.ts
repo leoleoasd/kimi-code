@@ -10,7 +10,7 @@ import type { RunningServer } from '@moonshot-ai/kap-server';
 import type { TunnelClientHandle, TunnelClientState } from '@moonshot-ai/remote-tunnel/agent';
 
 import type { SlashCommandHost } from '#/tui/commands/dispatch';
-import { handleRemoteCommand } from '#/tui/commands/remote';
+import { handleRemoteCommand, notifyRemoteSessionChanged } from '#/tui/commands/remote';
 
 const mocks = vi.hoisted(() => ({
   startServer: vi.fn(),
@@ -31,20 +31,38 @@ interface FakeConnection {
   onState: (state: TunnelClientState) => void;
 }
 
+/**
+ * One duck-typed accessor object every engine-service probe lands on. The
+ * surfaces the connect path reaches: `IEventService.subscribe` (notify
+ * bridge), `IWorkspaceLifecycleService.handlers.list()` (both bridges' live
+ * session lookup), `IHubConnectionService.configure` (the gated hub tools).
+ * Matching by member shape - rather than decorator identity - survives the
+ * inner describe's `vi.resetModules()` (fresh module instances re-create
+ * every decorator's identity).
+ */
+function makeEngineStub(): {
+  subscribe: () => { dispose: () => void };
+  handlers: { list: () => unknown[] };
+  configure: ReturnType<typeof vi.fn>;
+} {
+  return {
+    subscribe: () => ({ dispose: () => undefined }),
+    handlers: { list: () => [] },
+    configure: vi.fn(),
+  };
+}
+
 function makeHost(engineScope: unknown = {}, sessionId = 'ses-1'): SlashCommandHost & {
   showStatus: ReturnType<typeof vi.fn>;
   showError: ReturnType<typeof vi.fn>;
   showNotice: ReturnType<typeof vi.fn>;
   stop: ReturnType<typeof vi.fn>;
   setExitForegroundTask: ReturnType<typeof vi.fn>;
+  engine: { configure: ReturnType<typeof vi.fn> };
 } {
-  // The connect path now wires the notify bridge → it reads
-  // `engineScope.accessor.get(IEventService).subscribe`. Scenario stubs keep
-  // their identity but gain the minimal accessor surface.
+  const engine = makeEngineStub();
   if (typeof engineScope === 'object' && engineScope !== null && !('accessor' in engineScope)) {
-    (engineScope as Record<string, unknown>)['accessor'] = {
-      get: () => ({ subscribe: () => ({ dispose: () => undefined }) }),
-    };
+    (engineScope as Record<string, unknown>)['accessor'] = { get: () => engine };
   }
   return {
     session: { id: sessionId },
@@ -55,6 +73,7 @@ function makeHost(engineScope: unknown = {}, sessionId = 'ses-1'): SlashCommandH
     showNotice: vi.fn(),
     stop: vi.fn(async () => {}),
     setExitForegroundTask: vi.fn(),
+    engine,
   } as unknown as ReturnType<typeof makeHost>;
 }
 
@@ -211,6 +230,34 @@ describe('remote slash command', () => {
     expect(lastConn!.tunnel.close).toHaveBeenCalledOnce();
     expect(lastServer!.close).toHaveBeenCalledOnce();
     expect(host.showStatus).toHaveBeenCalledWith('Remote control disconnected.');
+  });
+
+  it('publishes the hub connection for the gated tools, and clears it on disconnect', async () => {
+    const host = makeHost();
+    await connect(host);
+    expect(host.engine.configure).toHaveBeenLastCalledWith({
+      hubUrl: 'https://hub.example.com',
+      token: 't-1',
+      agentName: expect.any(String),
+      sessionIds: ['ses-1'],
+    });
+
+    await handleRemoteCommand(host, 'disconnect');
+    expect(host.engine.configure).toHaveBeenLastCalledWith(undefined);
+  });
+
+  it('republishes the session set when the scope union widens on a live connection', async () => {
+    const host = makeHost();
+    await connect(host);
+
+    notifyRemoteSessionChanged('ses-2');
+
+    expect(host.engine.configure).toHaveBeenLastCalledWith({
+      hubUrl: 'https://hub.example.com',
+      token: 't-1',
+      agentName: expect.any(String),
+      sessionIds: ['ses-1', 'ses-2'],
+    });
   });
 
   it('auto-cleans the tunnel + server when the hub rejects the connection', async () => {

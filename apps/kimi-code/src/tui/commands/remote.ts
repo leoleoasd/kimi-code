@@ -9,9 +9,11 @@ import {
 
 import {
   hubUiUrl,
+  type HubToolWiring,
   parseHubUrl,
   parseRemoteCommand,
   resolveHubToken,
+  wireHubTools,
   wireNotifyBridge,
 } from '#/cli/sub/remote/shared';
 import {
@@ -65,6 +67,8 @@ interface RemoteConnection {
   readonly tunnel: TunnelClientHandle;
   /** The `event.user.notify` → tunnel subscription; torn down with the connection. */
   readonly notifyBridge: { dispose(): void };
+  /** Hub-gated tool registration (`ListHubSessions` / `SendHubMessage`) + the connection those tools call back to. */
+  readonly hubTools: HubToolWiring;
   tunnelState: TunnelClientState;
   agentId: string | undefined;
 }
@@ -99,6 +103,7 @@ export function notifyRemoteSessionChanged(sid: string): void {
   trackScopedSession(sid);
   if (scopedSessionIds.length === before) return;
   connection?.tunnel.updateScope([...scopedSessionIds]);
+  connection?.hubTools.attachSession(sid);
 }
 
 let connection: RemoteConnection | undefined;
@@ -216,6 +221,11 @@ async function connectRemote(
     server,
     tunnel,
     notifyBridge: wireNotifyBridge(engineScope, tunnel, session.id),
+    hubTools: wireHubTools(
+      engineScope,
+      { hubUrl, token: hubToken, agentName },
+      [...scopedSessionIds],
+    ),
     tunnelState: { kind: 'connecting' },
     agentId: undefined,
   };
@@ -295,6 +305,7 @@ function onTunnelState(host: SlashCommandHost, conn: RemoteConnection, state: Tu
 
 /** Close the tunnel first (stop remote traffic), then the embedded server. */
 async function closeConnection(conn: RemoteConnection): Promise<void> {
+  conn.hubTools.dispose();
   conn.notifyBridge.dispose();
   try {
     await conn.tunnel.close();

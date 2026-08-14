@@ -1,0 +1,5 @@
+Send a plain-text message to the agent running ANOTHER session on the same kimi hub (possibly on another machine). The message lands in that session as a user-role message: queued and read right after if the agent is mid-turn, starting a new turn if it is idle.
+
+A message is text only — no files, diffs, or conversation history travel with it. The receiving agent (and its user) sees it marked as coming from your session, and it can reply to your session the same way.
+
+Find the target's `session_id` with ListHubSessions first. Good uses: hand off a finding or a breaking change, coordinate parallel work trees, request status from long-running work. Send at most one message per reason to act — never trade rapid back-and-forth messages with another agent.

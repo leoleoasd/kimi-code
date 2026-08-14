@@ -65,6 +65,12 @@ hub web UI lists and controls all their sessions.
   the connector injects the agent-local token.
 - WS proxy: `WS /agents/{agentId}/api/v1/ws` → virtual relay to the agent's
   kap-server WS, text/binary preserved, scope-filtered for scoped agents.
+- Agent-initiated hub calls: a connected agent's engine tools
+  (`ListHubSessions` / `SendHubMessage`) also reach the hub WITHOUT the
+  browser — plain HTTPS with the same shared token: `GET /hub/api/agents`
+  (roster read) and the proxied
+  `POST /agents/{otherAgentId}/api/v1/sessions/{sid}/prompts` (target must be
+  a session the OTHER agent exposes; its scope filter applies as usual).
 - Static UI: `GET /` + SPA fallback (serves `web/dist` in production; in dev
   the Vite dev server on 5173 proxies `/hub`, `/agents`, `/internal` to the
   hub server).
