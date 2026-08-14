@@ -12,6 +12,7 @@ import chalk from 'chalk';
 import { effectiveModelAlias } from '@moonshot-ai/kimi-code-sdk';
 
 import { ALL_TIPS, type ToolbarTip } from '#/tui/constant/tips';
+import { isRemoteConnected } from '#/tui/commands/remote';
 import { isRainbowDancing, renderDanceFooterModel } from '#/tui/easter-eggs/dance';
 import { currentTheme } from '#/tui/theme';
 import type { ColorPalette } from '#/tui/theme/colors';
@@ -33,7 +34,7 @@ import {
   usagePercentFromRatio,
 } from '#/utils/usage/usage-format';
 
-const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'cwd', 'git'] as const;
+const DEFAULT_STATUS_LINE_ITEMS = ['mode', 'goal', 'model', 'tasks', 'remote', 'cwd', 'git'] as const;
 
 const MAX_CWD_SEGMENTS = 3;
 const GOAL_TIMER_INTERVAL_MS = 1_000;
@@ -364,6 +365,7 @@ export class FooterComponent implements Component {
       goal: [],
       model: [],
       tasks: [],
+      remote: [],
       cwd: [],
       git: [],
       tips: [],
@@ -425,6 +427,8 @@ export class FooterComponent implements Component {
       );
     }
     slots['tasks'] = taskBadges;
+
+    if (isRemoteConnected()) slots['remote'] = [chalk.hex(colors.success)('hub active')];
 
     const cwd = shortenCwd(state.workDir);
     if (cwd) slots['cwd'] = [chalk.hex(colors.textDim)(cwd)];
