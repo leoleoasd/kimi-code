@@ -216,10 +216,10 @@ function wireSessionTurnNotify(
     handle.accessor.get(IEventBus).subscribe((event) => {
       if (event.type !== 'turn.ended' || event.reason !== 'completed') return;
       tunnel.notify({
-        notificationId: `idle/${sessionId}/t${event.turnId}`,
+        notificationId: `idle/${sessionId}/${handle.id}/t${event.turnId}`,
         sessionId,
         agentId: handle.id,
-        title: 'agent finished',
+        title: `${handle.id} finished`,
         body: 'the turn completed',
       });
     });
@@ -239,7 +239,7 @@ function wireSessionTurnNotify(
         tunnel.notify({
           notificationId: `interaction/${sessionId}/${pending.id}`,
           sessionId,
-          title: 'agent is waiting for your input',
+          title: `${pending.origin?.agentId ?? 'agent'} is waiting for your input`,
           body:
             pending.kind === 'question'
               ? 'a question is waiting for an answer'
