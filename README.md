@@ -1,4 +1,31 @@
-# Kimi Code CLI
+# Kimi Code CLI (leoleoasd fork)
+
+> **This repository is [leoleoasd](https://github.com/leoleoasd)'s fork of [MoonshotAI/kimi-code](https://github.com/MoonshotAI/kimi-code).** If you want the official product, use that repo and its [official install script](https://code.kimi.com/kimi-code/install.sh).
+
+## What this fork adds
+
+- **`kimi-hub` (`apps/kimi-hub`) — decouple the web UI from the agent machine.** A single hub page lists and drives sessions from agents that dial out with `kimi remote connect <hub-url>` (reverse tunnel; agents never open ports). Sessions are scoped per connection; the hub proxies the unchanged kap-server protocol.
+- **OS/browser notifications for agent-driven events (`NotifyUser`)**, including Web Push delivery that wakes devices with the page closed. Push details: an APNs-accepted VAPID contact (Apple rejects `*.local`, FCM does not), logged and self-pruning dead subscriptions, automatic re-subscribe after VAPID rotation, and no double notifications while a hub page is open.
+- **Streaming thinking frames pinned to two lines** when collapsed, so the chat doesn't jump around on narrow screens.
+
+## Install the fork's binaries
+
+Prebuilt artifacts (kimi CLI for linux/darwin × x64/arm64 + Windows, kimi-hub for linux/darwin) ship as [GitHub Releases](https://github.com/leoleoasd/kimi-code/releases) built by the "Fork Release" workflow (Actions → Fork Release → pick a tag):
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/leoleoasd/kimi-code/main/install.sh | bash
+```
+
+This installs `kimi` and `kimi-hub` into `~/.local/bin` (override with `--install-dir`; install one product with `--cli-only` / `--hub-only`; pin a tag with `--version <tag>`). On Windows, download the `win32-*` archive from the Releases page manually.
+
+Typical setup — start a hub on a reachable machine, then attach an agent's session to it:
+
+```sh
+kimi-hub                      # prints the origin + token banner
+kimi remote connect http://<hub-host>:58630 --session <session-id> --token <token>
+```
+
+# Kimi Code CLI (upstream README)
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Docs](https://img.shields.io/badge/docs-online-blue)](https://moonshotai.github.io/kimi-code/en/) <br>
 [Documentation](https://moonshotai.github.io/kimi-code/en/) · [Issues](https://github.com/MoonshotAI/kimi-code/issues) · [中文](README.zh-CN.md)
