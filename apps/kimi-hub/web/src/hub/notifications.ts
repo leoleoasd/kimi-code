@@ -8,8 +8,9 @@
  * iOS PWAs accept, and it routes clicks through the SW's `notificationclick`
  * listener (sw.js) back to this page via `postMessage`.
  *
- * No closed-tab delivery: that needs Web Push (VAPID + a push service),
- * deliberately out of scope.
+ * Closed-tab delivery goes through Web Push (sw.js `push` handler); with any
+ * hub window open the push side stays silent and THIS page channel renders
+ * instead, so a device never shows both.
  */
 
 import type { NotifyPayload } from './stream';

@@ -16,9 +16,16 @@ self.addEventListener('install', (event) => {
 /*
  * Web Push: the hub fans a `notify` frame out to `sendNotification` for every
  * registered subscription (server/src/push.ts) — this is the closed-tab /
- * background-session wake path. Payload carries the frame; `tag` matches the
- * page-side showHubNotification tag, so push and page notification REPLACE
- * each other instead of stacking.
+ * background-session wake path. Payload carries the frame.
+ *
+ * Channel coordination: the SAME notificationId also arrives over the roster
+ * stream and is rendered by the page (hub/notifications.ts showHubNotification)
+ * whenever any hub window is open. tag-replacement was expected to collapse
+ * the two renders into one but does not hold in practice (macOS Chrome and
+ * installed iOS PWAs both displayed pairs), so the rendezvous is explicit
+ * instead: an OPEN window proves the page channel is live, and the push-
+ * handler side stays silent; suspended/closed pages own no WindowClient, so
+ * the wake path still fires for genuinely unattended devices.
  */
 self.addEventListener('push', (event) => {
   if (event.data === null) return;
@@ -38,15 +45,19 @@ self.addEventListener('push', (event) => {
     return;
   }
   event.waitUntil(
-    self.registration.showNotification(payload.title, {
-      body: payload.body,
-      tag: `kimi-hub/${payload.notificationId}`,
-      data: {
-        type: 'notification-click',
-        agentName: payload.agentName ?? '',
-        sessionId: payload.sessionId,
-      },
-    }),
+    (async () => {
+      const windows = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+      if (windows.length > 0) return;
+      await self.registration.showNotification(payload.title, {
+        body: payload.body,
+        tag: `kimi-hub/${payload.notificationId}`,
+        data: {
+          type: 'notification-click',
+          agentName: payload.agentName ?? '',
+          sessionId: payload.sessionId,
+        },
+      });
+    })(),
   );
 });
 
