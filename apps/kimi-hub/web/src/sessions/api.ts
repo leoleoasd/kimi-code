@@ -189,6 +189,9 @@ export async function fetchSession(
 export interface SessionStatus {
   readonly busy: boolean;
   readonly model?: string;
+  readonly permission?: string;
+  readonly planMode?: boolean;
+  readonly swarmMode?: boolean;
   readonly contextTokens: number;
   readonly maxContextTokens?: number;
   /** 0..1 */
@@ -207,6 +210,9 @@ export async function fetchSessionStatus(
   return {
     busy: s['busy'],
     model: typeof s['model'] === 'string' ? s['model'] : undefined,
+    permission: typeof s['permission'] === 'string' ? s['permission'] : undefined,
+    planMode: s['plan_mode'] === true ? true : undefined,
+    swarmMode: s['swarm_mode'] === true ? true : undefined,
     contextTokens: typeof s['context_tokens'] === 'number' ? s['context_tokens'] : 0,
     maxContextTokens:
       typeof s['max_context_tokens'] === 'number' ? s['max_context_tokens'] : undefined,

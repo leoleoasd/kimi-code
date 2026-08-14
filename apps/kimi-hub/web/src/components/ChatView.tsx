@@ -53,6 +53,7 @@ import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
+import { showHubNotification } from '../hub/notifications';
 import { collapseMarkerRuns, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
@@ -61,6 +62,7 @@ export function ChatView({
   token,
   sessionId,
   agentOffline,
+  agentName,
   onSessionMetaUpdated,
 }: {
   /** The agent's proxy base (`${hubOrigin}/agents/{agentId}`). */
@@ -73,6 +75,8 @@ export function ChatView({
    * reconnect re-resolves (and remounts) it.
    */
   agentOffline?: boolean;
+  /** The agent's display name — goes into OS notification bodies. */
+  agentName?: string;
   /** Global WS meta frames (rename / auto-title) — stamped with this (agent, session)'s cache. */
   onSessionMetaUpdated: (meta: SessionMetaUpdated) => void;
 }) {
@@ -122,6 +126,60 @@ export function ChatView({
     refetchInterval: 2000,
     enabled: sessionId !== '',
   });
+
+  // OS-level notifications, page-owned (this chat is open and permission was
+  // granted): a COMPLETED turn's busy→idle edge, and every newly appearing
+  // pending interaction, ping the device. Tags dedupe; the first load marks
+  // the backlog seen without firing.
+  const busyNow = status.data?.busy;
+  const prevBusyRef = useRef<boolean | undefined>(undefined);
+  useEffect(() => {
+    if (busyNow === undefined) return;
+    const was = prevBusyRef.current;
+    prevBusyRef.current = busyNow;
+    if (was !== true || busyNow !== false) return;
+    const last = [...state.items]
+      .reverse()
+      .find(
+        (item) =>
+          item.kind === 'turn' &&
+          (item.state === 'completed' || item.state === 'cancelled' || item.state === 'failed'),
+      );
+    if (last === undefined || last.kind !== 'turn' || last.state !== 'completed') return;
+    void showHubNotification({
+      notificationId: `idle/${sessionId}/${last.turnId}`,
+      sessionId,
+      agentId: agentIdFromBaseUrl(baseUrl),
+      agentName: agentName ?? 'agent',
+      title: 'agent finished',
+      body: (lastAssistantText(state.items) ?? '').slice(0, 160),
+    });
+  });
+
+  const seenPendingRef = useRef<Set<string> | undefined>(undefined);
+  useEffect(() => {
+    const pending = [...state.pendingInteractions];
+    if (seenPendingRef.current === undefined) {
+      seenPendingRef.current = new Set(pending);
+      return;
+    }
+    for (const id of pending) {
+      if (seenPendingRef.current.has(id)) continue;
+      seenPendingRef.current.add(id);
+      const interaction = state.interactions.get(id);
+      void showHubNotification({
+        notificationId: `interaction/${id}`,
+        sessionId,
+        agentId: agentIdFromBaseUrl(baseUrl),
+        agentName: agentName ?? 'agent',
+        title: 'agent is waiting for your input',
+        body:
+          interaction?.interactionKind === 'question'
+            ? 'a question is waiting for an answer'
+            : 'an approval is waiting for a decision',
+      });
+    }
+  }, [state.pendingInteractions, state.interactions, sessionId, baseUrl, agentName]);
 
   // Both abort paths invalidate the queue query — the 2s poll would settle
   // on its own; this is a promptness nicety (the abort's drain freebie shows
@@ -315,6 +373,18 @@ export function ChatView({
           <Badge tone="sky">agent: {transcriptAgentId}</Badge>
         )}
         {running ? <Badge tone="amber">busy</Badge> : <Badge tone="green">idle</Badge>}
+        {status.data?.permission !== undefined && status.data.permission !== 'default' ? (
+          <Badge tone={status.data.permission === 'yolo' ? 'red' : 'sky'}>
+            {status.data.permission}
+          </Badge>
+        ) : null}
+        {status.data?.planMode === true ? <Badge tone="amber">plan</Badge> : null}
+        {status.data?.swarmMode === true ? <Badge tone="violet">swarm</Badge> : null}
+        {state.meta.goal !== undefined && state.meta.goal.status !== 'complete' ? (
+          <Badge tone="green" title={state.meta.goal.objective}>
+            goal: {state.meta.goal.status}
+          </Badge>
+        ) : null}
         {status.data !== undefined ? (
           <span className="ml-auto text-[10px] text-neutral-600">
             {status.data.model ?? ''}
@@ -413,6 +483,11 @@ export function ChatView({
 
 function shortError(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 60) : 'error';
+}
+
+/** The tunnel connection id out of the `${hubOrigin}/agents/{agentId}` base. */
+function agentIdFromBaseUrl(baseUrl: string): string {
+  return baseUrl.split('/agents/')[1]?.split('/')[0] ?? '';
 }
 
 /**
