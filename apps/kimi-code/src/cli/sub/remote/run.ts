@@ -89,8 +89,9 @@ export async function runRemoteConnect(options: RemoteConnectOptions): Promise<n
           }
         },
       });
-      // The NotifyUser tool's events cross to the hub from here on.
-      wireNotifyBridge(server.core, tunnel);
+      // The NotifyUser tool's events cross to the hub from here on, plus the
+      // attached session's own turn-finish / pending-interaction pings.
+      wireNotifyBridge(server.core, tunnel, options.sessionId);
     },
     onShutdown: async () => {
       // Close the outbound tunnel before the server goes down (SIGINT/SIGTERM).

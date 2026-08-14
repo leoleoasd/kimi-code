@@ -12,6 +12,7 @@ import { createHubAuthHook } from '#/auth';
 import { resolveHubConfig, type HubCliArgs, type HubConfig } from '#/config';
 import { errEnvelope, HUB_ERROR_CODES } from '#/envelope';
 import { formatHostErrorMessage, isAllowedHost, parseAllowedHosts } from '#/hostnames';
+import { openPushModule } from '#/push';
 import { registerHubApiRoutes } from '#/routes/hubApi';
 import { PROXY_BODY_LIMIT, registerProxyRoutes } from '#/routes/proxy';
 import { createWebAssetStore, registerWebAssetRoutes } from '#/routes/webAssets';
@@ -97,7 +98,8 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
     app.addContentTypeParser(contentType, { parseAs: 'buffer', bodyLimit: PROXY_BODY_LIMIT }, bufferParser);
   }
 
-  registerHubApiRoutes(app, { registry });
+  const push = await openPushModule(config.dataDir);
+  registerHubApiRoutes(app, { registry, push });
   registerProxyRoutes(app, { registry });
 
   // Unknown paths outside the GET surface (e.g. POST /hub/typo): reserved
@@ -111,6 +113,7 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
     token: config.token,
     isHostAllowed,
     disableAuth: config.disableAuth,
+    push,
   });
   await registerWebAssetRoutes(app, createWebAssetStore(config));
 

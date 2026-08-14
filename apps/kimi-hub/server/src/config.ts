@@ -12,6 +12,7 @@
  */
 
 import { randomBytes } from 'node:crypto';
+import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -46,6 +47,8 @@ export interface HubConfig {
    */
   readonly webDistFromCli: boolean;
   readonly logLevel: string;
+  /** Hub-owned persistent state dir (push subscriptions, VAPID keys). */
+  readonly dataDir: string;
   /** `--dangerous-bypass-auth`: every auth surface skips its credential check. */
   readonly disableAuth: boolean;
   /** Human-facing warnings for the startup banner (e.g. non-loopback bind). */
@@ -82,6 +85,7 @@ export function resolveHubConfig(input: {
   const webDistFromCli = cliWebDist !== undefined;
   const logLevel = nonEmpty(cliArgs.logLevel) ?? HUB_DEFAULT_LOG_LEVEL;
   const disableAuth = cliArgs.dangerousBypassAuth === true;
+  const dataDir = nonEmpty(env['KIMI_HUB_DATA_DIR']) ?? resolve(homedir(), '.kimi-code', 'hub');
 
   const warnings: string[] = [];
   if (!isLoopbackBind(host)) {
@@ -98,7 +102,7 @@ export function resolveHubConfig(input: {
     );
   }
 
-  return { host, port, token, tokenGenerated, webDist, webDistFromCli, logLevel, disableAuth, warnings };
+  return { host, port, token, tokenGenerated, webDist, webDistFromCli, logLevel, dataDir, disableAuth, warnings };
 }
 
 function nonEmpty(value: string | undefined): string | undefined {

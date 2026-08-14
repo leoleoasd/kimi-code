@@ -62,3 +62,53 @@ export async function showHubNotification(notify: NotifyPayload): Promise<void> 
     } satisfies NotificationClickMessage,
   });
 }
+
+/**
+ * Web Push handshake: fetch the hub's VAPID public key, subscribe, upsert the
+ * registration. Server-side stores it so EVEN WITH THE PAGE CLOSED the hub
+ * can `sendNotification` to this device. Idempotent: upserts reuse the
+ * existing subscription (endpoint-equal) on every page load.
+ */
+export async function ensurePushSubscription(
+  hubBaseUrl: string,
+  token: string,
+): Promise<boolean> {
+  if (notificationState() !== 'granted') return false;
+  if (typeof navigator.serviceWorker === 'undefined') return false;
+  try {
+    const registration = await navigator.serviceWorker.ready;
+    const vapidRes = await fetch(`${hubBaseUrl}/hub/api/push/vapid`, {
+      headers: token !== '' ? { authorization: `Bearer ${token}` } : {},
+    });
+    const envelope = (await vapidRes.json()) as { data?: { publicKey?: string } };
+    const publicKey = envelope.data?.publicKey;
+    if (typeof publicKey !== 'string' || publicKey === '') return false;
+    const applicationServerKey = urlBase64ToUint8Array(publicKey);
+    let subscription = await registration.pushManager.getSubscription();
+    subscription ??= await registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: applicationServerKey as unknown as BufferSource,
+    });
+    await fetch(`${hubBaseUrl}/hub/api/push/subscriptions`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        ...(token !== '' ? { authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify(subscription.toJSON()),
+    });
+    return true;
+  } catch {
+    // Push unavailable (plain tab iOS, no HTTPS, missing push capability) — the
+    // roster-stream channel still covers the open page.
+    return false;
+  }
+}
+
+/** VAPID public keys travel as url-safe base64 without padding. */
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  return Uint8Array.from([...rawData].map((c) => c.charCodeAt(0)));
+}

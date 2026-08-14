@@ -7,10 +7,47 @@
  *    network — the app surfaces its own offline error instead of stale JSON).
  */
 
-const SHELL_CACHE = 'kimi-hub-shell-v2';
+const SHELL_CACHE = 'kimi-hub-shell-v3';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());
+});
+
+/*
+ * Web Push: the hub fans a `notify` frame out to `sendNotification` for every
+ * registered subscription (server/src/push.ts) — this is the closed-tab /
+ * background-session wake path. Payload carries the frame; `tag` matches the
+ * page-side showHubNotification tag, so push and page notification REPLACE
+ * each other instead of stacking.
+ */
+self.addEventListener('push', (event) => {
+  if (event.data === null) return;
+  let payload;
+  try {
+    payload = event.data.json();
+  } catch {
+    payload = undefined;
+  }
+  if (
+    payload === undefined ||
+    typeof payload.notificationId !== 'string' ||
+    typeof payload.sessionId !== 'string' ||
+    typeof payload.title !== 'string' ||
+    typeof payload.body !== 'string'
+  ) {
+    return;
+  }
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      tag: `kimi-hub/${payload.notificationId}`,
+      data: {
+        type: 'notification-click',
+        agentName: payload.agentName ?? '',
+        sessionId: payload.sessionId,
+      },
+    }),
+  );
 });
 
 /*

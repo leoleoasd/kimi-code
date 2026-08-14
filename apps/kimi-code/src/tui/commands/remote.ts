@@ -215,7 +215,7 @@ async function connectRemote(
     sessionId: session.id,
     server,
     tunnel,
-    notifyBridge: wireNotifyBridge(engineScope, tunnel),
+    notifyBridge: wireNotifyBridge(engineScope, tunnel, session.id),
     tunnelState: { kind: 'connecting' },
     agentId: undefined,
   };

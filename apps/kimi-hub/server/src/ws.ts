@@ -53,6 +53,8 @@ export interface HubUpgradeOptions {
   readonly token: string;
   /** Host-header allowlist predicate (see `hostnames.ts`). */
   readonly isHostAllowed: (host: string | undefined) => boolean;
+  /** The Web Push module — every notify frame also fans out to subscriptions. */
+  readonly push: import('#/push').PushModule;
   /**
    * `--dangerous-bypass-auth`: the roster-stream and agents-relay upgrades
    * skip the bearer/subprotocol credential check. The Host allowlist is
@@ -212,9 +214,19 @@ export function registerUpgradeHandling(
   };
 
   // Engine → hub notifications fan out to every open roster stream (the
-  // hub-native channel — session WS relays only cover OPEN chats, and a
-  // notification's whole point is reaching the user with no chat open).
+  // hub-native channel) AND every registered Web Push subscription (the
+  // closed-tab / background-session channel) — the page is never required for
+  // the wake path to reach granted devices.
   const unsubscribeNotify = opts.registry.onNotify((frame, agent) => {
+    void opts.push
+      .fanout({
+        notificationId: frame.notificationId,
+        sessionId: frame.sessionId,
+        title: frame.title,
+        body: `${frame.body}\n${agent.name}`,
+        agentName: agent.name,
+      })
+      .catch(() => undefined);
     const streamFrame: NotifyStreamFrame = {
       type: 'notify',
       notificationId: frame.notificationId,

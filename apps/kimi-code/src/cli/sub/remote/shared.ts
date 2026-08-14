@@ -130,36 +130,127 @@ export function parseRemoteCommand(rawArgs: string): ParsedRemoteCommand {
 // ---------------------------------------------------------------------------
 
 import type { Scope } from '@moonshot-ai/agent-core-v2';
-import { IEventService } from '@moonshot-ai/agent-core-v2';
+import {
+  getLiveSessionById,
+  IAgentLifecycleService,
+  IEventBus,
+  IEventService,
+  ISessionInteractionService,
+  type IDisposable,
+} from '@moonshot-ai/agent-core-v2';
 import type { TunnelClientHandle } from '@moonshot-ai/remote-tunnel/agent';
 
 /**
- * Lift the engine's `event.user.notify` facts (the `NotifyUser` tool's
- * surface) onto the hub tunnel as `notify` frames. Both connectors (the
- * TUI's `/remote connect` and the headless `kimi remote connect`) call this
- * once their tunnel is up; the returned handle's `dispose` detaches the
- * subscription (the tunnel's own lifetime is the caller's).
+ * Lift engine user-notification surfaces onto the hub tunnel as `notify`
+ * frames. Both connectors (the TUI's `/remote connect` and the headless
+ * `kimi remote connect`) call this once their tunnel is up; the returned
+ * handle's `dispose` detaches every subscription (the tunnel's own lifetime
+ * is the caller's). Sources:
+ *
+ *  1. the `NotifyUser` tool's `event.user.notify` fact (App-scope);
+ *  2. `turn.ended` (reason `completed`) on the attached session's agent
+ *     buses — the engine's own ping so a finished turn wakes devices with no
+ *     page open, on every connected session (independent of which chat is
+ *     mounted client-side);
+ *  3. newly pending approvals / questions of that session.
  */
-export function wireNotifyBridge(core: Scope, tunnel: TunnelClientHandle): { dispose(): void } {
-  return core.accessor.get(IEventService).subscribe((event) => {
-    if (event.type !== 'event.user.notify' || typeof event.payload !== 'object' || event.payload === null) {
-      return;
-    }
-    const payload = event.payload as Record<string, unknown>;
-    if (
-      typeof payload['notificationId'] !== 'string' ||
-      typeof payload['sessionId'] !== 'string' ||
-      typeof payload['title'] !== 'string' ||
-      typeof payload['body'] !== 'string'
-    ) {
-      return;
-    }
-    tunnel.notify({
-      notificationId: payload['notificationId'],
-      sessionId: payload['sessionId'],
-      agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : undefined,
-      title: payload['title'],
-      body: payload['body'],
+export function wireNotifyBridge(
+  core: Scope,
+  tunnel: TunnelClientHandle,
+  sessionId?: string,
+): { dispose(): void } {
+  const disposals: IDisposable[] = [];
+  disposals.push(
+    core.accessor.get(IEventService).subscribe((event) => {
+      if (
+        event.type !== 'event.user.notify' ||
+        typeof event.payload !== 'object' ||
+        event.payload === null
+      ) {
+        return;
+      }
+      const payload = event.payload as Record<string, unknown>;
+      if (
+        typeof payload['notificationId'] !== 'string' ||
+        typeof payload['sessionId'] !== 'string' ||
+        typeof payload['title'] !== 'string' ||
+        typeof payload['body'] !== 'string'
+      ) {
+        return;
+      }
+      tunnel.notify({
+        notificationId: payload['notificationId'],
+        sessionId: payload['sessionId'],
+        agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : undefined,
+        title: payload['title'],
+        body: payload['body'],
+      });
+    }),
+  );
+  if (sessionId !== undefined) {
+    disposals.push(wireSessionTurnNotify(core, tunnel, sessionId));
+  }
+  const dispose = (): void => {
+    for (const d of disposals.splice(0)) d.dispose();
+  };
+  return { dispose };
+}
+
+/**
+ * Per-session taps: `turn.ended(completed)` + pending interactions of every
+ * agent in the attached session. Mirror of the broadcaster's reach-down
+ * pattern into agent buses; a cold session (possible for headless connects)
+ * silently contributes nothing — the scope check keeps it from registering
+ * live traffic for an unknown id.
+ */
+function wireSessionTurnNotify(
+  core: Scope,
+  tunnel: TunnelClientHandle,
+  sessionId: string,
+): IDisposable {
+  const session = getLiveSessionById(core.accessor, sessionId);
+  if (session === undefined) return { dispose(): void {} };
+  const disposables: IDisposable[] = [];
+  const lifecycle = session.accessor.get(IAgentLifecycleService);
+  const subscribeAgent = (handle: { id: string; accessor: { get(t: typeof IEventBus): IEventBus } }): IDisposable =>
+    handle.accessor.get(IEventBus).subscribe((event) => {
+      if (event.type !== 'turn.ended' || event.reason !== 'completed') return;
+      tunnel.notify({
+        notificationId: `idle/${sessionId}/t${event.turnId}`,
+        sessionId,
+        agentId: handle.id,
+        title: 'agent finished',
+        body: 'the turn completed',
+      });
     });
-  });
+  for (const handle of lifecycle.list()) disposables.push(subscribeAgent(handle));
+  disposables.push(
+    lifecycle.onDidCreate((handle) => disposables.push(subscribeAgent(handle))),
+  );
+
+  const interactions = session.accessor.get(ISessionInteractionService);
+  const knownPending = new Set(interactions.listPending().map((pending) => pending.id));
+  disposables.push(
+    interactions.onDidChangePending(() => {
+      for (const pending of interactions.listPending()) {
+        if (knownPending.has(pending.id)) continue;
+        knownPending.add(pending.id);
+        if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
+        tunnel.notify({
+          notificationId: `interaction/${sessionId}/${pending.id}`,
+          sessionId,
+          title: 'agent is waiting for your input',
+          body:
+            pending.kind === 'question'
+              ? 'a question is waiting for an answer'
+              : 'an approval is waiting for a decision',
+        });
+      }
+    }),
+  );
+  return {
+    dispose(): void {
+      for (const d of disposables.splice(0)) d.dispose();
+    },
+  };
 }
