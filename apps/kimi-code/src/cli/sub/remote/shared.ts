@@ -8,6 +8,9 @@
 /** Environment variable holding the shared hub credential. */
 export const HUB_TOKEN_ENV = 'KIMI_HUB_TOKEN';
 
+/** Default connect target: the local hub (the hub's own default port, 58630). */
+export const DEFAULT_LOCAL_HUB_URL = 'http://127.0.0.1:58630';
+
 /**
  * Split the `#token=<t>` credential fragment (the form printed by the hub
  * startup banner and the connect output) off a pasted hub URL. Users paste
@@ -72,13 +75,15 @@ export type ParsedRemoteCommand =
   | { readonly kind: 'status' }
   | { readonly kind: 'error'; readonly message: string };
 
-const REMOTE_USAGE = 'usage: /remote connect <hub-url> [--token <t>] | disconnect | status';
+const REMOTE_USAGE =
+  'usage: /remote connect [<hub-url>] [--token <t>] [--name <n>] | disconnect | status';
 
 /**
- * Parse the `/remote` argument string: `connect <hub-url> [--token <t>]
+ * Parse the `/remote` argument string: `connect [<hub-url>] [--token <t>]
  * [--name <n>]`, `disconnect`, or `status` (bare `/remote` also reports the
  * connection state). The hub-facing `connect` mirrors the CLI's
- * `kimi remote connect`.
+ * `kimi remote connect`; an omitted hub URL targets the local hub
+ * ({@link DEFAULT_LOCAL_HUB_URL}).
  */
 export function parseRemoteCommand(rawArgs: string): ParsedRemoteCommand {
   const args = rawArgs.trim().split(/\s+/).filter((arg) => arg.length > 0);
@@ -117,11 +122,9 @@ export function parseRemoteCommand(rawArgs: string): ParsedRemoteCommand {
     }
     hubUrl = arg;
   }
-  if (hubUrl === undefined) {
-    return { kind: 'error', message: REMOTE_USAGE };
-  }
+  const target = hubUrl ?? DEFAULT_LOCAL_HUB_URL;
   // Pasted banner links carry the credential: adopt it unless --token was given.
-  const fragment = splitHubTokenFragment(hubUrl);
+  const fragment = splitHubTokenFragment(target);
   return { kind: 'connect', hubUrl: fragment.origin, token: token ?? fragment.token, name };
 }
 

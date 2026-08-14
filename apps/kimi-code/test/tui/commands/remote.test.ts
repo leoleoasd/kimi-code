@@ -294,7 +294,7 @@ describe('remote slash command', () => {
 
   it('shows the parse error for malformed arguments', async () => {
     const host = makeHost();
-    await handleRemoteCommand(host, 'connect');
+    await handleRemoteCommand(host, 'connect --bogus');
 
     expect(host.showError).toHaveBeenCalledOnce();
     expect(String(host.showError.mock.calls[0]![0])).toContain('usage:');

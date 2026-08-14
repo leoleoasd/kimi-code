@@ -195,13 +195,13 @@ Deprecated — only stops a server started by a version before 0.28.0. Those ver
 
 Generate a new persistent bearer token (written to `~/.kimi-code/server.token`); the previous token stops working immediately. The token is shared by the whole home directory, so every running instance picks the new one up on its next auth check — no restart needed.
 
-### `kimi remote connect <hub-url>`
+### `kimi remote connect [hub-url]`
 
 Bridge one of this machine's sessions to a running kimi hub so the hub's web UI can list and control that session — alongside sessions bridged from other machines — from one page. The connection is session-scoped: the hub can only see and drive the session you connect, nothing else on the machine. The command starts an API-only local server (the same engine as [`kimi web`](#kimi-web), without serving the web UI itself) and dials out to the hub over a reverse tunnel, so this machine never needs to listen on a reachable port. It stays attached to the terminal and shuts down cleanly on `SIGINT` / `SIGTERM`.
 
 ```sh
 kimi remote connect https://hub.example.com --token YOUR_HUB_TOKEN --session <session-id>
-kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --name dev-box
+kimi remote connect --token t --session session_abc123   # defaults to the local hub (http://127.0.0.1:58630)
 ```
 
 | Option | Description |
