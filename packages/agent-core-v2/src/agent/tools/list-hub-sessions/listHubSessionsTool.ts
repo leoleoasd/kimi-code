@@ -8,8 +8,7 @@
  * Agent scope.
  */
 
-import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
-import { LifecycleScope } from '#/app/scopes';
+import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {
   type HubConnection,
   type HubRemoteAgent,
@@ -96,10 +95,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-registerScopedService(
-  LifecycleScope.Agent,
-  IListHubSessionsTool,
-  ListHubSessionsTool,
-  ScopeActivation.OnDemand,
-  'tools',
-);
+registerAgentToolService(IListHubSessionsTool, ListHubSessionsTool, {
+  name: 'ListHubSessions',
+  domain: 'session',
+});
