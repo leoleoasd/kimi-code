@@ -23,7 +23,7 @@ import { agentBaseUrl, type HubAgentInfo } from '#/hub/api';
 import {
   createSession,
   fetchSession,
-  fetchSessionStatus,
+  fetchSessions,
   sessionInfoQueryKey,
 } from '#/sessions/api';
 import { SessionList } from './SessionList';
@@ -221,20 +221,34 @@ function ScopedSessionEntry({
     enabled: entry.online,
   });
 
-  // Status dot: only the OPEN entry polls (same query key as the chat's
-  // status strip, so the two share one fetch loop); every other row mirrors
-  // the agent's connection state.
-  const status = useQuery({
-    queryKey: ['status', baseUrl, entry.sessionId],
-    queryFn: () => fetchSessionStatus({ baseUrl, token, sessionId: entry.sessionId }),
-    enabled: entry.online && selected,
-    refetchInterval: 3000,
+  // Status dot for EVERY online row: the per-agent session list carries each
+  // session's `activity.status`, and the query key is shared with the legacy
+  // drill-in — one poll loop per agent covers all its rows. Offline rows stay
+  // muted regardless.
+  const sessions = useQuery({
+    queryKey: ['sessions', baseUrl],
+    queryFn: () => fetchSessions({ baseUrl, token }),
+    enabled: entry.online,
+    refetchInterval: 5000,
   });
-
+  const activity = sessions.data?.find((s) => s.id === entry.sessionId)?.activity.status;
   const label = info.data?.title ?? info.data?.lastPrompt ?? shortId;
-  const busy = selected && status.data?.busy === true;
-  const dot = !entry.online ? 'bg-neutral-600' : busy ? 'bg-amber-400' : 'bg-emerald-400';
-  const dotTitle = !entry.online ? 'agent offline' : busy ? 'session busy' : 'session idle';
+  const working =
+    activity === 'running' || activity === 'approval' || activity === 'question';
+  const dot = !entry.online
+    ? 'bg-neutral-600'
+    : activity === 'failed'
+      ? 'bg-red-400'
+      : working
+        ? 'bg-amber-400'
+        : 'bg-emerald-400';
+  const dotTitle = !entry.online
+    ? 'agent offline'
+    : working
+      ? 'session busy'
+      : activity === 'failed'
+        ? 'session failed'
+        : 'session idle';
 
   return (
     <button
@@ -247,7 +261,7 @@ function ScopedSessionEntry({
     >
       <span
         className={`mt-1.5 inline-block h-2 w-2 shrink-0 rounded-full ${dot} ${
-          busy && entry.online ? 'pulse-dot' : ''
+          working && entry.online ? 'pulse-dot' : ''
         }`}
         title={dotTitle}
       />
