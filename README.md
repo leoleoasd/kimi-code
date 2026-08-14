@@ -25,6 +25,8 @@ kimi-hub                      # prints the origin + token banner
 kimi remote connect http://<hub-host>:58630 --session <session-id> --token <token>
 ```
 
+An already-running TUI session can be attached from inside with the `/remote connect` slash command instead (no restart needed): `/remote connect http://<hub-host>:58630 --token <token>` — it auto-scopes to the current session.
+
 # Kimi Code CLI (upstream README)
 
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE) [![Docs](https://img.shields.io/badge/docs-online-blue)](https://moonshotai.github.io/kimi-code/en/) <br>
