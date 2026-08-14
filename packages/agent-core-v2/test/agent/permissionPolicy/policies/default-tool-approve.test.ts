@@ -69,6 +69,8 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['SetGoalBudget', { tokenBudget: 1000 }],
     ['UpdateGoal', { status: 'complete' }],
     ['NotifyUser', { title: 'done', body: 'work finished' }],
+    ['ListHubSessions', {}],
+    ['SendHubMessage', { session_id: 'ses_other', message: 'heads-up: I changed X' }],
   ] as const)('approves %s', (toolName, args) => {
     expect(policy.evaluate(policyContext(toolName, args))).toEqual({ kind: 'approve' });
   });

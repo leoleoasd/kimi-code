@@ -7,8 +7,20 @@
 import { Command } from 'commander';
 import { describe, expect, it } from 'vitest';
 
+import {
+  type HubConnection,
+  IAgentLifecycleService,
+  IAgentToolRegistryService,
+  IHubConnectionService,
+  IListHubSessionsTool,
+  ISendHubMessageTool,
+  ISessionLifecycleService,
+  IWorkspaceLifecycleService,
+  type Scope,
+} from '@moonshot-ai/agent-core-v2';
+
 import { registerRemoteCommand } from '#/cli/sub/remote';
-import { hubUiUrl, parseHubUrl, parseRemoteCommand, resolveHubToken } from '#/cli/sub/remote/shared';
+import { hubUiUrl, parseHubUrl, parseRemoteCommand, resolveHubToken, wireHubTools } from '#/cli/sub/remote/shared';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 
 function makeProgram(): Command {
@@ -228,5 +240,167 @@ describe('/remote registration', () => {
     expect(command).toMatchObject({
       argumentHint: 'connect <hub-url> [--token <t>] | disconnect | status',
     });
+  });
+});
+
+describe('wireHubTools', () => {
+  interface FakeAgent {
+    registered: string[];
+    unregistered: string[];
+    live: Set<string>;
+  }
+
+  function makeAgentHandle(): FakeAgent & { accessor: { get(id: unknown): unknown } } {
+    const registered: string[] = [];
+    const unregistered: string[] = [];
+    const live = new Set<string>();
+    const accessor = {
+      get: (id: unknown): unknown => {
+        if (id === IAgentToolRegistryService) {
+          return {
+            register: (tool: { name: string }) => {
+              registered.push(tool.name);
+              live.add(tool.name);
+              return {
+                dispose: () => {
+                  live.delete(tool.name);
+                  unregistered.push(tool.name);
+                },
+              };
+            },
+          };
+        }
+        if (id === IListHubSessionsTool) return { name: 'ListHubSessions' };
+        if (id === ISendHubMessageTool) return { name: 'SendHubMessage' };
+        return undefined;
+      },
+    };
+    return { registered, unregistered, live, accessor };
+  }
+
+  /**
+   * The Scope getLiveSessionById walks
+   * (`IWorkspaceLifecycleService.handlers` → `ISessionLifecycleService.get` →
+   * `IAgentLifecycleService` list/onDidCreate over per-agent accessors), plus
+   * the App-scope `IHubConnectionService` the wiring publishes into. Multi-level
+   * fake — but each level answers exactly one decorator, mirroring the tree.
+   */
+  function makeScope(liveSessionIds: string[]) {
+    // The package only exports the contract, not the impl class — use a
+    // contract-shaped fake that still round-trips configure/connection.
+    let current: HubConnection | undefined;
+    const hubConnection = {
+      _serviceBrand: undefined,
+      configure: (connection: HubConnection | undefined) => {
+        current = connection;
+      },
+      connection: () => current,
+    } satisfies Partial<IHubConnectionService>;
+    const agentsBySession = new Map<string, ReturnType<typeof makeAgentHandle>[]>();
+    const onCreated = new Map<string, ((handle: unknown) => void)[]>();
+    for (const sid of liveSessionIds) agentsBySession.set(sid, [makeAgentHandle()]);
+    const sessionHandleFor = (sid: string): unknown =>
+      liveSessionIds.includes(sid)
+        ? {
+            accessor: {
+              get: (id: unknown): unknown => {
+                if (id !== IAgentLifecycleService) return undefined;
+                return {
+                  list: () => agentsBySession.get(sid) ?? [],
+                  onDidCreate: (cb: (handle: unknown) => void) => {
+                    onCreated.set(sid, [...(onCreated.get(sid) ?? []), cb]);
+                    return { dispose: () => undefined };
+                  },
+                };
+              },
+            },
+          }
+        : undefined;
+    const scope: Scope = {
+      accessor: {
+        get: (id: unknown): unknown => {
+          if (id === IHubConnectionService) return hubConnection;
+          if (id === IWorkspaceLifecycleService) {
+            return {
+              handlers: {
+                list: () =>
+                  liveSessionIds.map((sid) => ({
+                    accessor: {
+                      get: (childId: unknown): unknown =>
+                        childId === ISessionLifecycleService
+                          ? { get: sessionHandleFor }
+                          : undefined,
+                    },
+                  })),
+              },
+            };
+          }
+          return undefined;
+        },
+      },
+    } as unknown as Scope;
+    return {
+      scope,
+      hubConnection,
+      agentsOf: (sid: string) => agentsBySession.get(sid),
+      spawnAgent: (sid: string): FakeAgent => {
+        const handle = makeAgentHandle();
+        agentsBySession.set(sid, [...(agentsBySession.get(sid) ?? []), handle]);
+        for (const cb of onCreated.get(sid) ?? []) cb(handle);
+        return handle;
+      },
+    };
+  }
+
+  it('registers the two gated tools as builtin on every agent of the bridged sessions', () => {
+    const { scope, hubConnection, agentsOf } = makeScope(['ses-1']);
+    wireHubTools(
+      scope,
+      { hubUrl: 'https://hub.example.com', token: 't-1', agentName: 'dev-box' },
+      ['ses-1'],
+    );
+    expect(hubConnection.connection()).toEqual({
+      hubUrl: 'https://hub.example.com',
+      token: 't-1',
+      agentName: 'dev-box',
+      sessionIds: ['ses-1'],
+    });
+    expect(agentsOf('ses-1')![0]!.registered).toEqual(['ListHubSessions', 'SendHubMessage']);
+  });
+
+  it('extends to later-attached sessions and newly created agents', () => {
+    const { scope, hubConnection, agentsOf, spawnAgent } = makeScope(['ses-1', 'ses-2']);
+    const wiring = wireHubTools(
+      scope,
+      { hubUrl: 'https://hub.example.com', token: 't-1' },
+      ['ses-1'],
+    );
+    wiring.attachSession('ses-2');
+    expect(agentsOf('ses-2')![0]!.live).toEqual(new Set(['ListHubSessions', 'SendHubMessage']));
+    expect(hubConnection.connection()!.sessionIds).toEqual(['ses-1', 'ses-2']);
+    // Idempotent on a repeated id.
+    wiring.attachSession('ses-2');
+    expect(agentsOf('ses-2')![0]!.registered).toHaveLength(2);
+    // New agents of a bridged session get the tools from the onDidCreate tap.
+    expect(spawnAgent('ses-1').registered).toEqual(['ListHubSessions', 'SendHubMessage']);
+  });
+
+  it('unregisters everything and clears the connection on dispose', () => {
+    const { scope, hubConnection, agentsOf } = makeScope(['ses-1']);
+    wireHubTools(scope, { hubUrl: 'https://hub.example.com', token: 't-1' }, ['ses-1']).dispose();
+    const agent = agentsOf('ses-1')![0]!;
+    expect(agent.unregistered.sort()).toEqual(['ListHubSessions', 'SendHubMessage']);
+    expect(hubConnection.connection()).toBeUndefined();
+  });
+
+  it('advertises the connection for a cold session id without registering anything', () => {
+    const { scope, hubConnection, agentsOf } = makeScope(['ses-1']);
+    const wiring = wireHubTools(scope, { hubUrl: 'https://hub.example.com', token: 't-1' }, [
+      'ses-offline',
+    ]);
+    expect(agentsOf('ses-offline')).toBeUndefined();
+    expect(hubConnection.connection()!.sessionIds).toEqual(['ses-offline']);
+    expect(agentsOf('ses-1')![0]!.registered).toHaveLength(0);
+    wiring.dispose();
   });
 });

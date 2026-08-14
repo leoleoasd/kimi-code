@@ -213,6 +213,8 @@ kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --na
 
 连接成功后，命令会打印 hub UI 链接（`<hub-url>#token=…`）；在浏览器中打开即可看到该会话与其他所有已接入机器并列。在交互式 TUI 会话中，改用 [`/remote connect`](./slash-commands.md#会话管理) 斜杠命令：它桥接当前会话且不退出 TUI，终端和 hub 同时驱动同一个活跃会话，另用 `/remote status` / `/remote disconnect` 管理连接。hub 本体是 `kimi-hub` 应用，目前从源码检出运行（`pnpm -C apps/kimi-hub build && pnpm -C apps/kimi-hub start`）；hub 启动时会打印它自己的 `--token` / `KIMI_HUB_TOKEN` 共享凭据。
 
+连接存续期间，被桥接会话的 agent 会额外获得两个工具：`ListHubSessions`（列出同一 hub 上所有已接入 agent 及其暴露的会话）和 `SendHubMessage`（向另一个会话的 agent 发送纯文本消息，对方把它当作普通的 User 消息读入，忙碌时排在当前轮次之后）。断开连接后这两个工具即消失。
+
 ### `kimi doctor`
 
 校验 `config.toml` 和 `tui.toml`，不会启动 TUI，也不会修改任一文件。默认检查 `KIMI_CODE_HOME` 下的文件；未设置该环境变量时检查 `~/.kimi-code`。默认路径缺失时会显示为跳过，因为内置默认值仍可生效。

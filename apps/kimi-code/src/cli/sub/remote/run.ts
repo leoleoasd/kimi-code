@@ -18,7 +18,7 @@ import { getDataDir } from '#/utils/paths';
 import { getVersion } from '../../version';
 import { startApiServerForeground, type StartForegroundHooks } from '../web/run';
 import { tryResolveServerToken, type ParsedServerOptions } from '../web/shared';
-import { hubUiUrl, parseHubUrl, resolveHubToken, splitHubTokenFragment, wireNotifyBridge } from './shared';
+import { hubUiUrl, parseHubUrl, resolveHubToken, splitHubTokenFragment, wireHubTools, wireNotifyBridge } from './shared';
 
 export interface RemoteConnectOptions {
   /** Hub origin: `http(s)://` or `ws(s)://`; the tunnel client appends `/internal/tunnel`. */
@@ -49,6 +49,7 @@ export async function runRemoteConnect(options: RemoteConnectOptions): Promise<n
   const version = getVersion();
 
   let tunnel: TunnelClientHandle | undefined;
+  let hubTools: { dispose(): void } | undefined;
 
   const hooks: StartForegroundHooks = {
     onReady: (origin, server) => {
@@ -92,8 +93,16 @@ export async function runRemoteConnect(options: RemoteConnectOptions): Promise<n
       // The NotifyUser tool's events cross to the hub from here on, plus the
       // attached session's own turn-finish / pending-interaction pings.
       wireNotifyBridge(server.core, tunnel, options.sessionId);
+      // The hub-gated tools (ListHubSessions / SendHubMessage) exist only for
+      // as long as the connection publishes them.
+      hubTools = wireHubTools(
+        server.core,
+        { hubUrl, token: hubToken, agentName },
+        [options.sessionId],
+      );
     },
     onShutdown: async () => {
+      hubTools?.dispose();
       // Close the outbound tunnel before the server goes down (SIGINT/SIGTERM).
       await tunnel?.close();
     },

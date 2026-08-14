@@ -213,6 +213,8 @@ kimi remote connect ws://127.0.0.1:58630 --token t --session session_abc123 --na
 
 Once connected, the command prints the hub UI link (`<hub-url>#token=…`); open it in a browser to see the bridged session alongside every other connected machine. From an interactive TUI session, use the [`/remote connect`](./slash-commands.md#session-management) slash command instead: it bridges the current session without leaving the TUI, so the terminal and the hub drive the same live session, and `/remote status` / `/remote disconnect` manage the link. The hub itself is the `kimi-hub` app and currently runs from a source checkout (`pnpm -C apps/kimi-hub build && pnpm -C apps/kimi-hub start`); the hub prints its own `--token` / `KIMI_HUB_TOKEN` shared credential when it starts.
 
+While the connection is up, the agent of each bridged session gains two extra tools: `ListHubSessions`, which lists every agent connected to the same hub and the sessions it exposes, and `SendHubMessage`, which delivers a plain-text message to another session's agent — the receiver reads it as an incoming User message, queued behind the current turn like a normal prompt. Both disappear when the link drops.
+
 ### `kimi doctor`
 
 Validate `config.toml` and `tui.toml` without starting the TUI or modifying either file. By default, the command checks the files under `KIMI_CODE_HOME` (or `~/.kimi-code` when the environment variable is unset). Missing default files are reported as skipped because built-in defaults can apply.

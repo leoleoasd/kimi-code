@@ -133,8 +133,13 @@ import type { Scope } from '@moonshot-ai/agent-core-v2';
 import {
   getLiveSessionById,
   IAgentLifecycleService,
+  IAgentToolRegistryService,
+  type IAgentScopeHandle,
   IEventBus,
   IEventService,
+  IHubConnectionService,
+  IListHubSessionsTool,
+  ISendHubMessageTool,
   ISessionInteractionService,
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -251,6 +256,70 @@ function wireSessionTurnNotify(
   return {
     dispose(): void {
       for (const d of disposables.splice(0)) d.dispose();
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Hub tools: agent-initiated hub calls (ListHubSessions / SendHubMessage)
+// ---------------------------------------------------------------------------
+
+export interface HubToolWiring {
+  /** Extend registration to a session bridged later (the TUI's scope union can widen on a live connection). */
+  attachSession(sessionId: string): void;
+  dispose(): void;
+}
+
+/**
+ * Register the hub-gated agent tools (`ListHubSessions` / `SendHubMessage`)
+ * on every agent of the bridged session(s), and publish the connection
+ * (URL + shared token) those tools use for their HTTPS calls to the hub
+ * (roster read + cross-session prompt submit — the tunnel protocol itself
+ * has no such agent→hub channel). Registration is DIRECT on the per-agent
+ * registry, not the static contribution fold: agents in a process that
+ * never remote-connects must not see these tools at all. `dispose` removes
+ * the tools and forgets the connection (both connectors call it on
+ * disconnect / shutdown).
+ */
+export function wireHubTools(
+  core: Scope,
+  cfg: { hubUrl: string; token: string; agentName?: string },
+  sessionIds: readonly string[],
+): HubToolWiring {
+  const disposables: IDisposable[] = [];
+  const bridged: string[] = [];
+  const publishConfig = (): void => {
+    core.accessor.get(IHubConnectionService).configure({
+      hubUrl: cfg.hubUrl,
+      token: cfg.token,
+      agentName: cfg.agentName,
+      sessionIds: [...bridged],
+    });
+  };
+  const attachSession = (sessionId: string): void => {
+    if (sessionId === '' || bridged.includes(sessionId)) return;
+    bridged.push(sessionId);
+    publishConfig();
+    const session = getLiveSessionById(core.accessor, sessionId);
+    if (session === undefined) return;
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const register = (handle: IAgentScopeHandle): void => {
+      const registry = handle.accessor.get(IAgentToolRegistryService);
+      disposables.push(
+        registry.register(handle.accessor.get(IListHubSessionsTool), { source: 'builtin' }),
+        registry.register(handle.accessor.get(ISendHubMessageTool), { source: 'builtin' }),
+      );
+    };
+    for (const handle of lifecycle.list()) register(handle);
+    disposables.push(lifecycle.onDidCreate(register));
+  };
+  for (const sessionId of sessionIds) attachSession(sessionId);
+  return {
+    attachSession,
+    dispose(): void {
+      for (const d of disposables.splice(0)) d.dispose();
+      bridged.length = 0;
+      core.accessor.get(IHubConnectionService).configure(undefined);
     },
   };
 }
