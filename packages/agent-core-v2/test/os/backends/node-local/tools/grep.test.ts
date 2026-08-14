@@ -35,6 +35,7 @@ import { IHostFileSystem, type HostFileStat } from '#/os/interface/hostFileSyste
 import { IHostProcessService, type IHostProcess } from '#/os/interface/hostProcess';
 import { ISessionSkillCatalog } from '#/session/sessionSkillCatalog/skillCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { Event } from '#/_base/event';
 import { ISessionWorkspaceContext } from '#/session/workspaceContext/workspaceContext';
 import {
@@ -331,6 +332,9 @@ describe('GrepTool', () => {
           } satisfies ISessionToolPolicyGate);
           reg.definePartialInstance(IAgentProfileService, {
             data: () => ({}) as unknown as ProfileData,
+          });
+          reg.definePartialInstance(ISessionAgentProfileCatalog, {
+            get: () => undefined,
           });
           reg.definePartialInstance(IEventBus, {
             subscribe: () => toDisposable(() => {}),

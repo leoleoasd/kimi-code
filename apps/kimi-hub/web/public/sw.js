@@ -7,7 +7,7 @@
  *    network — the app surfaces its own offline error instead of stale JSON).
  */
 
-const SHELL_CACHE = 'kimi-hub-shell-v1';
+const SHELL_CACHE = 'kimi-hub-shell-v2';
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting());

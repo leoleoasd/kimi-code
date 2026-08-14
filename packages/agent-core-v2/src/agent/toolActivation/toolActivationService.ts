@@ -22,6 +22,15 @@
  * nothing is ever unregistered here: restricting visibility remains the
  * request-time tool policy's job.
  *
+ * Profile-def drift: the persisted active-tool set freezes at `profile.bind`,
+ * so a builtin tool added to a profile after the session's bind would never
+ * reach that session again. The first full pass after a restore tops the
+ * frozen set up through the profile overlay (`addActiveTool` — ephemeral,
+ * re-derived on resume) with every entry of the bound profile's CURRENT
+ * catalog definition (`sessionAgentProfileCatalog`) the frozen set lacks;
+ * explicit vetoes (`disallowedTools`, the workspace gate) still win, and the
+ * wire record is never touched.
+ *
  * Resolving contributions lazily inside `activate()` / the change
  * subscription — never from this service's own constructor — keeps the
  * historical cycle broken: some tools (SkillTool → `prompt` → `loop` →
@@ -41,6 +50,7 @@ import { IAgentProfileService } from '#/agent/profile/profile';
 import { isToolActive } from '#/agent/toolPolicy/evaluate';
 import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { AgentToolContribution } from '#/agent/toolRegistry/toolContribution';
+import { ISessionAgentProfileCatalog } from '#/session/sessionAgentProfileCatalog/sessionAgentProfileCatalog';
 import { ISessionToolPolicyGate } from '#/session/sessionToolPolicyGate/sessionToolPolicyGate';
 
 import { IAgentToolActivationService } from './toolActivation';
@@ -49,11 +59,13 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   declare readonly _serviceBrand: undefined;
 
   private readonly registrations = new Map<AgentToolContribution, IDisposable>();
+  private profileDefSynced = false;
 
   constructor(
     @IInstantiationService private readonly instantiationService: IInstantiationService,
     @IAgentToolRegistryService private readonly toolRegistry: IAgentToolRegistryService,
     @IAgentProfileService private readonly profile: IAgentProfileService,
+    @ISessionAgentProfileCatalog private readonly profileCatalog: ISessionAgentProfileCatalog,
     @ISessionToolPolicyGate private readonly toolPolicyGate: ISessionToolPolicyGate,
     @IEventBus eventBus: IEventBus,
     @AgentToolContribution private readonly contributions: CollectionView<AgentToolContribution>,
@@ -75,8 +87,23 @@ export class AgentToolActivationService extends Service implements IAgentToolAct
   }
 
   activate(): Promise<void> {
+    this.syncToolsFromProfileDef();
     this.activateRecords(this.contributions.items);
     return Promise.resolve();
+  }
+
+  private syncToolsFromProfileDef(): void {
+    if (this.profileDefSynced) return;
+    const data = this.profile.data();
+    if (data.profileName === undefined) return;
+    this.profileDefSynced = true;
+    const tools = this.profileCatalog.get(data.profileName)?.tools;
+    if (tools === undefined || data.activeToolNames === undefined) return;
+    for (const name of tools) {
+      if (!data.activeToolNames.includes(name)) {
+        this.profile.addActiveTool(name);
+      }
+    }
   }
 
   private activateRecords(records: readonly AgentToolContribution[]): void {

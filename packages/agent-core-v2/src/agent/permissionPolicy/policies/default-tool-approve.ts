@@ -26,6 +26,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
+  'NotifyUser',
   'select_tools',
 ]);
 

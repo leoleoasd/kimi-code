@@ -10,8 +10,10 @@
  *    fires when at least one image was actually present, so pasting plain
  *    text still lands in the textarea. A failed upload keeps the chip (red ✕,
  *    retry = re-upload once, or remove); SEND waits for every chip to be
- *    READY ("Uploading…" button state). On a send ERROR the attachments stay,
- *    so retry is possible; on success they clear (object URLs revoked).
+ *    READY ("Uploading…" button state). Text and chips clear TOGETHER on send
+ *    (a hung REST round-trip must not leave the composer half-closed); on a
+ *    send ERROR the text comes back for retry while chips stay dropped
+ *    server-side anyway (object URLs revoked).
  *  - Slash commands are intercepted BEFORE sending: every `/…` line forwards
  *    verbatim to the agent's command bridge (the connected TUI's dispatch —
  *    sessions/commands.ts keeps NO second grammar); only `/copy` and
@@ -314,15 +316,17 @@ export function Composer({
         const text = plan.text;
         setSending(true);
         setError(null);
+        // Optimistic clear, text and chips together (TUI parity): a stall or
+        // failure of onSend must not leave the composer half-closed. On error
+        // the text comes back for a retry; chips don't — their bytes are
+        // already in the agent's file store, re-attaching is one paste away.
         setInput('');
+        clearAttachments();
         try {
           const result = await onSend(text, ready);
           if (result.status !== 'running') setQueuedHint(true);
-          // Success: chips + their object URLs go away.
-          clearAttachments();
         } catch (error) {
           setError(error);
-          // Retry stays possible: text back in the box, attachments kept.
           setInput(text);
         } finally {
           setSending(false);

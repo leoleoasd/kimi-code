@@ -45,6 +45,7 @@ const AGENT_TOOLS = [
   'GetGoal',
   'SetGoalBudget',
   'UpdateGoal',
+  'NotifyUser',
   'mcp__*',
 ] as const;
 
@@ -68,6 +69,7 @@ const CODER_TOOLS = [
   'WebSearch',
   'FetchURL',
   'Write',
+  'NotifyUser',
   'mcp__*',
 ] as const;
 
@@ -79,6 +81,7 @@ const EXPLORE_TOOLS = [
   'Grep',
   'WebSearch',
   'FetchURL',
+  'NotifyUser',
 ] as const;
 
 const CODER_ROLE =

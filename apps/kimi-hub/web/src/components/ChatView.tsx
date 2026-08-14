@@ -16,7 +16,6 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  itemId,
   type NoticeFrame,
   type ToolCallFrame,
   type TranscriptAttachment,
@@ -54,7 +53,7 @@ import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
-import { markerLabel } from './markers';
+import { collapseMarkerRuns, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
 export function ChatView({
@@ -243,17 +242,22 @@ export function ChatView({
       images.length === 0
         ? await sendPrompt({ baseUrl, token, sessionId, text })
         : await sendPromptWithImages({ baseUrl, token, sessionId, text, images });
+    // Optimistic chip: the queue poll replays the same item authoritatively
+    // — nothing needs to be carried until then. Never let this nicety fail
+    // the send UX (the REST already succeeded).
     if (result.status === 'queued') {
-      // Optimistic chip: the queue poll replays the same item authoritatively
-      // — nothing needs to be carried until then.
-      queryClient.setQueryData(
-        ['promptQueue', baseUrl, sessionId],
-        (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
-          appendQueuedEntry(
-            old as Parameters<typeof appendQueuedEntry>[0],
-            { promptId: result.promptId, status: 'queued', text },
-          ),
-      );
+      try {
+        queryClient.setQueryData(
+          ['promptQueue', baseUrl, sessionId],
+          (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
+            appendQueuedEntry(
+              old as Parameters<typeof appendQueuedEntry>[0],
+              { promptId: result.promptId, status: 'queued', text },
+            ),
+        );
+      } catch {
+        // the 2s poll corrects the strip
+      }
     }
     return result;
   };
@@ -283,11 +287,13 @@ export function ChatView({
           session {info.data?.title ?? info.data?.lastPrompt ?? `${sessionId.slice(0, 8)}…`}
         </span>
         {agents.length > 1 ? (
-          <div className="flex gap-1">
+          // Agent pills: single line, bounded, scrollable — a long task label
+          // must never inflate the header into a wall of pre-sized cards.
+          <div className="flex min-w-0 max-w-full gap-1 overflow-x-auto">
             {agents.map((descriptor) => (
               <button
                 key={descriptor.agentId}
-                className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${
+                className={`max-w-[11rem] shrink-0 truncate rounded px-1.5 py-0.5 text-[10px] font-medium ${
                   descriptor.agentId === transcriptAgentId
                     ? 'bg-sky-900/60 text-sky-300'
                     : 'bg-neutral-800 text-neutral-400 hover:text-neutral-200'
@@ -448,18 +454,22 @@ function ItemList({
   baseUrl: string;
   token: string;
 }) {
+  // Conversation rows: bookkeeping markers out, marker/taskref runs collapsed
+  // — raw `items` stay the source for turn ordinals/anchors (see callers).
+  const rows = collapseMarkerRuns(items);
   return (
     <>
-      {items.map((item) => (
+      {rows.map((row) => (
         // Native virtual screen: the browser skips layout/paint for
         // off-screen items, so long transcripts stay cheap without a
         // windowing library.
         <div
-          key={itemId(item)}
+          key={row.key}
           style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
         >
           <ItemView
-            item={item}
+            item={row.item}
+            repeat={row.repeat}
             attachments={attachments}
             rollbackCounts={rollbackCounts}
             onRollback={onRollback}
@@ -474,6 +484,7 @@ function ItemList({
 
 function ItemView({
   item,
+  repeat,
   attachments,
   rollbackCounts,
   onRollback,
@@ -481,6 +492,8 @@ function ItemView({
   token,
 }: {
   item: TranscriptItem;
+  /** Size of the collapsed run this row stands for (1 = a lone item). */
+  repeat: number;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   rollbackCounts?: ReadonlyMap<string, number>;
   onRollback?: (turnId: string) => void;
@@ -500,24 +513,30 @@ function ItemView({
         />
       );
     case 'marker':
-      return <MarkerView marker={item} />;
+      return <MarkerView marker={item} repeat={repeat} />;
     case 'taskref':
       return (
         <div className="mb-2 flex items-center gap-2 text-[10px] text-neutral-600">
           <div className="h-px flex-1 bg-neutral-800" />
-          <span className="font-mono">task spawned (async work continues in the background)</span>
+          <span className="font-mono">
+            task spawned (async work continues in the background)
+            {repeat > 1 ? ` ×${repeat}` : ''}
+          </span>
           <div className="h-px flex-1 bg-neutral-800" />
         </div>
       );
   }
 }
 
-function MarkerView({ marker }: { marker: TranscriptMarker }) {
+function MarkerView({ marker, repeat }: { marker: TranscriptMarker; repeat: number }) {
   // One divider row only — the payload is an internal blob, never rendered.
   return (
     <div className="mb-3 flex items-center gap-2 text-[10px] text-neutral-600">
       <div className="h-px flex-1 bg-neutral-800" />
-      <span>{markerLabel(marker.marker)}</span>
+      <span>
+        {markerLabel(marker.marker)}
+        {repeat > 1 ? ` ×${repeat}` : ''}
+      </span>
       {marker.at !== undefined ? <span>{relTime(Date.parse(marker.at))}</span> : null}
       <div className="h-px flex-1 bg-neutral-800" />
     </div>
@@ -639,6 +658,18 @@ function TurnView({
             <span className="text-[11px] whitespace-pre-wrap text-neutral-500">{turn.prompt}</span>
           </div>
         )
+      ) : null}
+      {/* First-token latency: a running turn with no frame yet gets an
+          explicit waiting row; it vanishes the moment the first frame
+          streams in. */}
+      {turn.state === 'running' && !turn.steps.some((step) => step.frames.length > 0) ? (
+        <div className="mb-2 inline-flex items-center gap-2 rounded border border-neutral-800 bg-neutral-900/40 px-3 py-1.5 text-[11px] text-neutral-500">
+          <span className="relative flex h-2 w-2">
+            <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-sky-500/70" />
+            <span className="relative inline-flex h-2 w-2 rounded-full bg-sky-500" />
+          </span>
+          waiting for model…
+        </div>
       ) : null}
       {turn.steps.map((step) => (
         <div key={step.stepId}>

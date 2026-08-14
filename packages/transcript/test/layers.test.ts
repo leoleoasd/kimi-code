@@ -410,6 +410,56 @@ describe('contract schemas', () => {
 });
 
 describe('groupMessagesIntoSnapshot (cold path)', () => {
+  it('pins turn ids to the engine ordinal hints', () => {
+    const messages = [
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'a' }], origin: { kind: 'user' } },
+      { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'A' }], toolCalls: [] },
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'b' }], origin: { kind: 'user' } },
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'c' }], origin: { kind: 'task', taskId: 'task_1' } as { kind: string } },
+    ];
+    const snapshot = groupMessagesIntoSnapshot(messages, [0, undefined, 1, 2]);
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't1', 't2']);
+    const taskTurn = turns[2];
+    if (taskTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(taskTurn.origin).toMatchObject({ kind: 'task', taskId: 'task_1' });
+    expect(taskTurn.prompt).toBe('c');
+  });
+
+  it('folds a task notification WITHOUT a pinned ordinal into the open turn (live parity)', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'running' }], toolCalls: [] },
+        {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: '<notification …>done.</notification>' }],
+          origin: { kind: 'task', taskId: 'task_9' } as { kind: string },
+        },
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'next' }], origin: { kind: 'user' } },
+      ],
+      [0, undefined, undefined, 2],
+    );
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't2']);
+    const first = turns[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    const note = first.steps.flatMap((s) => s.frames).find(
+      (f) => f.kind === 'text' && f.role === 'user' && f.text.includes('<notification'),
+    );
+    if (note?.kind !== 'text') throw new Error('expected folded notification frame');
+    expect(note.taskId).toBe('task_9');
+  });
+
+  it('still folds sequentially when no ordinal hints are given (legacy records)', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'a' }], origin: { kind: 'user' } },
+      { role: 'user' as const, content: [{ type: 'text' as const, text: 'b' }], origin: { kind: 'user' } },
+    ]);
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't1']);
+  });
+
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
       { role: 'system', content: [{ type: 'text', text: 'sys' }] },
@@ -642,6 +692,33 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
 });
 
 describe('foldWireRecordFacts (cold facts)', () => {
+  it('anchors fact markers to their owning turn once the journal carries a turn clock', () => {
+    const base = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'first' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'a1' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'second' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'user', content: [{ type: 'text', text: 'third' }], toolCalls: [], origin: { kind: 'user' } },
+      ],
+      [0, undefined, 1, 2],
+    );
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', time: 1000 },
+        { type: 'turn.cancel', turnId: 0, target: 'active', reason: 'user_cancelled', time: 2000 },
+        { type: 'task.started', info: { taskId: 'tk1', kind: 'agent', status: 'running', startedAt: 2500 }, time: 2500 },
+        { type: 'turn.prompt', time: 3000 },
+        { type: 'swarm_mode.enter', time: 4000 },
+        { type: 'turn.prompt', time: 5000 },
+        { type: 'goal.create', objective: 'ship', status: 'active', time: 6000 },
+      ],
+      base,
+    );
+    expect(folded.items.map(idLabel)).toEqual(['t0', 'm1', 'ref-tk1', 't1', 'm2', 't2', 'm3']);
+    const markers = folded.items.filter((i) => i.kind === 'marker').map((i) => (i.kind === 'marker' ? i.marker : ''));
+    expect(markers).toEqual(['interruption', 'swarm.enter', 'goal']);
+  });
+
   const baseWithMarker = (): AgentTranscriptSnapshot =>
     groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'hi' }], toolCalls: [], origin: { kind: 'user' } },

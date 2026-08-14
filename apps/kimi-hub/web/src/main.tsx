@@ -8,8 +8,19 @@ import './index.css';
 
 // The asset-shell service worker: asset caching only, every /api and hub data
 // frame bypasses the caches — dead-wrong on this one day and the hub's data
-// could go stale. Registered in production builds only.
+// could go stale. Registered in production builds only. A newly activated SW
+// (deploy with different assets) bounces every controlled page once, so an
+// installed PWA never sits on a stale bundle until someone force-refreshes.
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  // Only an UPGRADE bounce: a page that loaded uncontrolled (first-ever
+  // install) must not reload on its own activation.
+  const hadController = navigator.serviceWorker.controller !== null;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
   void navigator.serviceWorker.register('/sw.js').catch(() => {});
 }
 
