@@ -248,6 +248,12 @@ export function useTranscriptChannel(
         onSessionMetaUpdated: (meta) => {
           onMetaUpdatedRef.current?.(meta);
         },
+        onAgentLifecycle: () => {
+          // The roster slice only comes from a REST page — refresh (coalesced)
+          // so created/disposed agents join/leave the tab list without a
+          // manual reload.
+          refresh();
+        },
       },
     });
     store.onGap = () => {

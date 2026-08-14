@@ -115,6 +115,19 @@ describe('fetchPromptQueue', () => {
       }),
     ).rejects.toThrow('prompt queue: unexpected response shape');
   });
+
+  it('appends ?agent_id= when a specific agent queue is requested', async () => {
+    const calls: string[] = [];
+    await fetchPromptQueue({
+      ...ENDPOINT,
+      sessionId: 's 1',
+      agentId: 'sub agent',
+      fetchImpl: queueFetch(calls, { active: null, queued: [] }),
+    });
+    expect(calls[0]).toBe(
+      'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts?agent_id=sub%20agent',
+    );
+  });
 });
 
 describe('abortQueuedPrompt', () => {
@@ -159,5 +172,22 @@ describe('abortQueuedPrompt', () => {
         fetchImpl: async () => jsonResponse({ code: 40404, msg: 'prompt not found', data: null }),
       }),
     ).rejects.toThrow(EnvelopeError);
+  });
+
+  it('appends ?agent_id= so the abort reaches the owning agent queue', async () => {
+    const calls: string[] = [];
+    await abortQueuedPrompt({
+      ...ENDPOINT,
+      sessionId: 's 1',
+      promptId: 'p 2',
+      agentId: 'sub2',
+      fetchImpl: async (input) => {
+        calls.push(requestUrl(input));
+        return jsonResponse({ code: 0, msg: 'ok', data: { aborted: true } });
+      },
+    });
+    expect(calls[0]).toBe(
+      'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts/p%202:abort?agent_id=sub2',
+    );
   });
 });

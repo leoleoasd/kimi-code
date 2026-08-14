@@ -10,6 +10,7 @@ import {
   IAgentLifecycleService,
   IAgentPermissionModeService,
   IAgentProfileService,
+  IAgentPromptService,
   IAgentTitlePromptSource,
   IAgentToolPolicyService,
   IBootstrapService,
@@ -1113,6 +1114,62 @@ describe('server-v2 /api/v1 prompts', () => {
       agent_id: 'agent_does_not_exist',
     });
     expect(body.code).toBe(40401);
+  });
+
+  it('reads a named agent queue via ?agent_id= and keeps the default pointing at main', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const child = await lifecycle.fork('main');
+
+    // Route to the child — its queue, not main's, carries the prompt.
+    const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'queue me on the child' }],
+      agent_id: child.id,
+    });
+    expect(submitted.body.code).toBe(0);
+
+    // The DEFAULT list (no query) is main's queue: never the child's prompt.
+    const mainListed = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+      'GET',
+      `/api/v1/sessions/${id}/prompts`,
+    );
+    expect(mainListed.body.code).toBe(0);
+    expect(mainListed.body.data.active?.prompt_id).not.toBe(submitted.body.data.prompt_id);
+    expect(mainListed.body.data.queued.map((item) => item.prompt_id)).not.toContain(
+      submitted.body.data.prompt_id,
+    );
+
+    // `?agent_id=` reads the child's queue, mirroring the engine snapshot.
+    const listed = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
+      'GET',
+      `/api/v1/sessions/${id}/prompts?agent_id=${encodeURIComponent(child.id)}`,
+    );
+    expect(listed.body.code).toBe(0);
+    const engineQueue = child.accessor.get(IAgentPromptService).list();
+    expect(listed.body.data.active?.prompt_id ?? null).toBe(engineQueue.active?.id ?? null);
+    expect(listed.body.data.queued.map((item) => item.prompt_id)).toEqual(
+      engineQueue.pending.map((prompt) => prompt.id),
+    );
+  });
+
+  it('targets steer/abort at the named agent queue and 40401s an unknown one', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const steer = await call<null>('POST', `/api/v1/sessions/${id}/prompts:steer`, {
+      prompt_ids: ['prompt_x'],
+      agent_id: 'agent_does_not_exist',
+    });
+    expect(steer.body.code).toBe(40401);
+
+    const abort = await call<null>(
+      'POST',
+      `/api/v1/sessions/${id}/prompts/prompt_x:abort?agent_id=agent_does_not_exist`,
+    );
+    expect(abort.body.code).toBe(40401);
   });
 
   it('rejects an unknown agent profile with 40001', async () => {

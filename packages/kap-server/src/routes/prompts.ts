@@ -85,6 +85,13 @@ const sessionIdParamSchema = z.object({
   session_id: z.string().min(1),
 });
 
+const agentIdQuerySchema = z.object({
+  // Prompt queues are per AGENT (the same rule as the submission's
+  // `body.agent_id`): absent reads the main agent's queue, a forked
+  // side-channel agent's id reads that agent's queue.
+  agent_id: z.string().min(1).optional(),
+});
+
 const validationDetailsSchema = z.array(z.object({ path: z.string(), message: z.string() }));
 const authProviderDetailsSchema = z.object({ provider_id: z.string() });
 const authModelDetailsSchema = z.object({ model_id: z.string(), provider_id: z.string() }).partial();
@@ -169,6 +176,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
       method: 'GET',
       path: '/sessions/{session_id}/prompts',
       params: sessionIdParamSchema,
+      querystring: agentIdQuerySchema,
       success: { data: promptListResponseSchema },
       errors: { [ErrorCode.SESSION_NOT_FOUND]: {} },
       description: 'List the active prompt and queued prompts for a session',
@@ -178,7 +186,9 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const result = projectPromptList((await resolvePrompt(core, session_id)).prompt.list());
+        const result = projectPromptList(
+          (await resolvePrompt(core, session_id, req.query.agent_id)).prompt.list(),
+        );
         reply.send(okEnvelope(result, req.id));
       } catch (error) {
         sendMappedError(reply, req, error);
@@ -422,7 +432,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     async (req, reply) => {
       try {
         const { session_id } = req.params;
-        const resolved = await resolvePrompt(core, session_id);
+        const resolved = await resolvePrompt(core, session_id, req.body.agent_id);
         await resolved.prompt.steer(req.body.prompt_ids);
         reply.send(okEnvelope({ steered: true, prompt_ids: [...req.body.prompt_ids] }, req.id));
       } catch (error) {
@@ -436,6 +446,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
     {
       method: 'POST',
       path: '/sessions/{session_id}/prompts/{tail}',
+      querystring: agentIdQuerySchema,
       success: { data: z.union([promptAbortResponseSchema, promptSteerResultSchema]) },
       errors: {
         [ErrorCode.VALIDATION_FAILED]: {},
@@ -460,7 +471,7 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           reply.send(errEnvelope(ErrorCode.VALIDATION_FAILED, message, req.id));
           return;
         }
-        const resolved = await resolvePrompt(core, session_id);
+        const resolved = await resolvePrompt(core, session_id, req.query.agent_id);
         if (parsed.action === 'abort') {
           resolved.prompt.abort(parsed.id);
           requestLog(req)?.info({ session_id, prompt_id: parsed.id }, 'prompt aborted');
