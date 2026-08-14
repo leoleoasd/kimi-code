@@ -61,7 +61,7 @@ export function ChatView({
   token,
   sessionId,
   agentOffline,
-  agentName,
+  agentName: _agentName,
   onSessionMetaUpdated,
 }: {
   /** The agent's proxy base (`${hubOrigin}/agents/{agentId}`). */
@@ -433,11 +433,6 @@ export function ChatView({
 
 function shortError(error: unknown): string {
   return error instanceof Error ? error.message.slice(0, 60) : 'error';
-}
-
-/** The tunnel connection id out of the `${hubOrigin}/agents/{agentId}` base. */
-function agentIdFromBaseUrl(baseUrl: string): string {
-  return baseUrl.split('/agents/')[1]?.split('/')[0] ?? '';
 }
 
 /**
