@@ -9,9 +9,13 @@
  * re-render paints the increment (no per-character effects). The trailing
  * frame of a running turn+step carries a blinking caret.
  *
- * Scrolling: the viewport follows the tail while the user is parked within
- * ~80px of the bottom; once scrolled up, follow stops and a "↓ latest" pill
- * offers the jump back.
+ * Scrolling: the viewport follows the tail while pinned to within ~80px of
+ * the bottom; a "↓ latest" pill offers the jump back when unpinned. Only
+ * USER-DRIVEN scrolls (wheel / touch / keys / scrollbar pointer) unpin:
+ * programmatic snaps and the browser's scroll-anchoring nudges fire scroll
+ * events too, and during session entry the whole transcript re-lays out at
+ * once (content-visibility estimates, fonts, images) — a position-only check
+ * would kill the pin mid-settle and strand the view halfway up the history.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -89,6 +93,10 @@ export function ChatView({
   const contentRef = useRef<HTMLDivElement>(null);
   /** Whether the viewport was pinned to the bottom before the last update. */
   const stickBottomRef = useRef(true);
+  /** Timestamp of the last user-initiated scroll gesture (wheel/touch/keys). */
+  const userScrollAtRef = useRef(0);
+  /** A held primary pointer (scrollbar drag / selection scroll) = user intent. */
+  const pointerScrollRef = useRef(false);
   /** Content grew while the user was scrolled up — shows the "↓ latest" pill. */
   const [showJump, setShowJump] = useState(false);
   const queryClient = useQueryClient();
@@ -179,10 +187,23 @@ export function ChatView({
     }
   }, [items]);
 
+  // Session entry: land at the tail as soon as the initial page (or a
+  // switched agent tab) has painted — do not rely on the [items] effect's
+  // timing or on the pin surviving an earlier mount's state. `loaded` only
+  // flips false → true once per (session, tab) mount, so this never yanks
+  // the view away from someone scrolling an open conversation.
+  useLayoutEffect(() => {
+    if (!loaded) return;
+    stickBottomRef.current = true;
+    const el = scrollRef.current;
+    if (el !== null) el.scrollTop = el.scrollHeight;
+  }, [loaded]);
+
   // The [items] effect only notices transcript ops; content can also grow
   // without one — late attachment/image loads, markdown reflow, details
   // toggles. A pinned viewport stays glued to the actual bottom through all
-  // of those.
+  // of those. The CONTAINER is observed too: a header/composer or window
+  // resize shifts the bottom with no content growth at all.
   useEffect(() => {
     const scroll = scrollRef.current;
     const content = contentRef.current;
@@ -191,15 +212,57 @@ export function ChatView({
       if (stickBottomRef.current) scroll.scrollTop = scroll.scrollHeight;
     });
     observer.observe(content);
+    observer.observe(scroll);
     return () => observer.disconnect();
+  }, []);
+
+  // Attribute scrolls to the user: programmatic snaps (the pin's own glue)
+  // and scroll-anchoring nudges fire onScroll as well — they must NOT unpin.
+  // Momentum scrolling keeps firing for a moment after the gesture ends, so
+  // attribution uses a short recency window plus the held-pointer flag (a
+  // long scrollbar drag outlives any timestamp window).
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const mark = () => {
+      userScrollAtRef.current = Date.now();
+    };
+    const onPointerDown = (event: globalThis.PointerEvent) => {
+      if (event.isPrimary && event.button === 0) pointerScrollRef.current = true;
+    };
+    const onPointerUp = () => {
+      pointerScrollRef.current = false;
+    };
+    el.addEventListener('wheel', mark, { passive: true });
+    el.addEventListener('touchmove', mark, { passive: true });
+    el.addEventListener('keydown', mark);
+    el.addEventListener('pointerdown', onPointerDown);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerUp);
+    return () => {
+      el.removeEventListener('wheel', mark);
+      el.removeEventListener('touchmove', mark);
+      el.removeEventListener('keydown', mark);
+      el.removeEventListener('pointerdown', onPointerDown);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerUp);
+    };
   }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (el === null) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    stickBottomRef.current = atBottom;
-    if (atBottom) setShowJump(false);
+    if (atBottom) {
+      stickBottomRef.current = true;
+      setShowJump(false);
+      return;
+    }
+    // Away from the bottom: unpin only on user intent — a snap/anchor nudge
+    // during the settle convulsion keeps the pin so the glue effect retries.
+    if (pointerScrollRef.current || Date.now() - userScrollAtRef.current < 500) {
+      stickBottomRef.current = false;
+    }
   };
 
   const jumpToLatest = () => {
