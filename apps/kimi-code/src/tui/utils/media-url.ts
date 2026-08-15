@@ -6,7 +6,20 @@ export function mediaUrlPartToText(kind: MediaUrlKind, url: string): string {
     const size = summary.bytes !== undefined ? `, ${formatByteSize(summary.bytes)}` : '';
     return `[${kind} ${summary.mime}${size}]`;
   }
+  const blobRefMime = summarizeBlobRef(url);
+  if (blobRefMime !== undefined) {
+    // The bytes live in the engine's blob store — the mime is all the replay
+    // transcript knows, so mark the ref without a size.
+    return `[${kind} ${blobRefMime}]`;
+  }
   return `<${kind} url="${escapeAttribute(url)}">`;
+}
+
+/** `blobref:<mime>;<hash>` — the engine's blob-store refs for offloaded media. */
+function summarizeBlobRef(url: string): string | undefined {
+  if (!url.startsWith('blobref:')) return undefined;
+  const mime = url.slice('blobref:'.length).split(';')[0];
+  return mime !== undefined && mime.length > 0 ? mime : undefined;
 }
 
 export function summarizeDataUrl(url: string): { mime: string; bytes?: number } | undefined {
