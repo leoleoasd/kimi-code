@@ -12,8 +12,11 @@
  * Scrolling: SNAP, never follow. The view jumps to the tail on session/tab
  * entry and when the LOCAL USER sends a prompt — model streaming or any
  * other content growth NEVER moves the viewport (a tail-following pin would
- * scroll once per reasoning token). A "↓ latest" pill appears whenever
- * newer content sits off-screen and offers the jump.
+ * scroll once per reasoning token). Each snap converges through a bounded
+ * settle window: content-visibility rows start as 200px estimates and
+ * reflow to real heights, fonts/images shift, scroll-anchoring pulls back —
+ * so a snap re-lands for ~1.2s unless the user scrolls first. A "↓ latest"
+ * pill appears whenever newer content sits off-screen and offers the jump.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -59,6 +62,19 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { collapseMarkerRuns, compactionInProgress, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
+/** Keyboard keys able to scroll a container — they cancel a settling snap. */
+const SCROLL_KEYS = new Set([
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End',
+  ' ',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+]);
+
 export function ChatView({
   baseUrl,
   token,
@@ -89,6 +105,8 @@ export function ChatView({
   const scrollRef = useRef<HTMLDivElement>(null);
   /** Single content wrapper inside the scroll box — observed for growth (jump pill). */
   const contentRef = useRef<HTMLDivElement>(null);
+  /** In-flight settle retries of the last snap (rAF + timeout ids). */
+  const snapRetriesRef = useRef<number[]>([]);
   /** Newer content sits off-screen — shows the "↓ latest" pill. */
   const [showJump, setShowJump] = useState(false);
   const queryClient = useQueryClient();
@@ -184,16 +202,76 @@ export function ChatView({
     syncJumpPill();
   }, [loaded, items, syncJumpPill]);
 
+  /** Kill the settle retries of an in-flight snap (new snap / user scrolls / unmount). */
+  const cancelSnapRetries = useCallback(() => {
+    for (const id of snapRetriesRef.current) {
+      cancelAnimationFrame(id);
+      window.clearTimeout(id);
+    }
+    snapRetriesRef.current = [];
+  }, []);
+
+  // A user scroll gesture kills a settling snap's remaining retries — the
+  // convergence of a requested jump must never fight the person driving the
+  // viewport. Composer keystrokes are not scroll keys and cannot cancel.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) cancelSnapRetries();
+    };
+    el.addEventListener('wheel', cancelSnapRetries, { passive: true });
+    el.addEventListener('touchmove', cancelSnapRetries, { passive: true });
+    el.addEventListener('pointerdown', cancelSnapRetries);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      el.removeEventListener('wheel', cancelSnapRetries);
+      el.removeEventListener('touchmove', cancelSnapRetries);
+      el.removeEventListener('pointerdown', cancelSnapRetries);
+      window.removeEventListener('keydown', onKeyDown);
+      cancelSnapRetries();
+    };
+  }, [cancelSnapRetries]);
+
+  /**
+   * Jump to the tail, then keep re-landing through a bounded settle window:
+   * content-visibility rows refine from 200px estimates to real heights as
+   * they render, fonts/images reflow, and scroll-anchoring nudges the
+   * position back — a one-shot snap lands on the ESTIMATED bottom and stays
+   * stranded above the real tail. Finite retries converge a USER-requested
+   * jump; they are not a follow (max ~1.2s, and any user scroll kills them).
+   */
+  const snapToBottom = useCallback(() => {
+    cancelSnapRetries();
+    const el = scrollRef.current;
+    if (el === null) return;
+    el.scrollTop = el.scrollHeight;
+    setShowJump(false);
+    const timers = snapRetriesRef.current;
+    let frames = 0;
+    const again = () => {
+      el.scrollTop = el.scrollHeight;
+      frames += 1;
+      if (frames < 12) timers.push(requestAnimationFrame(again));
+    };
+    timers.push(requestAnimationFrame(again));
+    for (const ms of [250, 600, 1200]) {
+      timers.push(
+        window.setTimeout(() => {
+          el.scrollTop = el.scrollHeight;
+        }, ms),
+      );
+    }
+  }, [cancelSnapRetries]);
+
   // Session entry: land at the tail as soon as the initial page (or a
   // switched agent tab) has painted. `loaded` only flips false → true once
   // per (session, tab) mount, so this never yanks the view away from someone
   // scrolling an open conversation.
   useLayoutEffect(() => {
     if (!loaded) return;
-    const el = scrollRef.current;
-    if (el !== null) el.scrollTop = el.scrollHeight;
-    setShowJump(false);
-  }, [loaded]);
+    snapToBottom();
+  }, [loaded, snapToBottom]);
 
   // Late growth the transcript never sees (attachment/image loads, markdown
   // reflow, header/composer/window resizes): still no scrolling — just keep
@@ -210,12 +288,6 @@ export function ChatView({
 
   const onScroll = () => {
     syncJumpPill();
-  };
-
-  const jumpToLatest = () => {
-    const el = scrollRef.current;
-    if (el !== null) el.scrollTop = el.scrollHeight;
-    setShowJump(false);
   };
 
   const loadOlder = async () => {
@@ -283,7 +355,7 @@ export function ChatView({
         : await sendPromptWithImages({ baseUrl, token, sessionId, text, images });
     // The LOCAL USER just spoke — the one growth-adjacent scroll besides the
     // pill: land on their fresh turn (model output itself never scrolls).
-    jumpToLatest();
+    snapToBottom();
     // Optimistic chip: the queue poll replays the same item authoritatively
     // — nothing needs to be carried until then. Never let this nicety fail
     // the send UX (the REST already succeeded). Composed prompts always land
@@ -442,7 +514,7 @@ export function ChatView({
         {showJump ? (
           <button
             className="absolute right-3 bottom-3 rounded-full border border-neutral-700 bg-neutral-900/95 px-2.5 py-1.5 text-[11px] text-neutral-300 shadow-lg hover:bg-neutral-800"
-            onClick={jumpToLatest}
+            onClick={snapToBottom}
           >
             ↓ latest
           </button>
