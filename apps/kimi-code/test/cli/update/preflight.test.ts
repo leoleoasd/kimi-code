@@ -113,6 +113,17 @@ vi.mock('node:child_process', async () => {
   };
 });
 
+const buildInfoState = vi.hoisted(() => ({ channel: undefined as string | undefined }));
+
+vi.mock('../../../src/cli/build-info', () => ({
+  // Live getter: one test temporarily poses as a fork build.
+  KIMI_BUILD_INFO: {
+    get channel() {
+      return buildInfoState.channel;
+    },
+  },
+}));
+
 function cacheWith(version: string): UpdateCache {
   return {
     source: 'cdn',
@@ -274,6 +285,19 @@ describe('runUpdatePreflight', () => {
 
     expect(readUpdateCache).not.toHaveBeenCalled();
     expect(detectInstallSource).not.toHaveBeenCalled();
+  });
+
+  it('skips the upstream update channel entirely for fork-channel builds', async () => {
+    buildInfoState.channel = 'fork';
+    const { options } = captureOutput();
+
+    await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+    expect(readUpdateCache).not.toHaveBeenCalled();
+    expect(refreshUpdateCache).not.toHaveBeenCalled();
+    expect(detectInstallSource).not.toHaveBeenCalled();
+    expect(mocks.spawn).not.toHaveBeenCalled();
+    buildInfoState.channel = undefined;
   });
 
   it('starts an automatic update from the first fresh check when the cache is empty', async () => {

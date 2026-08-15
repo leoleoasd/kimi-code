@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
+import { KIMI_BUILD_INFO } from '#/cli/build-info';
+
 import {
   KIMI_CODE_OFFICIAL_INSTALL_URL,
   NATIVE_INSTALL_COMMAND_UNIX,
@@ -784,7 +786,10 @@ export async function runUpdatePreflight(
   const logger = options.logger ?? log;
   const platform = process.platform;
 
-  if (isAutoUpdateDisabledByEnv()) {
+  // A fork-channel build ships through the fork's own install script /
+  // install:local loop: the upstream CDN manifest must never stomp it with
+  // an upstream release (upstream builds lack every fork feature).
+  if (KIMI_BUILD_INFO.channel === 'fork' || isAutoUpdateDisabledByEnv()) {
     return 'continue';
   }
 
