@@ -139,6 +139,7 @@ import {
   IEventBus,
   IEventService,
   IHubConnectionService,
+  ISessionIndex,
   ISessionInteractionService,
   type IDisposable,
 } from '@moonshot-ai/agent-core-v2';
@@ -205,7 +206,10 @@ export function wireNotifyBridge(
  * agent in the attached session. Mirror of the broadcaster's reach-down
  * pattern into agent buses; a cold session (possible for headless connects)
  * silently contributes nothing — the scope check keeps it from registering
- * live traffic for an unknown id.
+ * live traffic for an unknown id. Notification subjects name the SESSION
+ * (`<title> finished` / `<title> is waiting for your input`, resolved through
+ * `ISessionIndex`) rather than the engine agent id — "main" names no machine;
+ * a non-main agent keeps its id as a `title · agent` suffix.
  */
 function wireSessionTurnNotify(
   core: Scope,
@@ -216,15 +220,24 @@ function wireSessionTurnNotify(
   if (session === undefined) return { dispose(): void {} };
   const disposables: IDisposable[] = [];
   const lifecycle = session.accessor.get(IAgentLifecycleService);
+  const sessionIndex = core.accessor.get(ISessionIndex);
+  const withSessionTitle = (agentId: string | undefined, render: (subject: string) => void): void => {
+    void sessionIndex.get(sessionId).then(
+      (summary) => render(notificationSubject(summary?.title, agentId)),
+      () => render(notificationSubject(undefined, agentId)),
+    );
+  };
   const subscribeAgent = (handle: { id: string; accessor: { get(t: typeof IEventBus): IEventBus } }): IDisposable =>
     handle.accessor.get(IEventBus).subscribe((event) => {
       if (event.type !== 'turn.ended' || event.reason !== 'completed') return;
-      tunnel.notify({
-        notificationId: `idle/${sessionId}/${handle.id}/t${event.turnId}`,
-        sessionId,
-        agentId: handle.id,
-        title: `${handle.id} finished`,
-        body: 'the turn completed',
+      withSessionTitle(handle.id, (subject) => {
+        tunnel.notify({
+          notificationId: `idle/${sessionId}/${handle.id}/t${event.turnId}`,
+          sessionId,
+          agentId: handle.id,
+          title: `${subject} finished`,
+          body: 'the turn completed',
+        });
       });
     });
   for (const handle of lifecycle.list()) disposables.push(subscribeAgent(handle));
@@ -240,14 +253,16 @@ function wireSessionTurnNotify(
         if (knownPending.has(pending.id)) continue;
         knownPending.add(pending.id);
         if (pending.kind !== 'approval' && pending.kind !== 'question') continue;
-        tunnel.notify({
-          notificationId: `interaction/${sessionId}/${pending.id}`,
-          sessionId,
-          title: `${pending.origin?.agentId ?? 'agent'} is waiting for your input`,
-          body:
-            pending.kind === 'question'
-              ? 'a question is waiting for an answer'
-              : 'an approval is waiting for a decision',
+        withSessionTitle(pending.origin?.agentId, (subject) => {
+          tunnel.notify({
+            notificationId: `interaction/${sessionId}/${pending.id}`,
+            sessionId,
+            title: `${subject} is waiting for your input`,
+            body:
+              pending.kind === 'question'
+                ? 'a question is waiting for an answer'
+                : 'an approval is waiting for a decision',
+          });
         });
       }
     }),
@@ -257,6 +272,18 @@ function wireSessionTurnNotify(
       for (const d of disposables.splice(0)) d.dispose();
     },
   };
+}
+
+/**
+ * The auto-notification's human subject: "<session title>" so one glance
+ * tells WHICH session finished / waits — the bare engine agent id is "main"
+ * for nearly every session and distinguishes nothing. A non-main agent keeps
+ * its id as a suffix (parallel subagents of one session); a session without
+ * a title yet falls back to the previous agent-id wording.
+ */
+export function notificationSubject(title: string | undefined, agentId: string | undefined): string {
+  if (title === undefined || title === '') return agentId ?? 'agent';
+  return agentId !== undefined && agentId !== 'main' ? `${title} · ${agentId}` : title;
 }
 
 // ---------------------------------------------------------------------------

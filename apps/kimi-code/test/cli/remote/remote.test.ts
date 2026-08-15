@@ -10,7 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { type HubConnection, IHubConnectionService, type Scope } from '@moonshot-ai/agent-core-v2';
 
 import { registerRemoteCommand } from '#/cli/sub/remote';
-import { DEFAULT_LOCAL_HUB_URL, hubUiUrl, parseHubUrl, parseRemoteCommand, resolveHubToken, wireHubTools } from '#/cli/sub/remote/shared';
+import { DEFAULT_LOCAL_HUB_URL, hubUiUrl, notificationSubject, parseHubUrl, parseRemoteCommand, resolveHubToken, wireHubTools } from '#/cli/sub/remote/shared';
 import { findBuiltInSlashCommand, resolveSlashCommandAvailability } from '#/tui/commands/index';
 
 function makeProgram(): Command {
@@ -292,5 +292,21 @@ describe('wireHubTools', () => {
     const { core, connection } = makeCore();
     wireHubTools(core, { hubUrl: 'https://hub.example.com', token: 't-1' }, ['ses-1']).dispose();
     expect(connection()).toBeUndefined();
+  });
+});
+
+describe('notificationSubject', () => {
+  it('names the session title for the main agent', () => {
+    expect(notificationSubject('hub-session-titles', 'main')).toBe('hub-session-titles');
+  });
+
+  it('keeps a non-main agent id as a suffix so sibling subagents stay apart', () => {
+    expect(notificationSubject('hub-session-titles', 'agent-1')).toBe('hub-session-titles · agent-1');
+  });
+
+  it('falls back to the agent id when the session has no title yet', () => {
+    expect(notificationSubject(undefined, 'main')).toBe('main');
+    expect(notificationSubject('', 'main')).toBe('main');
+    expect(notificationSubject(undefined, undefined)).toBe('agent');
   });
 });
