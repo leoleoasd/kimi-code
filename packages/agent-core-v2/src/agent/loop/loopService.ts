@@ -470,11 +470,18 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     this.wire.dispatch(promptTurn({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
+    const displayable = isDisplayablePromptOrigin(origin);
     this.eventBus.publish({
       type: 'turn.started',
       turnId: job.turn.id,
       origin,
-      prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input) : undefined,
+      prompt: displayable ? turnPromptText(job.seed.input) : undefined,
+      // Media-bearing prompts only — attachment projections pull the parts
+      // from here; text-only turns keep the event lean.
+      content:
+        displayable && job.seed.input.some((part) => part.type !== 'text')
+          ? job.seed.input
+          : undefined,
     });
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
   }

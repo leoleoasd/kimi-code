@@ -5,11 +5,17 @@
  * `turn.started` additionally carries the text extracted from the turn's
  * input parts (absent when the turn opened with no text part): consumers
  * that render the user's prompt must take it from there, because the context
- * append carrying the same text is not a bus event and lands later. The
- * prompt rides the event only for displayable user origins
- * ({@link isDisplayablePromptOrigin}) — a system-triggered turn (goal
- * continuation, subagent run, cron…) has internal steering text as its input,
- * which must never surface in transcripts.
+ * append carrying the same text is not a bus event and lands later.
+ * `content` carries the FULL input parts (same gate), but only when the
+ * input holds non-text parts: attachment projections and media placeholders
+ * need the image/video parts too — text-only consumers keep reading
+ * `prompt`, and no content-carrying prompt event exists for immediately-run
+ * turns (`prompt.queued` only fires when the prompt actually waited in the
+ * FIFO). Media-only omission also keeps the event lean for the common
+ * text-only case. The prompt rides the event only for displayable user
+ * origins ({@link isDisplayablePromptOrigin}) — a system-triggered turn
+ * (goal continuation, subagent run, cron…) has internal steering text as
+ * its input, which must never surface in transcripts.
  */
 
 import type { KimiErrorPayload } from '#/_base/errors/serialize';
@@ -33,6 +39,8 @@ export interface TurnStartedEvent {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  /** The turn's full input parts (media included) for displayable origins. */
+  readonly content?: readonly ContentPart[];
 }
 
 export function turnPromptText(input: readonly ContentPart[]): string | undefined {
