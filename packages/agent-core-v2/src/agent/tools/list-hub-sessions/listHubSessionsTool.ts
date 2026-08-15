@@ -82,8 +82,10 @@ export function formatRoster(
       continue;
     }
     for (const sessionId of agent.sessionIds) {
+      const title = agent.sessionTitles[sessionId];
+      const label = title === undefined ? sessionId : `"${title}" (${sessionId})`;
       lines.push(
-        `  - ${sessionId}${connection.sessionIds.includes(sessionId) ? '  (bridged from this machine)' : ''}`,
+        `  - ${label}${connection.sessionIds.includes(sessionId) ? '  (bridged from this machine)' : ''}`,
       );
     }
   }

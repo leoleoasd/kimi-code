@@ -5,8 +5,11 @@
  * its identity is "the one live hub connection", which is process-wide, so it
  * belongs at App scope. Hub calls go to the hub origin with
  * `Authorization: Bearer <token>` (omitted for bypass-mode hubs whose token
- * is empty). Failures throw plain Errors whose message the calling tool
- * renders straight to the model. Bound at App scope.
+ * is empty). The roster read additionally fans one scoped session-list
+ * request per connected agent into the hub's proxy to resolve session titles
+ * (tunnel data carries ids only; failures degrade to id-only rows). Failures
+ * throw plain Errors whose message the calling tool renders straight to the
+ * model. Bound at App scope.
  */
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
@@ -40,7 +43,7 @@ export class HubConnectionService implements IHubConnectionService {
     if (!Array.isArray(agents)) {
       throw new Error('unexpected hub response: missing agents list');
     }
-    return agents.map((raw) => {
+    const parsed = agents.map((raw): HubRemoteAgent => {
       const agent = raw as Record<string, unknown>;
       const scope = agent['scope'] as { sessions?: unknown } | null | undefined;
       return {
@@ -52,9 +55,50 @@ export class HubConnectionService implements IHubConnectionService {
         cwd: typeof agent['cwd'] === 'string' ? agent['cwd'] : undefined,
         connectedAt: typeof agent['connectedAt'] === 'number' ? agent['connectedAt'] : 0,
         sessionIds: Array.isArray(scope?.sessions) ? (scope.sessions as unknown[]).map(String) : [],
+        sessionTitles: {},
         legacy: scope === undefined || scope === null,
       };
     });
+    // Titles are not tunnel data — resolve them lazily through the agent's own
+    // session list (the hub proxies + scope-filters it), one request per agent,
+    // degrading to id-only rows when the lookup fails.
+    await Promise.all(
+      parsed.map(async (agent, index) => {
+        if (agent.legacy || agent.sessionIds.length === 0) return;
+        try {
+          parsed[index] = {
+            ...agent,
+            sessionTitles: await this.fetchSessionTitles(agent.agentId, agent.sessionIds),
+          };
+        } catch {
+          // Keep the id-only row.
+        }
+      }),
+    );
+    return parsed;
+  }
+
+  private async fetchSessionTitles(
+    agentId: string,
+    sessionIds: readonly string[],
+  ): Promise<Record<string, string>> {
+    const data = await this.request(
+      `/agents/${encodeURIComponent(agentId)}/api/v2/sessions?page_size=100`,
+    );
+    const items = (data as { items?: unknown } | undefined)?.items;
+    const titles: Record<string, string> = {};
+    if (!Array.isArray(items)) return titles;
+    const wanted = new Set(sessionIds);
+    for (const item of items) {
+      const entry = item as Record<string, unknown> | null;
+      const meta = entry?.['meta'] as Record<string, unknown> | null | undefined;
+      const title = meta?.['title'];
+      const id = entry?.['id'];
+      if (typeof id === 'string' && wanted.has(id) && typeof title === 'string' && title !== '') {
+        titles[id] = title;
+      }
+    }
+    return titles;
   }
 
   async sendToSession(target: {
