@@ -8,7 +8,7 @@ import { QueryClient } from '@tanstack/react-query';
 import { describe, expect, it } from 'vitest';
 
 import { sessionInfoQueryKey } from '#/sessions/api';
-import { TranscriptWs, type SessionMetaUpdated, type WsLike } from './ws';
+import { TranscriptWs, type SessionMetaUpdated, type WsLike } from '#/transcript/ws';
 
 // ----------------------------------------------------------------- fake ws
 

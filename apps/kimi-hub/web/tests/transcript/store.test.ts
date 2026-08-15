@@ -7,14 +7,14 @@
 import type { StepHeader, TranscriptOperation, TurnHeader, TurnState } from '@moonshot-ai/transcript';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { TranscriptPage } from './api';
+import type { TranscriptPage } from '#/transcript/api';
 import {
   createCoalescedRunner,
   hasTurnId,
   oldestTurnId,
   recoverLoadedWindow,
   TranscriptChatStore,
-} from './store';
+} from '#/transcript/store';
 
 // ---------------------------------------------------------------- fixtures
 

@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { PromptQueueItem } from '#/sessions/api';
-import { appendQueuedEntry, buildQueueStripRows, queueSnippet } from './PromptQueueStrip';
+import { appendQueuedEntry, buildQueueStripRows, queueSnippet } from '#/components/PromptQueueStrip';
 
 function item(promptId: string, text: string): PromptQueueItem {
   return { promptId, status: 'queued', text };

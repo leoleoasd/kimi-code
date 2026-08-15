@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { getJson, postJson } from './http';
+import { getJson, postJson } from '#/http';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionCommandInfo } from '#/sessions/api';
 
-import { commandHints, fillFor, hintSource, planHintKey } from './CommandHint';
+import { commandHints, fillFor, hintSource, planHintKey } from '#/components/CommandHint';
 
 const CATALOG: readonly SessionCommandInfo[] = [
   { name: 'abort', aliases: [], usage: '/abort', description: 'Cancel the running turn' },

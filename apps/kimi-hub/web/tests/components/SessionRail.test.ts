@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { HubAgentInfo } from '#/hub/api';
-import { deriveRailModel, railKey, type RailSessionEntry } from './SessionRail';
+import { deriveRailModel, railKey, type RailSessionEntry } from '#/components/SessionRail';
 
 function agent(name: string, extra?: Partial<HubAgentInfo>): HubAgentInfo {
   return {

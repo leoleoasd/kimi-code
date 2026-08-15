@@ -16,7 +16,7 @@ import {
   sendPromptWithImages,
   uploadImage,
   type ComposerAttachment,
-} from './files';
+} from '#/sessions/files';
 
 const ENDPOINT = { baseUrl: 'http://hub.example.com/agents/a1', token: 'tok' };
 

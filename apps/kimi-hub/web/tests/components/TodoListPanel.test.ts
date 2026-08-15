@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TranscriptTodo } from '@moonshot-ai/transcript';
 
-import { buildTodoRows } from './TodoListPanel';
+import { buildTodoRows } from '#/components/TodoListPanel';
 
 function doc(todoId: string, items: { title: string; status: TranscriptTodo['items'][number]['status'] }[]): TranscriptTodo {
   return { todoId, items };

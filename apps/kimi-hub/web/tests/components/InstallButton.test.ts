@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { installHintKind } from './InstallButton';
+import { installHintKind } from '#/components/InstallButton';
 
 describe('installHintKind', () => {
   it('hides when already running standalone', () => {

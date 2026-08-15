@@ -16,7 +16,7 @@ import {
   compactionInProgress,
   isVisibleMarker,
   markerLabel,
-} from './markers';
+} from '#/components/markers';
 
 describe('markerLabel', () => {
   it('maps known markers to friendly labels', () => {

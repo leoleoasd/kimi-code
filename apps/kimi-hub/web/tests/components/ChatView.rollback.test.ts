@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
 
-import { rollbackCountsForItems } from './ChatView';
+import { rollbackCountsForItems } from '#/components/ChatView';
 
 function turn(
   turnId: string,

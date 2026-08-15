@@ -12,7 +12,7 @@ import {
   planComposerKey,
   planSendOnEnter,
   type ClipboardItemish,
-} from './Composer';
+} from '#/components/Composer';
 
 describe('planSendOnEnter', () => {
   it('plain Enter sends', () => {

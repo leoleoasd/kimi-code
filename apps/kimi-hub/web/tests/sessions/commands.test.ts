@@ -15,7 +15,7 @@ import {
   parseComposerCommand,
   runComposerCommand,
   type CommandContext,
-} from './commands';
+} from '#/sessions/commands';
 
 describe('parseComposerCommand', () => {
   it('passes non-command input through as a prompt', () => {

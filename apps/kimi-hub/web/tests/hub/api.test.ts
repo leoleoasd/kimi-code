@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveSelectedAgent, type HubAgentInfo } from './api';
+import { resolveSelectedAgent, type HubAgentInfo } from '#/hub/api';
 
 function agent(name: string, extra?: Partial<HubAgentInfo>): HubAgentInfo {
   return {

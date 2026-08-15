@@ -12,7 +12,7 @@ import {
   resetTokenChoice,
   resolveHubOrigin,
   type TokenChoiceStorage,
-} from './connection';
+} from '#/connection';
 
 describe('extractTokenFromLocation', () => {
   it('reads the token from the #token= fragment', () => {

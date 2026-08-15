@@ -16,9 +16,9 @@ import type {
 } from '@moonshot-ai/transcript';
 import { describe, expect, it } from 'vitest';
 
-import { TranscriptChatStore } from './store';
-import { CHANNEL_TRANSCRIPT_GRADE } from './channel';
-import { TranscriptWs, type WsLike } from './ws';
+import { TranscriptChatStore } from '#/transcript/store';
+import { CHANNEL_TRANSCRIPT_GRADE } from '#/transcript/channel';
+import { TranscriptWs, type WsLike } from '#/transcript/ws';
 
 // ----------------------------------------------------------------- fake ws
 

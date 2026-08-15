@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { EnvelopeError } from '#/http';
-import { abortQueuedPrompt, fetchPromptQueue } from './api';
+import { abortQueuedPrompt, fetchPromptQueue } from '#/sessions/api';
 
 const ENDPOINT = { baseUrl: 'http://hub.example.com/agents/a1', token: 'tok' };
 

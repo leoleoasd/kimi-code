@@ -11,14 +11,14 @@ import { QueryClient } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { WsLike } from '#/transcript/ws';
-import { HUB_AGENTS_QUERY_KEY, type HubAgentInfo } from './api';
+import { HUB_AGENTS_QUERY_KEY, type HubAgentInfo } from '#/hub/api';
 import {
   parseRosterFrame,
   parseStreamFrame,
   RosterStream,
   type NotifyPayload,
   type RosterStreamState,
-} from './stream';
+} from '#/hub/stream';
 
 // ----------------------------------------------------------------- fake ws
 
