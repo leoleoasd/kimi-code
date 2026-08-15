@@ -44,30 +44,59 @@ describe('HubConnectionService', () => {
   });
 
   it('reads the roster with the bearer and flattens scope (legacy agents publish no sessions)', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      new Response(
-        JSON.stringify({
-          code: 0,
-          msg: 'success',
-          data: {
-            agents: [
-              {
-                agentId: 'a1',
-                name: 'dev-box',
-                platform: 'darwin',
-                arch: 'arm64',
-                version: '0.56.1',
-                cwd: '/work/kimi-code',
-                connectedAt: 170_000,
-                scope: { sessions: ['ses-mine', 'ses-pair'] },
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v2/sessions')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              code: 0,
+              msg: 'success',
+              data: {
+                items: [
+                  {
+                    id: 'ses-pair',
+                    workspace: { id: 'w1', cwd: '/work/kimi-code' },
+                    meta: { title: 'pairing session', created_at: 1, updated_at: 2, archived: false },
+                    activity: { status: 'idle' },
+                  },
+                  {
+                    id: 'ses-out-of-scope',
+                    workspace: { id: 'w1', cwd: '/work/kimi-code' },
+                    meta: { title: 'not mine', created_at: 1, updated_at: 2, archived: false },
+                    activity: { status: 'idle' },
+                  },
+                ],
               },
-              { agentId: 'a2', name: 'old-client', platform: 'linux', arch: 'x64', connectedAt: 150_000 },
-            ],
-          },
-        }),
-        { status: 200 },
-      ),
-    );
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            code: 0,
+            msg: 'success',
+            data: {
+              agents: [
+                {
+                  agentId: 'a1',
+                  name: 'dev-box',
+                  platform: 'darwin',
+                  arch: 'arm64',
+                  version: '0.56.1',
+                  cwd: '/work/kimi-code',
+                  connectedAt: 170_000,
+                  scope: { sessions: ['ses-mine', 'ses-pair'] },
+                },
+                { agentId: 'a2', name: 'old-client', platform: 'linux', arch: 'x64', connectedAt: 150_000 },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    });
     vi.stubGlobal('fetch', fetchMock);
     service.configure(CONN);
 
@@ -75,6 +104,9 @@ describe('HubConnectionService', () => {
     const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
     expect(url).toBe('https://hub.example.com/hub/api/agents');
     expect(new Headers(init.headers).get('authorization')).toBe('Bearer hub-token');
+    const [sessionsUrl, sessionsInit] = fetchMock.mock.calls[1]! as [string, RequestInit];
+    expect(sessionsUrl).toBe('https://hub.example.com/agents/a1/api/v2/sessions?page_size=100');
+    expect(new Headers(sessionsInit.headers).get('authorization')).toBe('Bearer hub-token');
     expect(agents).toEqual([
       {
         agentId: 'a1',
@@ -85,6 +117,7 @@ describe('HubConnectionService', () => {
         cwd: '/work/kimi-code',
         connectedAt: 170_000,
         sessionIds: ['ses-mine', 'ses-pair'],
+        sessionTitles: { 'ses-pair': 'pairing session' },
         legacy: false,
       },
       {
@@ -96,9 +129,45 @@ describe('HubConnectionService', () => {
         cwd: undefined,
         connectedAt: 150_000,
         sessionIds: [],
+        sessionTitles: {},
         legacy: true,
       },
     ]);
+  });
+
+  it('keeps id-only rows when the session-title lookup fails', async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.includes('/api/v2/sessions')) {
+        return Promise.reject(new Error('tunnel lost'));
+      }
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            code: 0,
+            msg: 'success',
+            data: {
+              agents: [
+                {
+                  agentId: 'a1',
+                  name: 'dev-box',
+                  platform: 'darwin',
+                  arch: 'arm64',
+                  connectedAt: 170_000,
+                  scope: { sessions: ['ses-mine'] },
+                },
+              ],
+            },
+          }),
+          { status: 200 },
+        ),
+      );
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    service.configure(CONN);
+
+    const agents = await service.listRemoteAgents();
+    expect(agents).toHaveLength(1);
+    expect(agents[0]).toMatchObject({ agentId: 'a1', sessionIds: ['ses-mine'], sessionTitles: {} });
   });
 
   it('omits the bearer for bypass-mode hubs (empty token)', async () => {

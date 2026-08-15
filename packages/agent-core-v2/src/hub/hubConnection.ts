@@ -6,9 +6,11 @@
  * tools (`ListHubSessions` / `SendHubMessage`). The host's remote-control
  * connector (`kimi remote connect` / the TUI's `/remote connect`) populates
  * it when the tunnel comes up and clears it on disconnect. The service also
- * owns the two outbound HTTPS calls the tools make against the hub: the
- * agent roster read (`GET /hub/api/agents`) and the cross-session prompt
- * submit (`POST /agents/{agentId}/api/v1/sessions/{sessionId}/prompts`).
+ * owns the outbound HTTPS calls the tools make against the hub: the agent
+ * roster read (`GET /hub/api/agents`, plus one proxied
+ * `GET /agents/{agentId}/api/v2/sessions` per scoped agent to resolve session
+ * titles) and the cross-session prompt submit
+ * (`POST /agents/{agentId}/api/v1/sessions/{sessionId}/prompts`).
  * Bound at App scope.
  */
 
@@ -30,6 +32,12 @@ export interface HubRemoteAgent {
   readonly cwd?: string;
   readonly connectedAt: number;
   readonly sessionIds: readonly string[];
+  /**
+   * session id → display title, resolved lazily through the agent's own
+   * session list (proxied by the hub); only sessions with a non-empty title
+   * are present, and the map is empty when the lookup failed.
+   */
+  readonly sessionTitles: Readonly<Record<string, string>>;
   /** Legacy connectors declare no scope — the hub exposes their whole machine and they publish no session list. */
   readonly legacy: boolean;
 }

@@ -34,6 +34,7 @@ const ROSTER: HubRemoteAgent[] = [
     cwd: '/work/kimi-code',
     connectedAt: 170_000,
     sessionIds: ['ses-mine', 'ses-pair'],
+    sessionTitles: { 'ses-pair': 'pair designing' },
     legacy: false,
   },
   {
@@ -43,6 +44,7 @@ const ROSTER: HubRemoteAgent[] = [
     arch: 'x64',
     connectedAt: 150_000,
     sessionIds: ['ses-ci'],
+    sessionTitles: {},
     legacy: false,
   },
   {
@@ -52,6 +54,7 @@ const ROSTER: HubRemoteAgent[] = [
     arch: 'x64',
     connectedAt: 120_000,
     sessionIds: [],
+    sessionTitles: {},
     legacy: true,
   },
 ];
@@ -105,6 +108,7 @@ describe('ListHubSessionsTool', () => {
     const output = String(result.output);
     expect(output).toContain('"dev-box" (a1)');
     expect(output).toContain('ses-mine  (bridged from this machine)');
+    expect(output).toContain('"pair designing" (ses-pair)');
     expect(output).toContain('"ci-worker" (a2)');
     expect(output).toContain('- ses-ci\n');
     expect(output).toContain('legacy connection');
