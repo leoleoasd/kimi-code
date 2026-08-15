@@ -17,6 +17,11 @@
  * reflow to real heights, fonts/images shift, scroll-anchoring pulls back —
  * so a snap re-lands for ~1.2s unless the user scrolls first. A "↓ latest"
  * pill appears whenever newer content sits off-screen and offers the jump.
+ * Older history loads lazily in the other direction: the initial paint is
+ * one page of turns and an IntersectionObserver sentinel 400px above the top
+ * lines prefetches earlier pages, restoring the viewport by its distance
+ * from the bottom so prepends never yank what you're reading; a fetch
+ * failure parks a retry button until cleared.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -309,12 +314,29 @@ export function ChatView({
     syncJumpPill();
   };
 
-  const loadOlder = async () => {
-    if (store === null) return;
+  // Infinite top-loading: a top sentinel (IntersectionObserver, 400px early
+  // margin) pages the previous 20 turns in as the user scrolls up. The
+  // invariant preserved across a prepend is the distance-from-bottom of the
+  // viewport — captured BEFORE the await, restored in the layout effect keyed
+  // on `items` (the observer can fire during the entry snap; the pages land
+  // above the viewed tail and never disturb it).
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [olderError, setOlderError] = useState<unknown>(null);
+  const loadingOlderRef = useRef(false);
+  /** Pre-pend anchor: `distanceFromBottom` recorded before the previous-page fetch. */
+  const olderAnchorRef = useRef<{ distanceFromBottom: number } | null>(null);
+  const olderSentinelRef = useRef<HTMLDivElement>(null);
+
+  const loadOlder = useCallback(async () => {
+    if (store === null || loadingOlderRef.current) return;
     const oldest = oldestTurnId(items);
     if (oldest === undefined) return;
     const el = scrollRef.current;
-    const anchor = el === null ? 0 : el.scrollHeight - el.scrollTop;
+    if (el !== null) {
+      olderAnchorRef.current = { distanceFromBottom: el.scrollHeight - el.scrollTop };
+    }
+    loadingOlderRef.current = true;
+    setLoadingOlder(true);
     try {
       const page = await fetchTranscriptPage({
         baseUrl,
@@ -325,15 +347,40 @@ export function ChatView({
         pageSize: TRANSCRIPT_PAGE_SIZE,
       });
       store.applyPage(page);
-      // Restore the pre-prepend anchor so the viewport does not jump.
-      requestAnimationFrame(() => {
-        const el2 = scrollRef.current;
-        if (el2 !== null) el2.scrollTop = el2.scrollHeight - anchor;
-      });
+      setOlderError(null);
     } catch (error) {
-      setViewError(error);
+      olderAnchorRef.current = null;
+      setOlderError(error);
+    } finally {
+      loadingOlderRef.current = false;
+      setLoadingOlder(false);
     }
-  };
+  }, [store, items, baseUrl, token, sessionId, transcriptAgentId]);
+
+  useLayoutEffect(() => {
+    const anchor = olderAnchorRef.current;
+    if (anchor === null) return;
+    olderAnchorRef.current = null;
+    const el = scrollRef.current;
+    if (el === null) return;
+    el.scrollTop = el.scrollHeight - anchor.distanceFromBottom;
+  }, [items]);
+
+  useEffect(() => {
+    const sentinel = olderSentinelRef.current;
+    const root = scrollRef.current;
+    if (sentinel === null || root === null) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) void loadOlder();
+      },
+      { root, rootMargin: '400px 0px 0px 0px' },
+    );
+    observer.observe(sentinel);
+    return () => {
+      observer.disconnect();
+    };
+  }, [loadOlder, loaded, state.hasMoreOlder]);
 
   // Composer slash commands — `/…` lines forward to the agent's command
   // bridge (the connected TUI's OWN dispatch; sessions/commands.ts keeps no
@@ -502,8 +549,19 @@ export function ChatView({
               </div>
             ) : null}
             {state.hasMoreOlder ? (
-              <div className="mb-3 flex justify-center">
-                <ActionButton onClick={() => void loadOlder()}>Load earlier turns</ActionButton>
+              <div className="mb-3 flex justify-center py-1" ref={olderSentinelRef}>
+                {olderError !== null ? (
+                  <ActionButton
+                    onClick={() => {
+                      setOlderError(null);
+                      void loadOlder();
+                    }}
+                  >
+                    Retry loading earlier turns
+                  </ActionButton>
+                ) : loadingOlder ? (
+                  <span className="text-[11px] text-neutral-600">loading earlier turns…</span>
+                ) : null}
               </div>
             ) : null}
             {items.length === 0 ? (
