@@ -9,13 +9,11 @@
  * re-render paints the increment (no per-character effects). The trailing
  * frame of a running turn+step carries a blinking caret.
  *
- * Scrolling: the viewport follows the tail while pinned to within ~80px of
- * the bottom; a "↓ latest" pill offers the jump back when unpinned. Only
- * USER-DRIVEN scrolls (wheel / touch / keys / scrollbar pointer) unpin:
- * programmatic snaps and the browser's scroll-anchoring nudges fire scroll
- * events too, and during session entry the whole transcript re-lays out at
- * once (content-visibility estimates, fonts, images) — a position-only check
- * would kill the pin mid-settle and strand the view halfway up the history.
+ * Scrolling: SNAP, never follow. The view jumps to the tail on session/tab
+ * entry and when the LOCAL USER sends a prompt — model streaming or any
+ * other content growth NEVER moves the viewport (a tail-following pin would
+ * scroll once per reasoning token). A "↓ latest" pill appears whenever
+ * newer content sits off-screen and offers the jump.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -28,7 +26,7 @@ import {
   type TranscriptMarker,
   type TurnState,
 } from '@moonshot-ai/transcript';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '#/transcript/api';
 import { oldestTurnId } from '#/transcript/store';
@@ -61,19 +59,6 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { collapseMarkerRuns, compactionInProgress, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
-/** Keyboard keys able to scroll a container — the user-intent scroll set. */
-const SCROLL_KEYS = new Set([
-  'PageUp',
-  'PageDown',
-  'Home',
-  'End',
-  ' ',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-]);
-
 export function ChatView({
   baseUrl,
   token,
@@ -102,15 +87,9 @@ export function ChatView({
   /** Completion text of the last composer slash command (the chat area's notice line). */
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
-  /** Single content wrapper inside the scroll box — observed for growth. */
+  /** Single content wrapper inside the scroll box — observed for growth (jump pill). */
   const contentRef = useRef<HTMLDivElement>(null);
-  /** Whether the viewport was pinned to the bottom before the last update. */
-  const stickBottomRef = useRef(true);
-  /** Timestamp of the last user-initiated scroll gesture (wheel/touch/keys). */
-  const userScrollAtRef = useRef(0);
-  /** A held primary pointer (scrollbar drag / selection scroll) = user intent. */
-  const pointerScrollRef = useRef(false);
-  /** Content grew while the user was scrolled up — shows the "↓ latest" pill. */
+  /** Newer content sits off-screen — shows the "↓ latest" pill. */
   const [showJump, setShowJump] = useState(false);
   const queryClient = useQueryClient();
 
@@ -188,107 +167,54 @@ export function ChatView({
     await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
   };
 
-  // Follow the tail while the user is parked at the bottom; flag the jump
-  // pill when content grew while scrolled up.
-  useLayoutEffect(() => {
+  // One position check is the source of truth for the jump pill across the
+  // scroll / items / resize paths: newer content within ~80px of the tail
+  // counts as "caught up".
+  const syncJumpPill = useCallback(() => {
     const el = scrollRef.current;
     if (el === null) return;
-    if (stickBottomRef.current) {
-      el.scrollTop = el.scrollHeight;
-    } else {
-      setShowJump(true);
-    }
-  }, [items]);
+    setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight >= 80);
+  }, []);
 
-  // Session entry: land at the tail as soon as the initial page (or a
-  // switched agent tab) has painted — do not rely on the [items] effect's
-  // timing or on the pin surviving an earlier mount's state. `loaded` only
-  // flips false → true once per (session, tab) mount, so this never yanks
-  // the view away from someone scrolling an open conversation.
+  // Model output NEVER scrolls the view: new transcript items only refresh
+  // the jump pill. Gated on `loaded` — until then the entry snap below owns
+  // the position and the pill.
   useLayoutEffect(() => {
     if (!loaded) return;
-    stickBottomRef.current = true;
+    syncJumpPill();
+  }, [loaded, items, syncJumpPill]);
+
+  // Session entry: land at the tail as soon as the initial page (or a
+  // switched agent tab) has painted. `loaded` only flips false → true once
+  // per (session, tab) mount, so this never yanks the view away from someone
+  // scrolling an open conversation.
+  useLayoutEffect(() => {
+    if (!loaded) return;
     const el = scrollRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
+    setShowJump(false);
   }, [loaded]);
 
-  // The [items] effect only notices transcript ops; content can also grow
-  // without one — late attachment/image loads, markdown reflow, details
-  // toggles. A pinned viewport stays glued to the actual bottom through all
-  // of those. The CONTAINER is observed too: a header/composer or window
-  // resize shifts the bottom with no content growth at all.
+  // Late growth the transcript never sees (attachment/image loads, markdown
+  // reflow, header/composer/window resizes): still no scrolling — just keep
+  // the jump pill truthful.
   useEffect(() => {
     const scroll = scrollRef.current;
     const content = contentRef.current;
     if (scroll === null || content === null) return;
-    const observer = new ResizeObserver(() => {
-      if (stickBottomRef.current) scroll.scrollTop = scroll.scrollHeight;
-    });
+    const observer = new ResizeObserver(syncJumpPill);
     observer.observe(content);
     observer.observe(scroll);
     return () => observer.disconnect();
-  }, []);
-
-  // Attribute scrolls to the user: programmatic snaps (the pin's own glue)
-  // and scroll-anchoring nudges fire onScroll as well — they must NOT unpin.
-  // Momentum scrolling keeps firing for a moment after the gesture ends, so
-  // attribution uses a short recency window plus the held-pointer flag (a
-  // long scrollbar drag outlives any timestamp window).
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el === null) return;
-    const mark = () => {
-      userScrollAtRef.current = Date.now();
-    };
-    // Keyboard scrolling: only keys that can actually scroll a container, and
-    // on window — with focus on <body> the container still scrolls but the
-    // keydown never bubbles through it. The composer never emits these
-    // (PgUp/space/arrows stay inside the textarea), so typing can't unpin.
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (SCROLL_KEYS.has(event.key)) mark();
-    };
-    const onPointerDown = (event: globalThis.PointerEvent) => {
-      if (event.isPrimary && event.button === 0) pointerScrollRef.current = true;
-    };
-    const onPointerUp = () => {
-      pointerScrollRef.current = false;
-    };
-    el.addEventListener('wheel', mark, { passive: true });
-    el.addEventListener('touchmove', mark, { passive: true });
-    window.addEventListener('keydown', onKeyDown);
-    el.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('pointerup', onPointerUp);
-    window.addEventListener('pointercancel', onPointerUp);
-    return () => {
-      el.removeEventListener('wheel', mark);
-      el.removeEventListener('touchmove', mark);
-      window.removeEventListener('keydown', onKeyDown);
-      el.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('pointerup', onPointerUp);
-      window.removeEventListener('pointercancel', onPointerUp);
-    };
-  }, []);
+  }, [syncJumpPill]);
 
   const onScroll = () => {
-    const el = scrollRef.current;
-    if (el === null) return;
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
-    if (atBottom) {
-      stickBottomRef.current = true;
-      setShowJump(false);
-      return;
-    }
-    // Away from the bottom: unpin only on user intent — a snap/anchor nudge
-    // during the settle convulsion keeps the pin so the glue effect retries.
-    if (pointerScrollRef.current || Date.now() - userScrollAtRef.current < 500) {
-      stickBottomRef.current = false;
-    }
+    syncJumpPill();
   };
 
   const jumpToLatest = () => {
     const el = scrollRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
-    stickBottomRef.current = true;
     setShowJump(false);
   };
 
@@ -307,7 +233,6 @@ export function ChatView({
         beforeTurn: oldest,
         pageSize: TRANSCRIPT_PAGE_SIZE,
       });
-      stickBottomRef.current = false;
       store.applyPage(page);
       // Restore the pre-prepend anchor so the viewport does not jump.
       requestAnimationFrame(() => {
@@ -356,6 +281,9 @@ export function ChatView({
       images.length === 0
         ? await sendPrompt({ baseUrl, token, sessionId, text })
         : await sendPromptWithImages({ baseUrl, token, sessionId, text, images });
+    // The LOCAL USER just spoke — the one growth-adjacent scroll besides the
+    // pill: land on their fresh turn (model output itself never scrolls).
+    jumpToLatest();
     // Optimistic chip: the queue poll replays the same item authoritatively
     // — nothing needs to be carried until then. Never let this nicety fail
     // the send UX (the REST already succeeded). Composed prompts always land
