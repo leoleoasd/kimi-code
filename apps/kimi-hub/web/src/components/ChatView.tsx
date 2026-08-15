@@ -29,7 +29,7 @@ import {
   type TranscriptMarker,
   type TurnState,
 } from '@moonshot-ai/transcript';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '#/transcript/api';
 import { oldestTurnId } from '#/transcript/store';
@@ -41,6 +41,7 @@ import {
   fetchPromptQueue,
   fetchSession,
   fetchSessionCommands,
+  fetchSessionPlans,
   fetchSessionStatus,
   sendPrompt,
   sessionInfoQueryKey,
@@ -59,7 +60,7 @@ import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
-import { collapseMarkerRuns, compactionInProgress, markerLabel } from './markers';
+import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, markerLabel, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
 /** Keyboard keys able to scroll a container — they cancel a settling snap. */
@@ -156,6 +157,24 @@ export function ChatView({
   // → Web Push): every connected session pings even when no chat page is
   // open, so the page adds nothing here (the spirit of the push chain is
   // "wake the device whose page isn't watching").
+
+  // Plan contents for `plan.revision` markers: the markers carry only blob
+  // references, so the server-side recovery route projects the actual plan
+  // text per ExitPlanMode call. The query re-runs when a new revision marker
+  // arrives; pairing keys the map by markerId so MarkerView stays dumb.
+  const planRevisionCount = items.reduce(
+    (n, item) => (item.kind === 'marker' && item.marker === 'plan.revision' ? n + 1 : n),
+    0,
+  );
+  const plans = useQuery({
+    queryKey: ['session-plans', baseUrl, sessionId, transcriptAgentId, planRevisionCount],
+    queryFn: () => fetchSessionPlans({ baseUrl, token, sessionId, agentId: transcriptAgentId }),
+    enabled: planRevisionCount > 0 && sessionId !== '',
+  });
+  const planByMarkerId = useMemo(
+    () => buildPlanByMarker(items, plans.data ?? []),
+    [items, plans.data],
+  );
 
   // Both abort paths invalidate the queue query — the 2s poll would settle
   // on its own; this is a promptness nicety (the abort's drain freebie shows
@@ -499,6 +518,7 @@ export function ChatView({
                 attachments={state.attachments}
                 rollbackCounts={transcriptAgentId === 'main' ? rollbackCounts : undefined}
                 onRollback={(turnId) => void rollbackTurn(turnId).catch(setViewError)}
+                planByMarkerId={planByMarkerId}
                 baseUrl={baseUrl}
                 token={token}
               />
@@ -574,6 +594,7 @@ function ItemList({
   attachments,
   rollbackCounts,
   onRollback,
+  planByMarkerId,
   baseUrl,
   token,
 }: {
@@ -582,6 +603,8 @@ function ItemList({
   /** Present only on the main agent's tab (undo cuts the MAIN conversation). */
   rollbackCounts?: ReadonlyMap<string, number>;
   onRollback?: (turnId: string) => void;
+  /** `plan.revision` markerId → recovered plan content (TUI PlanBox parity). */
+  planByMarkerId?: ReadonlyMap<string, PlanMarkerContent>;
   baseUrl: string;
   token: string;
 }) {
@@ -604,6 +627,7 @@ function ItemList({
             attachments={attachments}
             rollbackCounts={rollbackCounts}
             onRollback={onRollback}
+            planContent={row.item.kind === 'marker' ? planByMarkerId?.get(row.item.markerId) : undefined}
             baseUrl={baseUrl}
             token={token}
           />
@@ -619,6 +643,7 @@ function ItemView({
   attachments,
   rollbackCounts,
   onRollback,
+  planContent,
   baseUrl,
   token,
 }: {
@@ -628,6 +653,7 @@ function ItemView({
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   rollbackCounts?: ReadonlyMap<string, number>;
   onRollback?: (turnId: string) => void;
+  planContent?: PlanMarkerContent;
   baseUrl: string;
   token: string;
 }) {
@@ -644,7 +670,7 @@ function ItemView({
         />
       );
     case 'marker':
-      return <MarkerView marker={item} repeat={repeat} />;
+      return <MarkerView marker={item} repeat={repeat} planContent={planContent} />;
     case 'taskref':
       return (
         <div className="mb-2 flex items-center gap-2 text-[10px] text-neutral-600">
@@ -659,7 +685,33 @@ function ItemView({
   }
 }
 
-function MarkerView({ marker, repeat }: { marker: TranscriptMarker; repeat: number }) {
+function MarkerView({
+  marker,
+  repeat,
+  planContent,
+}: {
+  marker: TranscriptMarker;
+  repeat: number;
+  /** Recovered plan markdown for `plan.revision` rows, when known. */
+  planContent?: PlanMarkerContent;
+}) {
+  // A plan revision with recovered content renders as a real card (TUI
+  // PlanBox parity: the plan the review was submitted with), not a divider.
+  if (planContent !== undefined) {
+    return (
+      <div className="mb-3 max-w-full rounded border border-neutral-700/80 bg-neutral-900/40 sm:max-w-[92%]">
+        <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-1.5 text-[10px] text-neutral-500">
+          <span>
+            plan revised{planContent.version !== undefined ? ` · v${planContent.version}` : ''}
+          </span>
+          {marker.at !== undefined ? <span>{relTime(Date.parse(marker.at))}</span> : null}
+        </div>
+        <div className="px-3 py-2">
+          <Markdown text={planContent.plan} />
+        </div>
+      </div>
+    );
+  }
   // One divider row only — the payload is an internal blob, never rendered.
   return (
     <div className="mb-3 flex items-center gap-2 text-[10px] text-neutral-600">
