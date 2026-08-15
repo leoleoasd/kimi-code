@@ -163,6 +163,16 @@ interface EnginePromptQueuedEvent {
   readonly content: readonly unknown[];
 }
 
+/** Runtime shape of the v2-only `turn.started.content` field
+ * (`packages/agent-core-v2/src/agent/loop/turnEvents.ts`): the turn's full
+ * input parts (media included), published for displayable origins when the
+ * input has non-text parts. The v1 `TurnStartedEvent` in
+ * `packages/protocol` has no such field, so it is read structurally, the
+ * same way `prompt.queued` above is matched. */
+interface TurnStartedContentEvent {
+  readonly content?: readonly unknown[];
+}
+
 const ENGINE_QUEUE_TEXT_CAP = 40;
 const ENGINE_QUEUE_MEDIA_PLACEHOLDER = '🖼';
 
@@ -539,17 +549,22 @@ export class SessionEventHandler {
     // driving the same live session) renders its user message from here.
     if (event.origin?.kind === 'user' && event.prompt !== undefined) {
       // FIFO-consume the matching queued content for EVERY user-origin turn
-      // (the engine dequeues in order) — the media markers ride the remote
+      // (the engine dequeues in order) — even when the event itself carries
+      // the turn's parts, so the strip stays aligned for the NEXT turn whose
+      // event lacks them. The v2 engine's `turn.started.content` (full input
+      // parts for displayable origins with media) wins when present; the
+      // `prompt.queued` record is the fallback. The markers ride the remote
       // echo; the locally-sent path dedups against `recentLocalPromptTexts`
       // and keeps its own (already thumbnail-rendered) local entry.
       const queuedContent = this.shiftOldestQueuedContent();
+      const content = (event as unknown as TurnStartedContentEvent).content ?? queuedContent;
       if (!this.consumeLocalPromptText(event.prompt)) {
         this.host.appendTranscriptEntry({
           id: nextTranscriptId(),
           kind: 'user',
           turnId: undefined,
           renderMode: 'plain',
-          content: event.prompt + mediaPlaceholderSuffix(queuedContent),
+          content: event.prompt + mediaPlaceholderSuffix(content),
         });
       }
     }

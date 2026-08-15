@@ -151,6 +151,52 @@ export function revokePreviewUrl(url: string, revokeObjectUrl?: (url: string) =>
   else URL.revokeObjectURL(url);
 }
 
+// ------------------------------------------------------------------ blobs
+
+/**
+ * Engine blob refs: prompt media over ~4 KiB is dehydrated at persistence
+ * into the AGENT-scoped blob store, referenced in messages/meta as
+ * `blobref:<mime>;<sha256>`. Transcript attachments for these carry
+ * `source: { kind: 'blob', ref }` — the ref alone can't ride an <img> (no
+ * protocol handler), so the bytes come from the session blob route below.
+ */
+export function parseBlobRef(ref: string): { mediaType: string; sha256: string } | undefined {
+  const match = /^blobref:([^;]+);([0-9a-f]{64})$/i.exec(ref);
+  const mediaType = match?.[1];
+  const sha256 = match?.[2];
+  if (mediaType === undefined || sha256 === undefined) return undefined;
+  return { mediaType, sha256 };
+}
+
+/** `buildImagePreviewUrl`'s sibling for blob refs — same object-URL contract. */
+export async function buildBlobPreviewUrl(
+  endpoint: HttpEndpoint & {
+    sessionId: string;
+    agentId: string;
+    ref: string;
+    createObjectUrl?: (blob: Blob) => string;
+  },
+): Promise<string> {
+  const parsed = parseBlobRef(endpoint.ref);
+  if (parsed === undefined) throw new Error(`malformed blob ref: ${endpoint.ref}`);
+  const doFetch = endpoint.fetchImpl ?? fetch;
+  const headers: Record<string, string> = {};
+  if (endpoint.token !== '') headers['authorization'] = `Bearer ${endpoint.token}`;
+  const res = await doFetch(
+    `${endpoint.baseUrl}/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/agents/${encodeURIComponent(endpoint.agentId)}/blobs/${parsed.sha256}`,
+    { headers },
+  );
+  if (res.status === 401) {
+    throw new EnvelopeError(40101, 'unauthorized — check the hub token');
+  }
+  if (!res.ok) {
+    throw new Error(`http ${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const create = endpoint.createObjectUrl ?? ((b: Blob) => URL.createObjectURL(b));
+  return create(blob);
+}
+
 // ------------------------------------------------------------------ prompts
 
 /**

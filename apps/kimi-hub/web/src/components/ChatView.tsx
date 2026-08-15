@@ -47,7 +47,7 @@ import {
   sessionInfoQueryKey,
   undoSession,
 } from '#/sessions/api';
-import { sendPromptWithImages, buildImagePreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
+import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
 import {
   lastAssistantText,
   runComposerCommand,
@@ -521,6 +521,8 @@ export function ChatView({
                 planByMarkerId={planByMarkerId}
                 baseUrl={baseUrl}
                 token={token}
+                sessionId={sessionId}
+                agentId={transcriptAgentId}
               />
             )}
             {/* Slash-command completion line — the neutral NoticeFrame grammar. */}
@@ -597,6 +599,8 @@ function ItemList({
   planByMarkerId,
   baseUrl,
   token,
+  sessionId,
+  agentId,
 }: {
   items: readonly TranscriptItem[];
   attachments: ReadonlyMap<string, TranscriptAttachment>;
@@ -607,6 +611,8 @@ function ItemList({
   planByMarkerId?: ReadonlyMap<string, PlanMarkerContent>;
   baseUrl: string;
   token: string;
+  sessionId: string;
+  agentId: string;
 }) {
   // Conversation rows: bookkeeping markers out, marker/taskref runs collapsed
   // — raw `items` stay the source for turn ordinals/anchors (see callers).
@@ -630,6 +636,8 @@ function ItemList({
             planContent={row.item.kind === 'marker' ? planByMarkerId?.get(row.item.markerId) : undefined}
             baseUrl={baseUrl}
             token={token}
+            sessionId={sessionId}
+            agentId={agentId}
           />
         </div>
       ))}
@@ -646,6 +654,8 @@ function ItemView({
   planContent,
   baseUrl,
   token,
+  sessionId,
+  agentId,
 }: {
   item: TranscriptItem;
   /** Size of the collapsed run this row stands for (1 = a lone item). */
@@ -656,6 +666,8 @@ function ItemView({
   planContent?: PlanMarkerContent;
   baseUrl: string;
   token: string;
+  sessionId: string;
+  agentId: string;
 }) {
   switch (item.kind) {
     case 'turn':
@@ -667,6 +679,8 @@ function ItemView({
           onRollback={onRollback}
           baseUrl={baseUrl}
           token={token}
+          sessionId={sessionId}
+          agentId={agentId}
         />
       );
     case 'marker':
@@ -756,6 +770,8 @@ function TurnView({
   onRollback,
   baseUrl,
   token,
+  sessionId,
+  agentId,
 }: {
   turn: Extract<TranscriptItem, { kind: 'turn' }>;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
@@ -764,6 +780,8 @@ function TurnView({
   onRollback?: (turnId: string) => void;
   baseUrl: string;
   token: string;
+  sessionId: string;
+  agentId: string;
 }) {
   const isUser = turn.origin.kind === 'user';
   const [confirming, setConfirming] = useState(false);
@@ -829,6 +847,8 @@ function TurnView({
                       attachment={attachment}
                       baseUrl={baseUrl}
                       token={token}
+                      sessionId={sessionId}
+                      agentId={agentId}
                     />
                   ))}
                 </div>
@@ -970,26 +990,40 @@ function NoticeFrameView({ frame }: { frame: NoticeFrame }) {
 /**
  * One turn attachment: images/videos render as media thumbs, anything else as
  * a named chip. Sources: `url` (http or inline `data:`) renders directly;
- * `file` fetches the bytes through the authenticated files route once (object
- * URL revoked on unmount).
+ * `file` (upload store) and `blob` (dehydrated prompt media — the transcript
+ * model gains the variant while the shared package ships; narrow locally
+ * until then) fetch the bytes through the authenticated blob/files routes
+ * once (object URL revoked on unmount). Image thumbs enlarge in a lightbox.
  */
 function AttachmentMedia({
   attachment,
   baseUrl,
   token,
+  sessionId,
+  agentId,
 }: {
   attachment: TranscriptAttachment;
   baseUrl: string;
   token: string;
+  sessionId: string;
+  agentId: string;
 }) {
-  const directUrl = attachment.source?.kind === 'url' ? attachment.source.url : undefined;
+  const source = attachment.source as
+    | { kind: 'url'; url: string }
+    | { kind: 'file'; fileId: string }
+    | { kind: 'blob'; ref: string }
+    | undefined;
+  const directUrl = source?.kind === 'url' ? source.url : undefined;
   const [fetchedUrl, setFetchedUrl] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
-    if (attachment.source?.kind !== 'file') return;
+    if (source === undefined || source.kind === 'url') return;
     let revoked: string | undefined;
     let cancelled = false;
-    buildImagePreviewUrl({ baseUrl, token, fileId: attachment.source.fileId })
+    (source.kind === 'blob'
+      ? buildBlobPreviewUrl({ baseUrl, token, sessionId, agentId, ref: source.ref })
+      : buildImagePreviewUrl({ baseUrl, token, fileId: source.fileId })
+    )
       .then((url) => {
         if (cancelled) revokePreviewUrl(url);
         else {
@@ -1004,19 +1038,13 @@ function AttachmentMedia({
       cancelled = true;
       if (revoked !== undefined) revokePreviewUrl(revoked);
     };
-  }, [attachment.source, baseUrl, token]);
+  }, [source, baseUrl, token, sessionId, agentId]);
 
   const src = directUrl ?? fetchedUrl;
   const mediaType = attachment.mediaType;
   if (src !== null && src !== '') {
     if (mediaType.startsWith('image/')) {
-      return (
-        <img
-          src={src}
-          alt={attachment.name ?? 'image attachment'}
-          className="max-h-48 max-w-56 rounded border border-neutral-700 object-contain"
-        />
-      );
+      return <ImageThumb src={src} alt={attachment.name ?? 'image attachment'} />;
     }
     if (mediaType.startsWith('video/')) {
       return (
@@ -1036,5 +1064,46 @@ function AttachmentMedia({
     >
       📎 {attachment.name ?? mediaType}
     </span>
+  );
+}
+
+/** Click-to-enlarge image thumb — the lightbox dismisses on click or Esc. */
+function ImageThumb({ src, alt }: { src: string; alt: string }) {
+  const [enlarged, setEnlarged] = useState(false);
+  useEffect(() => {
+    if (!enlarged) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === 'Escape') setEnlarged(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [enlarged]);
+  return (
+    <>
+      <button
+        type="button"
+        className="block cursor-zoom-in"
+        title="enlarge"
+        onClick={() => {
+          setEnlarged(true);
+        }}
+      >
+        <img src={src} alt={alt} className="max-h-48 max-w-56 rounded border border-neutral-700 object-contain" />
+      </button>
+      {enlarged ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+          role="dialog"
+          aria-label={alt}
+          onClick={() => {
+            setEnlarged(false);
+          }}
+        >
+          <img src={src} alt={alt} className="max-h-[90vh] max-w-[90vw] rounded object-contain" />
+        </div>
+      ) : null}
+    </>
   );
 }

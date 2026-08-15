@@ -30,6 +30,17 @@ describe('mediaUrlPartToText', () => {
       '[video video/mp4, 1.0 KB]',
     );
   });
+
+  it('marks engine blob-store refs by mime without a size', () => {
+    expect(mediaUrlPartToText('image', 'blobref:image/png;abc123def456')).toBe(
+      '[image image/png]',
+    );
+    expect(mediaUrlPartToText('video', 'blobref:video/mp4;deadbeef')).toBe('[video video/mp4]');
+  });
+
+  it('falls back to the escaped reference for a blobref without a mime', () => {
+    expect(mediaUrlPartToText('image', 'blobref:;abc123')).toBe('<image url="blobref:;abc123">');
+  });
 });
 
 describe('summarizeDataUrl', () => {

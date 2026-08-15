@@ -180,4 +180,85 @@ describe('SessionEventHandler turn.begin — user prompts from other surfaces', 
       expect.objectContaining({ kind: 'user', content: 'remote text [image #1]' }),
     );
   });
+
+  it('marks media from turn.started.content when the event carries the turn parts (no prompt.queued)', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    // An immediately-run prompt (nothing waited in the engine FIFO) carries
+    // its full parts inline on the v2 event — text plus media.
+    handler.handleEvent(
+      {
+        ...turnStarted('look at this'),
+        content: [
+          { type: 'text', text: 'look at this' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      },
+      vi.fn(),
+    );
+    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'user', content: 'look at this [image #1]' }),
+    );
+  });
+
+  it('prefers turn.started.content over the queued record and still drains the FIFO for the next turn', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    // Both prompts waited in the engine FIFO, so both have queued records.
+    handler.handleEvent(
+      {
+        type: 'prompt.queued',
+        sessionId: 's1',
+        agentId: 'main',
+        promptId: 'p1',
+        content: [{ type: 'video_url', videoUrl: { url: 'data:video/mp4;base64,AAAA' } }],
+      } as any,
+      vi.fn(),
+    );
+    handler.handleEvent(
+      {
+        type: 'prompt.queued',
+        sessionId: 's1',
+        agentId: 'main',
+        promptId: 'p2',
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,BBBB' } }],
+      } as any,
+      vi.fn(),
+    );
+    // Turn 1 arrives with its parts inline — the marker comes from the event,
+    // not from p1's stale queued record (a video).
+    handler.handleEvent(
+      {
+        ...turnStarted('first'),
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } }],
+      },
+      vi.fn(),
+    );
+    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'user', content: 'first [image #1]' }),
+    );
+    // … and p1's record was consumed anyway, so the next turn (old engine,
+    // no inline content) reads p2's record rather than leaking p1's video.
+    handler.handleEvent(turnStarted('second'), vi.fn());
+    expect(host.appendTranscriptEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'user', content: 'second [image #1]' }),
+    );
+  });
+
+  it('still skips the bubble for an own echoed prompt whose event carries content (FIFO still drains)', () => {
+    const { host } = makeHost();
+    const handler = new SessionEventHandler(host);
+    handler.recordLocalPromptText('local paste');
+    handler.handleEvent(
+      {
+        ...turnStarted('local paste'),
+        content: [
+          { type: 'text', text: 'local paste' },
+          { type: 'image_url', imageUrl: { url: 'data:image/png;base64,AAAA' } },
+        ],
+      },
+      vi.fn(),
+    );
+    expect(host.appendTranscriptEntry).not.toHaveBeenCalled();
+  });
 });
