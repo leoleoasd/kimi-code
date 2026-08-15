@@ -13,6 +13,8 @@
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
 
+import type { SessionPlanEntry } from '#/sessions/api';
+
 const MARKER_LABELS: Record<string, string> = {
   undo: 'conversation rolled back',
   compact: 'context compacted',
@@ -55,6 +57,69 @@ export function isVisibleMarker(marker: string): boolean {
   return !HIDDEN_MARKERS.has(marker);
 }
 
+// ---------------------------------------------------------------- plan pairing
+
+/** What a `plan.revision` marker row renders when its content is known. */
+export interface PlanMarkerContent {
+  readonly plan: string;
+  readonly version?: number;
+}
+
+/** Marker's plan blob file reference: `<scope>/plan/<planId>/v<N>.md`. */
+const REVISION_BLOB_PATH = /\/plan\/([^/]+)\/v\d+\.md$/;
+/** Plan entry's live working file reference: `<sessionDir>/…/plans/<planId>.md`. */
+const WORKING_PLAN_PATH = /\/plans\/([^/]+)\.md$/;
+
+function idFromPath(path: unknown, pattern: RegExp): string | undefined {
+  return typeof path === 'string' ? pattern.exec(path)?.[1] : undefined;
+}
+
+function markerPlanId(payload: unknown): string | undefined {
+  const p = payload as { id?: unknown; path?: unknown } | undefined;
+  if (typeof p?.id === 'string') return p.id;
+  return idFromPath(p?.path, REVISION_BLOB_PATH);
+}
+
+/**
+ * Pair `plan.revision` markers with the plan entries recovered by
+ * `fetchSessionPlans`. Both sides are timeline-ordered per plan file, so the
+ * marker recording version N pairs with the plan's N-th recoverable entry;
+ * entries whose content the server could not recover (e.g. a cold "Revise"
+ * call) never appear, so an over-indexed marker degrades to that plan's
+ * LATEST known content (never a bare row — displaying some plan beats
+ * displaying none). Plan-id-less payloads/entries share one catch-all group.
+ */
+export function buildPlanByMarker(
+  items: readonly TranscriptItem[],
+  entries: readonly SessionPlanEntry[],
+): ReadonlyMap<string, PlanMarkerContent> {
+  const byMarker = new Map<string, PlanMarkerContent>();
+  if (entries.length === 0) return byMarker;
+  const entryGroups = new Map<string, SessionPlanEntry[]>();
+  for (const entry of entries) {
+    const id = idFromPath(entry.path, WORKING_PLAN_PATH) ?? '';
+    const group = entryGroups.get(id);
+    if (group === undefined) entryGroups.set(id, [entry]);
+    else group.push(entry);
+  }
+  const markerIndex = new Map<string, number>();
+  for (const item of items) {
+    if (item.kind !== 'marker' || item.marker !== 'plan.revision') continue;
+    const id = markerPlanId(item.payload) ?? '';
+    const index = markerIndex.get(id) ?? 0;
+    markerIndex.set(id, index + 1);
+    const group = entryGroups.get(id) ?? entryGroups.get('');
+    if (group === undefined || group.length === 0) continue;
+    const entry = group[Math.min(index, group.length - 1)]!;
+    const version = (item.payload as { version?: unknown } | undefined)?.version;
+    byMarker.set(item.markerId, {
+      plan: entry.plan,
+      version: typeof version === 'number' ? version : undefined,
+    });
+  }
+  return byMarker;
+}
+
 /** One rendered row: an item plus how many consecutive identical rows it stands for. */
 export interface CollapsedRow {
   readonly item: TranscriptItem;
@@ -63,6 +128,10 @@ export interface CollapsedRow {
 }
 
 function rowIdentity(item: TranscriptItem): string | undefined {
+  // plan.revision rows are content-bearing (each pairs its own plan version)
+  // — folding a run of them into one ×n row would hide every version but
+  // the first.
+  if (item.kind === 'marker' && item.marker === 'plan.revision') return undefined;
   if (item.kind === 'marker') return item.marker;
   if (item.kind === 'taskref') return 'taskref';
   return undefined;

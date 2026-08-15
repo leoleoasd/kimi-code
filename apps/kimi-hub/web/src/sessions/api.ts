@@ -184,6 +184,57 @@ export async function fetchSession(
   };
 }
 
+// ------------------------------------------------------------------ plans
+
+/**
+ * One ExitPlanMode call's plan content, projected by the server's
+ * `GET /api/v1/sessions/{sid}/transcript/plan` route — recovered from the
+ * approval interaction, the live tool-frame display, or the output text, in
+ * timeline order. The transcript's `plan.revision` MARKERS carry only blob
+ * references, so marker rows pair with these entries for the rendered plan.
+ */
+export interface SessionPlanEntry {
+  readonly toolCallId: string;
+  readonly turnId: string;
+  readonly source: 'interaction' | 'display' | 'output';
+  readonly plan: string;
+  readonly path?: string;
+}
+
+function parsePlanEntry(value: unknown): SessionPlanEntry | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const e = value as Record<string, unknown>;
+  const source = e['source'];
+  if (
+    typeof e['tool_call_id'] !== 'string' ||
+    typeof e['turn_id'] !== 'string' ||
+    (source !== 'interaction' && source !== 'display' && source !== 'output') ||
+    typeof e['plan'] !== 'string'
+  ) {
+    return undefined;
+  }
+  return {
+    toolCallId: e['tool_call_id'],
+    turnId: e['turn_id'],
+    source,
+    plan: e['plan'],
+    path: typeof e['path'] === 'string' ? e['path'] : undefined,
+  };
+}
+
+export async function fetchSessionPlans(
+  endpoint: HttpEndpoint & { sessionId: string; agentId: string },
+): Promise<readonly SessionPlanEntry[]> {
+  const data = await getJson({
+    ...endpoint,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/transcript/plan?agent_id=${encodeURIComponent(endpoint.agentId)}`,
+  });
+  const d = (data ?? {}) as Record<string, unknown>;
+  const raw = d['plans'];
+  if (!Array.isArray(raw)) throw new Error('session plans: unexpected response shape');
+  return raw.map(parsePlanEntry).filter((e): e is SessionPlanEntry => e !== undefined);
+}
+
 // ------------------------------------------------------------------ status
 
 export interface SessionStatus {
