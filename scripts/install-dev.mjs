@@ -27,9 +27,15 @@ if (triple === undefined) {
   process.exit(1);
 }
 
+// All binaries shipped by this fork — both install:local dev builds and the
+// GitHub-release builds — MUST carry channel=fork, otherwise the CLI's
+// self-updater would replace them with an upstream binary and every fork
+// feature (remote control etc.) silently vanishes.
+const buildEnv = { ...process.env, KIMI_CODE_CHANNEL: 'fork' };
+
 function run(args, cwd = repoRoot) {
   return new Promise((resolveRun, reject) => {
-    execFile(args[0], args.slice(1), { cwd, stdio: 'inherit' }, (error) => {
+    execFile(args[0], args.slice(1), { cwd, stdio: 'inherit', env: buildEnv }, (error) => {
       if (error !== null) reject(error);
       else resolveRun();
     });

@@ -37,6 +37,9 @@ jobs:
   native-bundle:
     name: Native bundle (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
+    env:
+      # Fork-built binaries are excluded from the CLI's upstream self-update channel.
+      KIMI_CODE_CHANNEL: fork
     strategy:
       fail-fast: false
       matrix:
