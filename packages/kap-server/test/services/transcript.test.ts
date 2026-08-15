@@ -182,6 +182,76 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('projects turn-opening attachments from turn.started content (immediate-run prompt), preferring it over the queued FIFO', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const opsLog: TranscriptOperation[] = [];
+    const feed = (event: DomainEvent): void => {
+      const mapped = projector.map(event);
+      opsLog.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    // An immediately-run prompt never goes through the FIFO — its parts ride
+    // `turn.started` itself.
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'user' },
+        prompt: 'what is this?',
+        content: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'image_url', imageUrl: { url: `blobref:image/png;${'b'.repeat(64)}` } },
+        ],
+      }),
+    );
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.attachmentIds).toEqual(['att-t0-1']);
+    expect(tx.getAttachments().get('att-t0-1')).toEqual({
+      attachmentId: 'att-t0-1',
+      mediaType: 'image/png',
+      source: { kind: 'blob', ref: `blobref:image/png;${'b'.repeat(64)}` },
+    });
+    const attachmentOps = opsLog.filter((op) => op.op === 'attachment.upsert');
+    expect(attachmentOps).toHaveLength(1);
+    // Entities precede the turn header referencing them (live projector order).
+    const turnUpsertIndex = opsLog.findIndex((op) => op.op === 'turn.upsert');
+    expect(turnUpsertIndex).toBeGreaterThan(-1);
+    expect(opsLog.findIndex((op) => op.op === 'attachment.upsert')).toBeLessThan(turnUpsertIndex);
+
+    // A stale queued entry is still shifted (FIFO alignment), but the event's
+    // own content wins over the shifted one.
+    feed(
+      ev({
+        type: 'prompt.queued',
+        promptId: 'p-stale',
+        content: [{ type: 'image_url', imageUrl: { url: 'data:image/gif;base64,AAAA' } }],
+        queueLength: 1,
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: 'real input',
+        content: [{ type: 'video_url', videoUrl: { url: 'https://example.com/clip.mp4' } }],
+      }),
+    );
+    const second = turnOps('t1', tx.getItems());
+    expect(second.attachmentIds).toEqual(['att-t1-1']);
+    expect(tx.getAttachments().get('att-t1-1')?.source).toEqual({
+      kind: 'url',
+      url: 'https://example.com/clip.mp4',
+    });
+
+    // The FIFO entry was consumed by the shift — a later bare user turn sees
+    // no attachments (no double-shift).
+    feed(ev({ type: 'turn.started', turnId: 2, origin: { kind: 'user' }, prompt: 'plain' }));
+    expect(turnOps('t2', tx.getItems()).attachmentIds).toBeUndefined();
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     const projector = new AgentTranscriptProjector('main', {
@@ -447,6 +517,49 @@ describe('AgentTranscriptProjector', () => {
     const tx = new AgentTranscript('main');
     tx.apply(ops);
     expect(tx.getAttachment('att_1')).toEqual(snapshot.attachments[0]);
+    expect(turnOps('t0', tx.getItems()).attachmentIds).toEqual(['att_1']);
+  });
+
+  it('snapshotToOps carries snapshot attachment and prompt entities before the timeline', () => {
+    const attachment = {
+      attachmentId: 'att_1',
+      mediaType: 'image/png',
+      source: { kind: 'blob' as const, ref: `blobref:image/png;${'c'.repeat(64)}` },
+    };
+    const prompt = {
+      promptId: 'p1',
+      status: 'completed' as const,
+      createdAt: '2026-01-01T00:00:00.000Z',
+    };
+    const snapshot: AgentTranscriptSnapshot = {
+      interactions: [],
+      attachments: [attachment],
+      todos: [],
+      prompts: [prompt],
+      items: [
+        {
+          kind: 'turn',
+          turnId: 't0',
+          ordinal: 0,
+          state: 'completed',
+          origin: { kind: 'user' },
+          prompt: 'with image',
+          attachmentIds: ['att_1'],
+          steps: [],
+        },
+      ],
+      tasks: [],
+      meta: {},
+    };
+
+    const ops = snapshotToOps(snapshot);
+    expect(ops[0]).toEqual({ op: 'attachment.upsert', attachment });
+    expect(ops[1]).toEqual({ op: 'prompt.upsert', prompt });
+
+    const tx = new AgentTranscript('main');
+    tx.apply(ops);
+    expect(tx.getAttachment('att_1')).toEqual(attachment);
+    expect(tx.getPrompt('p1')).toEqual(prompt);
     expect(turnOps('t0', tx.getItems()).attachmentIds).toEqual(['att_1']);
   });
 
@@ -2520,11 +2633,26 @@ describe('bindSessionTranscript', () => {
       const store = service.forSessionLive('s1');
       agents
         .get('main')!
-        .bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'live hi' }));
+        .bus.emit(
+          ev({
+            type: 'turn.started',
+            turnId: 0,
+            origin: { kind: 'user' },
+            prompt: 'live hi',
+            promptAttachments: [{ kind: 'image', fileId: 'f_live' }],
+          }),
+        );
       await service.whenReady('s1');
       expect(store?.getAgent('main')?.getTurn('t0')).toMatchObject({
         state: 'running',
         prompt: 'live hi',
+        // The overlay must re-assert the projector-given ids (a bare
+        // `turn.upsert` would whole-replace and erase them).
+        attachmentIds: ['t0.att1'],
+      });
+      expect(store?.getAgent('main')?.getAttachment('t0.att1')).toMatchObject({
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'f_live' },
       });
       service.dropSession('s1');
     } finally {

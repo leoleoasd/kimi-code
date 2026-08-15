@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 
 import {
   IAgentLifecycleService,
+  IBlobStore,
   ISessionIndex,
   ISessionMetadata,
   IAgentLoopService,
@@ -71,6 +72,16 @@ export interface TranscriptOpsCatchup {
   /** false when the journal no longer reaches back to sinceSeq — the caller must do a full refresh. */
   readonly complete: boolean;
 }
+
+/**
+ * Outcome of {@link TranscriptService.readAgentBlob}: `ok` carries the raw
+ * payload bytes; `session_not_found` lets the route answer the 40401 family
+ * while a known-session-missing-hash stays the 40407 family.
+ */
+export type AgentBlobResult =
+  | { readonly status: 'ok'; readonly bytes: Uint8Array }
+  | { readonly status: 'not_found' }
+  | { readonly status: 'session_not_found' };
 
 export class TranscriptService {
   private readonly live = new Map<string, LiveEntry>();
@@ -510,6 +521,29 @@ export class TranscriptService {
     return foldWireRecordFacts(records, base);
   }
 
+  /**
+   * Read one dehydrated `blobref:` payload out of the agent-scoped blob store
+   * (`<agentScope>/blobs/<sha256>` — see `IAgentBlobService`). Works for cold
+   * sessions too: the session resolves through `ISessionIndex` (never the
+   * live-map) and the bytes come straight from the App-scope `IBlobStore`,
+   * not from any live store's memory.
+   */
+  async readAgentBlob(
+    sessionId: string,
+    agentId: string,
+    sha256: string,
+  ): Promise<AgentBlobResult> {
+    // Hostile ids must never reach the storage scope/key path arithmetic.
+    if (!isPlainAgentId(agentId) || !SHA256_HEX_PATTERN.test(sha256)) {
+      return { status: 'not_found' };
+    }
+    const summary = await this.deps.core.accessor.get(ISessionIndex).get(sessionId);
+    if (summary === undefined) return { status: 'session_not_found' };
+    const scope = `${SESSIONS_ROOT}/${summary.workspaceId}/${sessionId}/${AGENTS_DIR}/${agentId}/blobs`;
+    const bytes = await this.deps.core.accessor.get(IBlobStore).get(scope, sha256);
+    return bytes === undefined ? { status: 'not_found' } : { status: 'ok', bytes };
+  }
+
   /** Dispose the live store + binding for a session (session closed / server shutdown). */
   dropSession(sessionId: string): void {
     this.opsListeners.delete(sessionId);
@@ -527,11 +561,15 @@ export class TranscriptService {
 }
 
 /**
- * Flatten a snapshot into idempotent upsert ops (turn/step/frame upserts,
- * standalone items, tasks, meta). Deliberately never a `reset`: upserts merge
- * by id and keep ordinal order, so the backfill cannot clobber live ops that
- * landed while the records were being read. Global attachment entities flatten
- * too — without them a backfilled turn's `attachmentIds` would dangle.
+ * Flatten a snapshot into idempotent upsert ops (attachment + turn/step/frame
+ * upserts, standalone items, tasks, prompts, meta). Deliberately never a
+ * `reset`: upserts merge by id and keep ordinal order, so the backfill cannot
+ * clobber live ops that landed while the records were being read.
+ *
+ * Attachment and prompt entities land FIRST: they are global (id-keyed), and
+ * the emit order mirrors the live projector's (`attachment.upsert` before the
+ * `turn.upsert` referencing its ids) — without them a backfilled turn's
+ * `attachmentIds` would dangle.
  *
  * Standalone items (markers / taskrefs) carry a `beforeTurn` placement anchor:
  * the reducer's standalone path is append-only, so without an anchor a
@@ -549,6 +587,12 @@ export function snapshotToOps(
   turnOps: (turn: TranscriptTurn) => TranscriptOperation[] = snapshotTurnOps,
 ): TranscriptOperation[] {
   const ops: TranscriptOperation[] = [];
+  for (const attachment of snapshot.attachments) {
+    ops.push({ op: 'attachment.upsert', attachment });
+  }
+  for (const prompt of snapshot.prompts) {
+    ops.push({ op: 'prompt.upsert', prompt });
+  }
   const pending: (TranscriptMarker | TranscriptTaskRef)[] = [];
   let lastTurnOrdinal: number | undefined;
   const flushPending = (beforeTurn?: number): void => {
@@ -571,9 +615,6 @@ export function snapshotToOps(
     }
   }
   flushPending(lastTurnOrdinal === undefined ? undefined : lastTurnOrdinal + 1);
-  for (const attachment of snapshot.attachments) {
-    ops.push({ op: 'attachment.upsert', attachment });
-  }
   for (const task of snapshot.tasks) {
     ops.push({ op: 'task.upsert', task });
   }
@@ -597,6 +638,8 @@ export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
 }
 
 const TURN_HEAL_DEBOUNCE_MS = 250;
+/** Blob-address form persisted by `IAgentBlobService`: a lowercase sha256 hex digest. */
+const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'completed',
   'failed',

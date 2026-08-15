@@ -10,6 +10,13 @@ export type HistoryMediaSource =
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
   | { readonly kind: 'file'; readonly file_id: string };
 
+/**
+ * Both persisted media vocabularies: the legacy v1 wire shapes
+ * (`image`/`video`/`audio` + `source`, `file` + `file_id`) and the v2 core
+ * `ContentPart` shapes (`image_url` / `video_url` with camelCase inner keys,
+ * the url being `data:…`, `https://…`, `kimi-file://<id>[?path=…]` (videos),
+ * or `blobref:<mime>;<sha256>` for persistence-dehydrated payloads).
+ */
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'think'; readonly think: string }
@@ -21,6 +28,8 @@ export type HistoryContentPart =
       readonly media_type: string;
       readonly size: number;
     }
+  | { readonly type: 'image_url'; readonly imageUrl: { readonly url: string } }
+  | { readonly type: 'video_url'; readonly videoUrl: { readonly url: string } }
   | { readonly type: string };
 
 export interface HistoryToolCall {
@@ -83,6 +92,26 @@ export function groupMessagesIntoSnapshot(
       if (part.type === 'text' && 'text' in part && typeof part.text === 'string') {
         texts.push(part.text);
         continue;
+      }
+      if (part.type === 'image_url' || part.type === 'video_url') {
+        if (!('imageUrl' in part || 'videoUrl' in part)) continue;
+        const container =
+          part.type === 'image_url'
+            ? (part.imageUrl as { url: unknown } | undefined)
+            : (part.videoUrl as { url: unknown } | undefined);
+        const url = container?.url;
+        if (typeof url !== 'string' || url.length === 0) continue;
+        const family = part.type === 'image_url' ? ('image' as const) : ('video' as const);
+        const classified = classifyMediaUrl(url, family);
+        if (classified !== undefined) {
+          const entity: TranscriptAttachment = {
+            attachmentId: `att_${attachments.length + 1}`,
+            ...classified,
+          };
+          attachments.push(entity);
+          ids.push(entity.attachmentId);
+          continue;
+        }
       }
       if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
         if (!('source' in part) || part.source === undefined) continue;
@@ -289,6 +318,23 @@ export function groupMessagesIntoSnapshot(
   }
 
   return { items, tasks: [], interactions: [], attachments, todos: [], prompts: [], meta: {} };
+}
+
+function classifyMediaUrl(
+  url: string,
+  family: 'image' | 'video',
+): { mediaType: string; source?: TranscriptAttachment['source'] } | undefined {
+  const fallback = `${family}/*`;
+  const blobMime = /^blobref:([^;]+);[0-9a-f]{64}$/.exec(url)?.[1];
+  if (blobMime !== undefined) return { mediaType: blobMime, source: { kind: 'blob', ref: url } };
+  if (url.startsWith('data:')) {
+    const mime = /^data:([^;,]+)/.exec(url)?.[1];
+    return { mediaType: mime ?? fallback, source: { kind: 'url', url } };
+  }
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return { mediaType: fallback, source: { kind: 'url', url } };
+  }
+  return undefined;
 }
 
 function opensOwnTurn(message: HistoryMessage): boolean {

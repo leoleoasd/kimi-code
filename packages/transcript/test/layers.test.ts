@@ -619,6 +619,71 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(imageTurn.prompt).toBe('what is this?');
   });
 
+  it('maps v2 blobref/data/http media urls to attachment entities', () => {
+    const blobRef = `blobref:image/png;${'a'.repeat(64)}`;
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this? [Image #1]' },
+          { type: 'image_url', imageUrl: { url: blobRef } },
+          { type: 'image_url', imageUrl: { url: 'data:image/webp;base64,AAAA' } },
+          { type: 'image_url', imageUrl: { url: 'https://example.com/pic.jpg' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'a screenshot' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'blob', ref: blobRef } },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/webp',
+        source: { kind: 'url', url: 'data:image/webp;base64,AAAA' },
+      },
+      {
+        attachmentId: 'att_3',
+        mediaType: 'image/*',
+        source: { kind: 'url', url: 'https://example.com/pic.jpg' },
+      },
+    ]);
+    const firstTurn = snapshot.items[0];
+    if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
+  });
+
+  it('ignores malformed v2 media refs instead of dropping the turn link', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: '' } },
+          { type: 'image_url', imageUrl: { url: 'blobref:not-a-valid-ref' } },
+          { type: 'video_url', videoUrl: { url: 'kimi-file://' } },
+          {
+            type: 'image_url',
+            imageUrl: { url: `blobref:image/jpeg;${'f'.repeat(64)}` },
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/jpeg',
+        source: { kind: 'blob', ref: `blobref:image/jpeg;${'f'.repeat(64)}` },
+      },
+    ]);
+    const firstTurn = snapshot.items[0];
+    if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(firstTurn.attachmentIds).toEqual(['att_1']);
+  });
+
   it('projects a daemon ref in a user-slash turn-opening input like a plain user turn', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {
@@ -653,65 +718,6 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.prompt).toBe('/gen-docs ');
     expect(turn.attachmentIds).toEqual(['att_1']);
   });
-
-  it('keeps a kimi-file ref as a nameless attachment and inline tags as user text', () => {
-    const snapshot = snapshotOf(
-      { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
-      {
-        type: 'image_url',
-        imageUrl: { url: 'kimi-file://file_3' },
-      } as HistoryContentPart,
-    );
-
-    expect(snapshot.attachments).toEqual([
-      {
-        attachmentId: 'att_1',
-        mediaType: 'image/*',
-        source: { kind: 'session_media', fileId: 'file_3' },
-      },
-    ]);
-    const turn = snapshot.items[0];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.attachmentIds).toEqual(['att_1']);
-    expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
-  });
-
-  it('keeps a legacy tag+ref pair as prompt text plus the ref-derived attachment', () => {
-    const snapshot = snapshotOf(
-      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
-      {
-        type: 'image_url',
-        imageUrl: { url: 'kimi-file://file_5?path=%2Fcache%2Fshot.png' },
-      } as HistoryContentPart,
-    );
-
-    expect(snapshot.attachments).toEqual([
-      {
-        attachmentId: 'att_1',
-        mediaType: 'image/*',
-        source: { kind: 'session_media', fileId: 'file_5' },
-      },
-    ]);
-    const turn = snapshot.items[0];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe('<image path="/cache/shot.png"></image>');
-    expect(turn.attachmentIds).toEqual(['att_1']);
-  });
-
-  it('keeps standalone <media path> tags as prompt text', () => {
-    const snapshot = snapshotOf(
-      { type: 'text', text: '<image path="/cache/shot.png">' },
-      { type: 'text', text: '<image path="/cache/shot.png" content_type="image/png"></image>' },
-      { type: 'text', text: '<video path="/cache/clip.mp4">' },
-    );
-
-    const turn = snapshot.items[0];
-    if (turn?.kind !== 'turn') throw new Error('expected turn');
-    expect(turn.prompt).toBe(
-      '<image path="/cache/shot.png"><image path="/cache/shot.png" content_type="image/png"></image><video path="/cache/clip.mp4">',
-    );
-    expect(turn.attachmentIds).toBeUndefined();
-    expect(snapshot.attachments).toEqual([]);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

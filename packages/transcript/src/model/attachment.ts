@@ -3,13 +3,18 @@ import type { AttachmentId } from './ids';
 /**
  * Where the frontend fetches the bytes. `file` addresses the process-global
  * upload store; `session_media` addresses canonical media owned by the
- * transcript's session. Inline base64 data is deliberately dropped rather
- * than shipped over the transcript API.
+ * transcript's session; `blob` is a dehydrated `blobref:<mime>;<sha256>`
+ * string (large inline media offloaded to the agent-scoped blob store at
+ * persistence; bytes stream from
+ * `GET /api/v1/sessions/{sid}/agents/{aid}/blobs/{sha256}`, the hash being
+ * the ref's trailing segment). Inline base64 data is deliberately dropped
+ * rather than shipped over the transcript API.
  */
 export type AttachmentSource =
   | { readonly kind: 'url'; readonly url: string }
   | { readonly kind: 'file'; readonly fileId: string }
-  | { readonly kind: 'session_media'; readonly fileId: string };
+  | { readonly kind: 'session_media'; readonly fileId: string }
+  | { readonly kind: 'blob'; readonly ref: string };
 
 export interface TranscriptAttachment {
   readonly attachmentId: AttachmentId;
