@@ -1,5 +1,7 @@
 /* oxlint-disable typescript-eslint/no-unsafe-declaration-merging, eslint-plugin-import/namespace -- Event2 class+payload-interface declaration merging is the sanctioned event-declaration idiom. */
+import type { KimiErrorPayload } from '#/_base/errors/serialize';
 import type { PromptOrigin } from '#/agent/contextMemory/types';
+import { daemonFileRefFromPart } from '#/agent/media/mediaRef';
 import { Event2 } from '#/app/event/event2';
 import type { FinishReason } from '#/kosong/contract/provider';
 import type { ContentPart, TextPart } from '#/kosong/contract/message';
@@ -19,6 +21,10 @@ export interface TurnStartedPayload {
   readonly turnId: number;
   readonly origin: PromptOrigin;
   readonly prompt?: string;
+  readonly promptAttachments?: readonly {
+    readonly kind: 'image' | 'video' | 'audio';
+    readonly fileId: string;
+  }[];
 }
 
 export class TurnStarted extends Event2<TurnStartedPayload> {
@@ -38,6 +44,16 @@ export function turnPromptText(
     .map((part) => part.text)
     .join('');
   return text.length > 0 ? text : undefined;
+}
+
+export function turnPromptAttachments(
+  input: readonly ContentPart[],
+): readonly { readonly kind: 'image' | 'video'; readonly fileId: string }[] | undefined {
+  const attachments = input.flatMap((part) => {
+    const file = daemonFileRefFromPart(part);
+    return file === undefined ? [] : [{ kind: file.kind, fileId: file.ref.fileId }];
+  });
+  return attachments.length > 0 ? attachments : undefined;
 }
 
 export function isDisplayablePromptOrigin(origin: PromptOrigin): boolean {

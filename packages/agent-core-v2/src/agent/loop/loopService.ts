@@ -59,6 +59,7 @@ import {
   isDisplayablePromptOrigin,
   ThinkingDelta,
   ToolCallDelta,
+  turnPromptAttachments,
   turnPromptText,
   TurnStarted,
   TurnStepCompleted,
@@ -449,11 +450,13 @@ export class AgentLoopService extends Disposable implements IAgentLoopService {
     void this.dispatcher.dispatch(new TurnPrompt({ input: job.seed.input, origin }));
     job.turn.state = 'running';
     this.activeTurnJob = job;
+    const displayable = isDisplayablePromptOrigin(origin);
     void this.dispatcher.dispatch(
       new TurnStarted({
         turnId: job.turn.id,
         origin,
-        prompt: isDisplayablePromptOrigin(origin) ? turnPromptText(job.seed.input, origin) : undefined,
+        prompt: displayable ? turnPromptText(job.seed.input, origin) : undefined,
+        promptAttachments: displayable ? turnPromptAttachments(job.seed.input) : undefined,
       }),
     );
     void this.runTurn(job.turn, job.ready).then(job.result.resolve, job.result.reject);
