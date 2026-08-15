@@ -61,6 +61,19 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { collapseMarkerRuns, compactionInProgress, markerLabel } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
+/** Keyboard keys able to scroll a container — the user-intent scroll set. */
+const SCROLL_KEYS = new Set([
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End',
+  ' ',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+]);
+
 export function ChatView({
   baseUrl,
   token,
@@ -227,6 +240,13 @@ export function ChatView({
     const mark = () => {
       userScrollAtRef.current = Date.now();
     };
+    // Keyboard scrolling: only keys that can actually scroll a container, and
+    // on window — with focus on <body> the container still scrolls but the
+    // keydown never bubbles through it. The composer never emits these
+    // (PgUp/space/arrows stay inside the textarea), so typing can't unpin.
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) mark();
+    };
     const onPointerDown = (event: globalThis.PointerEvent) => {
       if (event.isPrimary && event.button === 0) pointerScrollRef.current = true;
     };
@@ -235,14 +255,14 @@ export function ChatView({
     };
     el.addEventListener('wheel', mark, { passive: true });
     el.addEventListener('touchmove', mark, { passive: true });
-    el.addEventListener('keydown', mark);
+    window.addEventListener('keydown', onKeyDown);
     el.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerUp);
     return () => {
       el.removeEventListener('wheel', mark);
       el.removeEventListener('touchmove', mark);
-      el.removeEventListener('keydown', mark);
+      window.removeEventListener('keydown', onKeyDown);
       el.removeEventListener('pointerdown', onPointerDown);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerUp);
