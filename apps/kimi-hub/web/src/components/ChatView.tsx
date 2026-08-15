@@ -85,6 +85,8 @@ export function ChatView({
   /** Completion text of the last composer slash command (the chat area's notice line). */
   const [commandNotice, setCommandNotice] = useState<string | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  /** Single content wrapper inside the scroll box — observed for growth. */
+  const contentRef = useRef<HTMLDivElement>(null);
   /** Whether the viewport was pinned to the bottom before the last update. */
   const stickBottomRef = useRef(true);
   /** Content grew while the user was scrolled up — shows the "↓ latest" pill. */
@@ -176,6 +178,21 @@ export function ChatView({
       setShowJump(true);
     }
   }, [items]);
+
+  // The [items] effect only notices transcript ops; content can also grow
+  // without one — late attachment/image loads, markdown reflow, details
+  // toggles. A pinned viewport stays glued to the actual bottom through all
+  // of those.
+  useEffect(() => {
+    const scroll = scrollRef.current;
+    const content = contentRef.current;
+    if (scroll === null || content === null) return;
+    const observer = new ResizeObserver(() => {
+      if (stickBottomRef.current) scroll.scrollTop = scroll.scrollHeight;
+    });
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -371,43 +388,45 @@ export function ChatView({
           ref={scrollRef}
           onScroll={onScroll}
         >
-          {loadError !== null ? (
-            <div className="mb-2">
-              <ErrorLine error={loadError} />
-            </div>
-          ) : null}
-          {viewError !== null ? (
-            <div className="mb-2">
-              <ErrorLine error={viewError} />
-            </div>
-          ) : null}
-          {state.hasMoreOlder ? (
-            <div className="mb-3 flex justify-center">
-              <ActionButton onClick={() => void loadOlder()}>Load earlier turns</ActionButton>
-            </div>
-          ) : null}
-          {items.length === 0 ? (
-            <div className="mt-8 text-center text-[12px] text-neutral-600 italic">
-              {loaded || loadError !== null
-                ? 'Empty session — send a prompt below.'
-                : 'Loading transcript…'}
-            </div>
-          ) : (
-            <ItemList
-              items={items}
-              attachments={state.attachments}
-              rollbackCounts={transcriptAgentId === 'main' ? rollbackCounts : undefined}
-              onRollback={(turnId) => void rollbackTurn(turnId).catch(setViewError)}
-              baseUrl={baseUrl}
-              token={token}
-            />
-          )}
-          {/* Slash-command completion line — the neutral NoticeFrame grammar. */}
-          {commandNotice !== null ? (
-            <div className="mb-2 max-w-full rounded bg-neutral-900/60 px-3 py-1.5 text-[11px] break-words text-neutral-400 sm:max-w-[92%]">
-              {commandNotice}
-            </div>
-          ) : null}
+          <div ref={contentRef}>
+            {loadError !== null ? (
+              <div className="mb-2">
+                <ErrorLine error={loadError} />
+              </div>
+            ) : null}
+            {viewError !== null ? (
+              <div className="mb-2">
+                <ErrorLine error={viewError} />
+              </div>
+            ) : null}
+            {state.hasMoreOlder ? (
+              <div className="mb-3 flex justify-center">
+                <ActionButton onClick={() => void loadOlder()}>Load earlier turns</ActionButton>
+              </div>
+            ) : null}
+            {items.length === 0 ? (
+              <div className="mt-8 text-center text-[12px] text-neutral-600 italic">
+                {loaded || loadError !== null
+                  ? 'Empty session — send a prompt below.'
+                  : 'Loading transcript…'}
+              </div>
+            ) : (
+              <ItemList
+                items={items}
+                attachments={state.attachments}
+                rollbackCounts={transcriptAgentId === 'main' ? rollbackCounts : undefined}
+                onRollback={(turnId) => void rollbackTurn(turnId).catch(setViewError)}
+                baseUrl={baseUrl}
+                token={token}
+              />
+            )}
+            {/* Slash-command completion line — the neutral NoticeFrame grammar. */}
+            {commandNotice !== null ? (
+              <div className="mb-2 max-w-full rounded bg-neutral-900/60 px-3 py-1.5 text-[11px] break-words text-neutral-400 sm:max-w-[92%]">
+                {commandNotice}
+              </div>
+            ) : null}
+          </div>
         </div>
         {showJump ? (
           <button
