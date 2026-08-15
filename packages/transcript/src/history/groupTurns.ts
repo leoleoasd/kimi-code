@@ -11,7 +11,11 @@
  *    context messages do not carry them (turn end facts DO persist as
  *    `turn.ended` records and are folded in by `foldWireRecordFacts`);
  *  - media content parts become attachment entities (metadata only — base64
- *    bytes are dropped, never shipped); mid-turn media is not anchored;
+ *    bytes are dropped, never shipped), from both persisted vocabularies: the
+ *    legacy v1 `image`/`video` + source shapes and the v2 core
+ *    `image_url`/`video_url` parts (`blobref:` payloads map to a `blob` source,
+ *    `kimi-file://` to a `file` source, `data:`/`http(s)` to a `url` source);
+ *    mid-turn media is not anchored;
  *  - streamed-vs-persisted duplication is assumed already resolved upstream;
  *  - only the turn tree is built here: tasks / interactions / todos / meta
  *    (goal, plan, swarm) are NOT context messages — the companion fold
@@ -39,6 +43,13 @@ export type HistoryMediaSource =
   | { readonly kind: 'base64'; readonly media_type: string; readonly data: string }
   | { readonly kind: 'file'; readonly file_id: string };
 
+/**
+ * Both persisted media vocabularies: the legacy v1 wire shapes
+ * (`image`/`video`/`audio` + `source`, `file` + `file_id`) and the v2 core
+ * `ContentPart` shapes (`image_url` / `video_url` with camelCase inner keys,
+ * the url being `data:…`, `https://…`, `kimi-file://<id>[?path=…]` (videos),
+ * or `blobref:<mime>;<sha256>` for persistence-dehydrated payloads).
+ */
 export type HistoryContentPart =
   | { readonly type: 'text'; readonly text: string }
   | { readonly type: 'think'; readonly think: string }
@@ -50,6 +61,8 @@ export type HistoryContentPart =
       readonly media_type: string;
       readonly size: number;
     }
+  | { readonly type: 'image_url'; readonly imageUrl: { readonly url: string } }
+  | { readonly type: 'video_url'; readonly videoUrl: { readonly url: string } }
   | { readonly type: string };
 
 export interface HistoryToolCall {
@@ -119,7 +132,28 @@ export function groupMessagesIntoSnapshot(
   const collectAttachments = (message: HistoryMessage): string[] | undefined => {
     const ids: string[] = [];
     for (const part of message.content ?? []) {
-      if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
+      if (part.type === 'image_url' || part.type === 'video_url') {
+        // v2 core `ContentPart` vocabulary (camelCase inner keys).
+        if (!('imageUrl' in part || 'videoUrl' in part)) continue;
+        const container =
+          part.type === 'image_url'
+            ? (part.imageUrl as { url: unknown } | undefined)
+            : (part.videoUrl as { url: unknown } | undefined);
+        const url = container?.url;
+        if (typeof url !== 'string' || url.length === 0) continue;
+        const family = part.type === 'image_url' ? ('image' as const) : ('video' as const);
+        const classified = classifyMediaUrl(url, family);
+        // Unclassifiable refs (e.g. a malformed blobref) are dropped, mirroring
+        // the live projector — a phantom entity with no fetch source is worse
+        // than none.
+        if (classified === undefined) continue;
+        const entity: TranscriptAttachment = {
+          attachmentId: `att_${attachments.length + 1}`,
+          ...classified,
+        };
+        attachments.push(entity);
+        ids.push(entity.attachmentId);
+      } else if (part.type === 'image' || part.type === 'video' || part.type === 'audio') {
         if (!('source' in part) || part.source === undefined) continue;
         const source = part.source as HistoryMediaSource;
         const entity: TranscriptAttachment = {
@@ -309,6 +343,42 @@ export function groupMessagesIntoSnapshot(
 }
 
 // ---------------------------------------------------------------- helpers
+
+/**
+ * v2 media url → `<family>/*` mediaType + fetch source; `undefined` when the
+ * url matches NO known scheme (the part is dropped, like the live projector):
+ *   - `blobref:<mime>;<sha256>` → `{kind:'blob', ref}` bearing the full ref
+ *     (bytes were dehydrated into the agent-scoped blob store at persistence);
+ *   - `kimi-file://<id>[?path=…]` → `{kind:'file', fileId}`. Parses the scheme
+ *     with plain string ops (engine's `parseKimiFileUrl` semantics) — this
+ *     package stays import-pure, so no engine helper can be reused;
+ *   - `data:<mime>;…` / `http(s)://…` → `{kind:'url', url}`, mime from the
+ *     `data:` header when present.
+ */
+function classifyMediaUrl(
+  url: string,
+  family: 'image' | 'video',
+): { mediaType: string; source?: TranscriptAttachment['source'] } | undefined {
+  const fallback = `${family}/*`;
+  const blobMime = /^blobref:([^;]+);[0-9a-f]{64}$/.exec(url)?.[1];
+  if (blobMime !== undefined) return { mediaType: blobMime, source: { kind: 'blob', ref: url } };
+  if (url.startsWith(KIMI_FILE_SCHEME)) {
+    const rest = url.slice(KIMI_FILE_SCHEME.length);
+    const fileId = rest.split(KIMI_FILE_PATH_QUERY, 1)[0] ?? '';
+    if (fileId.length > 0) return { mediaType: fallback, source: { kind: 'file', fileId } };
+  }
+  if (url.startsWith('data:')) {
+    const mime = /^data:([^;,]+)/.exec(url)?.[1];
+    return { mediaType: mime ?? fallback, source: { kind: 'url', url } };
+  }
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return { mediaType: fallback, source: { kind: 'url', url } };
+  }
+  return undefined;
+}
+
+const KIMI_FILE_SCHEME = 'kimi-file://';
+const KIMI_FILE_PATH_QUERY = '?path=';
 
 /** Whether a hidden-origin user message opened its own engine turn. */
 function opensOwnTurn(message: HistoryMessage): boolean {

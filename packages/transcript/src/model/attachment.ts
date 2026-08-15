@@ -16,11 +16,18 @@ import type { AttachmentId } from './ids';
 /**
  * Where the frontend fetches the bytes. Mirrors the engine's media source
  * kinds minus `base64` — inline data is deliberately dropped rather than
- * shipped over the transcript API.
+ * shipped over the transcript API:
+ *   - `url`  — a fetchable reference (`data:` / `http(s):`);
+ *   - `file` — a daemon-file id (bytes stream from `/api/v1/files/{id}`);
+ *   - `blob` — a dehydrated `blobref:<mime>;<sha256>` string (large inline
+ *     media offloaded to the agent-scoped blob store at persistence; bytes
+ *     stream from `GET /api/v1/sessions/{sid}/agents/{aid}/blobs/{sha256}`,
+ *     the hash being the ref's trailing segment).
  */
 export type AttachmentSource =
   | { readonly kind: 'url'; readonly url: string }
-  | { readonly kind: 'file'; readonly fileId: string };
+  | { readonly kind: 'file'; readonly fileId: string }
+  | { readonly kind: 'blob'; readonly ref: string };
 
 export interface TranscriptAttachment {
   readonly attachmentId: AttachmentId;

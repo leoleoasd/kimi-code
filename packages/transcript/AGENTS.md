@@ -4,7 +4,7 @@ The isomorphic transcript rendering data layer — agent-granular L1 store, idem
 
 ## Cold rebuild
 
-The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`).
+The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`). Media on a turn-opening user message folds into attachment entities from BOTH persisted vocabularies — the legacy v1 `image`/`video` + `source` shapes and the v2 core `image_url`/`video_url` parts (camelCase inner keys): `kimi-file://` → `file` source, `data:`/`http(s)` → `url`, `blobref:<mime>;<sha256>` → the `blob` source (`ref` = the full blobref string; bytes live in the agent-scoped blob store, served by kap-server's blob route). All url classification is pure string ops — the package never imports the engine.
 
 ## Plan content
 

@@ -535,6 +535,74 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
+  it('maps v2 image_url/video_url parts to attachment entities, classifying blobref/kimi-file/data/http urls', () => {
+    // Persisted v2 context messages carry the CORE content vocabulary
+    // (camelCase inner keys); base64-shaped bodies above the agent threshold
+    // survive as `blobref:<mime>;<sha256>` after the agent blob offload.
+    const blobRef = `blobref:image/png;${'a'.repeat(64)}`;
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this? [Image #1]' },
+          { type: 'image_url', imageUrl: { url: blobRef } },
+          { type: 'image_url', imageUrl: { url: 'data:image/webp;base64,AAAA' } },
+          { type: 'image_url', imageUrl: { url: 'https://example.com/pic.jpg' } },
+          { type: 'video_url', videoUrl: { url: 'kimi-file://file_abc?path=%2Ftmp%2Fclip.mp4' } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'a screenshot' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      { attachmentId: 'att_1', mediaType: 'image/png', source: { kind: 'blob', ref: blobRef } },
+      {
+        attachmentId: 'att_2',
+        mediaType: 'image/webp',
+        source: { kind: 'url', url: 'data:image/webp;base64,AAAA' },
+      },
+      {
+        attachmentId: 'att_3',
+        mediaType: 'image/*',
+        source: { kind: 'url', url: 'https://example.com/pic.jpg' },
+      },
+      {
+        attachmentId: 'att_4',
+        mediaType: 'video/*',
+        source: { kind: 'file', fileId: 'file_abc' },
+      },
+    ]);
+    const firstTurn = snapshot.items[0];
+    if (firstTurn?.kind !== 'turn') throw new Error('expected turn');
+    expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3', 'att_4']);
+  });
+
+  it('ignores malformed v2 media refs instead of dropping the turn link', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          { type: 'image_url', imageUrl: { url: '' } },
+          { type: 'image_url', imageUrl: { url: 'blobref:not-a-valid-ref' } },
+          { type: 'video_url', videoUrl: { url: 'kimi-file://' } },
+          { type: 'image_url', imageUrl: { url: `blobref:image/jpeg;${'f'.repeat(64)}` } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/jpeg',
+        source: { kind: 'blob', ref: `blobref:image/jpeg;${'f'.repeat(64)}` },
+      },
+    ]);
+  });
+
   it('keeps cold tool calls running until a result is persisted', () => {
     const pending = groupMessagesIntoSnapshot([
       { role: 'user', content: [{ type: 'text', text: 'run it' }], toolCalls: [], origin: { kind: 'user' } },

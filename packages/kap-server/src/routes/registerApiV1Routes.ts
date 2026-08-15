@@ -21,6 +21,7 @@ import { type SessionEventBroadcaster } from '../transport/ws/v1/sessionEventBro
 import type { TranscriptService } from '../services/transcript/transcriptService';
 import { registerApprovalsRoutes } from './approvals';
 import { registerAuthRoute } from './auth';
+import { registerBlobRoutes } from './blobs';
 import { registerConfigRoutes } from './config';
 import { registerConnectionsRoutes } from './connections';
 import { registerFilesRoutes } from './files';
@@ -185,6 +186,9 @@ export async function registerApiV1Routes(
       });
       registerTranscriptRoutes(apiV1 as unknown as Parameters<typeof registerTranscriptRoutes>[0], {
         core,
+        transcriptService: opts.transcriptService,
+      });
+      registerBlobRoutes(apiV1 as unknown as Parameters<typeof registerBlobRoutes>[0], {
         transcriptService: opts.transcriptService,
       });
       if (opts.enableShutdown !== false) {

@@ -201,7 +201,8 @@ export class AgentTranscriptProjector {
    * pushes, the next `turn.started` whose origin is `user` shifts (the engine
    * dequeues in order per agent), `prompt.aborted` / `prompt.steered` purge.
    * Drives the turn-opening attachment projection (images/videos pasted into
-   * the composer).
+   * the composer) — the fallback content source when `turn.started` carries
+   * no `content` of its own (queued prompt consumed by a user turn).
    */
   private readonly queuedPromptContents: { promptId: string; content: readonly ContentPart[] }[] = [];
   /** turnId → step usages reported so far; folded into the turn header at `turn.ended`. */
@@ -319,16 +320,21 @@ export class AgentTranscriptProjector {
     turnId: number;
     origin: unknown;
     prompt?: string;
+    content?: readonly ContentPart[];
   }): TranscriptOperation[] {
     const n = event.turnId;
     const turnId = `t${n}`;
     const origin = mapTurnOrigin(event.origin);
     // Media parts pasted into the turn-opening user message become attachment
     // entities + the header's `attachmentIds` (the web bubble renders them
-    // after the text). Ordering is the only correlation key: the engine
-    // dequeues prompts FIFO into user turns.
+    // after the text). The FIFO shift ALWAYS happens (keeps the turn ↔ prompt
+    // correlation aligned — the engine dequeues FIFO into user turns), but the
+    // content itself prefers the event: `turn.started` carries the full input
+    // parts for displayable origins with non-text parts, which is the only
+    // source for an immediately-run prompt (its `prompt.queued` never fires).
     const queued = origin.kind === 'user' ? this.queuedPromptContents.shift() : undefined;
-    const attachments = queued === undefined ? [] : mediaAttachments(queued.content, n);
+    const content = event.content ?? queued?.content;
+    const attachments = content === undefined ? [] : mediaAttachments(content, n);
     this.currentTurn = {
       kind: 'turn',
       turnId,
@@ -1289,9 +1295,11 @@ export class AgentTranscriptProjector {
   // ---------------------------------------------------------------- prompts
 
   /**
-   * `prompt.queued` — the ONLY event carrying the queued prompt's content
-   * parts; capture for the turn-start attachment correlation (see the field
-   * doc). No prompt-queue entity here — `prompt.submitted` owns those.
+   * `prompt.queued` — the ONLY event carrying the QUEUED prompt's content
+   * parts; capture for the turn-start attachment correlation fallback (see
+   * the field doc — an immediately-run prompt's parts arrive on
+   * `turn.started` itself, which takes precedence). No prompt-queue entity
+   * here — `prompt.submitted` owns those.
    */
   private onPromptQueued(event: PromptQueuedEvent): TranscriptOperation[] {
     this.queuedPromptContents.push({ promptId: event.promptId, content: event.content });
@@ -1492,6 +1500,10 @@ const VIDEO_MIME_BY_EXT: Readonly<Record<string, string>> = {
  * Source mapping:
  *   - `kimi-file://<id>[?path=…]` → `{kind:'file', fileId}` — bytes stream
  *     from `/api/v1/files/{id}` at render time;
+ *   - `blobref:<mime>;<sha256>` → `{kind:'blob', ref}` (the full ref), mime
+ *     from the ref's prefix — bytes were dehydrated into the agent-scoped
+ *     blob store at persistence, and stream from
+ *     `GET /api/v1/sessions/{sid}/agents/{aid}/blobs/{sha256}`;
  *   - `data:<mime>;base64,…` → `{kind:'url', url}` — the ONLY case carrying
  *     bytes over the wire (bounded: the prompt pipeline pre-compresses
  *     inline media; nothing else fetchable exists);
@@ -1515,6 +1527,15 @@ function mediaAttachments(
       continue;
     }
     const attachmentId = `att-t${turnOrdinal}-${out.length + 1}`;
+    const blobMime = /^blobref:([^;]+);[0-9a-f]{64}$/.exec(url)?.[1];
+    if (blobMime !== undefined) {
+      out.push({
+        attachmentId,
+        mediaType: blobMime,
+        source: { kind: 'blob', ref: url },
+      });
+      continue;
+    }
     const kimiFile = parseKimiFileUrl(url);
     if (kimiFile !== undefined) {
       out.push({
