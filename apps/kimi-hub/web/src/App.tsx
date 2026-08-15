@@ -13,18 +13,20 @@
  *
  * Layout: `>=1024px` a fixed 280px left rail beside the chat column; below
  * that the chat takes the full viewport and the rail becomes a slide-over
- * drawer (hamburger in the top bar; Esc / scrim tap / entry select closes it;
- * plain CSS transitions honoring prefers-reduced-motion). `h-dvh` + safe-area
- * padding keep the shell glued to the real viewport on iOS.
+ * drawer (hamburger in the top bar or a left-edge right-swipe opens it; Esc /
+ * scrim tap / entry select / left-swipe closes it; plain CSS transitions
+ * honoring prefers-reduced-motion). `h-dvh` + safe-area padding keep the
+ * shell glued to the real viewport on iOS.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ChatView } from './components/ChatView';
 import { InstallButton } from './components/InstallButton';
 import { railKey, SessionRail } from './components/SessionRail';
 import { useConnection } from './connection';
+import { decideDrawerSwipe } from './drawerGesture';
 import {
   agentBaseUrl,
   fetchHubAgents,
@@ -162,6 +164,55 @@ export function App() {
       window.removeEventListener('keydown', onKey);
     };
   }, [drawerOpen]);
+
+  // Touch gestures: left-edge right-swipe opens the drawer, left-swipe
+  // closes it. One decision per gesture (decideDrawerSwipe owns the zones /
+  // thresholds / horizontal-intent guard); listeners sit on `window` so the
+  // gesture still lands while the chat's own scroll containers handle the
+  // touch sequence.
+  const drawerOpenRef = useRef(drawerOpen);
+  drawerOpenRef.current = drawerOpen;
+  useEffect(() => {
+    let startX = 0;
+    let startY = 0;
+    let tracking = false;
+    let fired = false;
+    const onStart = (e: globalThis.TouchEvent) => {
+      const touch = e.touches[0];
+      if (touch === undefined) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      tracking = true;
+      fired = false;
+    };
+    const onMove = (e: globalThis.TouchEvent) => {
+      if (!tracking || fired) return;
+      const touch = e.touches[0];
+      if (touch === undefined) return;
+      const action = decideDrawerSwipe({
+        startX,
+        dx: touch.clientX - startX,
+        dy: touch.clientY - startY,
+        drawerOpen: drawerOpenRef.current,
+      });
+      if (action === null) return;
+      fired = true;
+      setDrawerOpen(action === 'open');
+    };
+    const clear = (): void => {
+      tracking = false;
+    };
+    window.addEventListener('touchstart', onStart, { passive: true });
+    window.addEventListener('touchmove', onMove, { passive: true });
+    window.addEventListener('touchend', clear, { passive: true });
+    window.addEventListener('touchcancel', clear, { passive: true });
+    return () => {
+      window.removeEventListener('touchstart', onStart);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', clear);
+      window.removeEventListener('touchcancel', clear);
+    };
+  }, []);
 
   const rail = (
     <SessionRail
