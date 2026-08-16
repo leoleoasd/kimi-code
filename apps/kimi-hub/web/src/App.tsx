@@ -1,8 +1,10 @@
 /**
  * App shell — top bar + session rail + chat pane. Navigation is plain state
- * (no router): the selection is an (agent name, session id) pair, re-resolved
- * against the live hub roster on every refresh because the hub mints a fresh
- * `agentId` per connection. Resolution needs BOTH halves of the pair:
+ * (no router): the selection is an (agent name, session id) pair, mirrored
+ * into the URL (`?agent=&session=`) so a refresh or shared link reopens the
+ * same chat, and re-resolved against the live hub roster on every refresh
+ * because the hub mints a fresh `agentId` per connection.
+ * Resolution needs BOTH halves of the pair:
  * same-host connections share the name but are scoped to disjoint sessions,
  * so the live entry must expose the selected session (or be an unscoped
  * legacy connector) — a same-name entry lacking the session is NOT a match
@@ -93,8 +95,8 @@ export function App() {
     };
     navigator.serviceWorker.addEventListener('message', onMessage);
     const params = new URLSearchParams(window.location.search);
-    const focusAgent = params.get('focusAgentName');
-    const focusSession = params.get('focusSessionId');
+    const focusAgent = params.get('agent') ?? params.get('focusAgentName');
+    const focusSession = params.get('session') ?? params.get('focusSessionId');
     if (focusAgent !== null && focusAgent !== '' && focusSession !== null && focusSession !== '') {
       setAgentName(focusAgent);
       setSessionId(focusSession);
@@ -103,6 +105,25 @@ export function App() {
       navigator.serviceWorker.removeEventListener('message', onMessage);
     };
   }, []);
+
+  // URL persistence of the selection (`?agent=&session=`): a refresh / copied
+  // link reopens the same chat. replaceState, not pushState — tab switches
+  // are not history entries users want to step backward through, and the
+  // scroll position is reconstructed by the transcript's entry snap anyway.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    params.delete('focusAgentName');
+    params.delete('focusSessionId');
+    if (agentName !== null && sessionId !== null) {
+      params.set('agent', agentName);
+      params.set('session', sessionId);
+    } else {
+      params.delete('agent');
+      params.delete('session');
+    }
+    const query = params.toString();
+    window.history.replaceState(null, '', `${window.location.pathname}${query === '' ? '' : `?${query}`}${window.location.hash}`);
+  }, [agentName, sessionId]);
 
   // Last-seen-online roster, in two shapings of the same data: by NAME for
   // this shell's offline fallback (banner + display info), and by
