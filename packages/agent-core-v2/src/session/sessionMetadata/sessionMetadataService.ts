@@ -4,7 +4,11 @@
  * Persists the session metadata document (`state.json`) through the `storage`
  * access-pattern store (`IAtomicDocumentStore`), rooted at the `metaScope`
  * namespace from `sessionContext`. Loads the existing document on
- * construction (creating it on first run), and logs through `log`. The
+ * construction (creating it on first run), and logs through `log`. Renames
+ * (`setTitle`) additionally rebroadcast the live `session.meta.updated` event
+ * through `event` — mirroring the prompt-derived (`promptMetadata`) and
+ * generated (`sessionTitle`) title paths — so WS/sidebar listeners learn a
+ * manual rename immediately instead of on the next refresh. The
  * plain-data state (`data`) is registered into `sessionState`
  * (`ISessionStateService`) and read/written through it. The
  * document always carries the `agents` / `custom` maps — seeded at creation,
@@ -52,6 +56,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { Emitter, type Event } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
 import { defineState } from '#/_base/state/stateRegistry';
+import { IEventService } from '#/app/event/event';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { buildSessionSummary } from '#/app/sessionIndex/sessionIndexSource';
 import { IAtomicDocumentStore } from '#/persistence/interface/atomicDocumentStore';
@@ -100,6 +105,7 @@ export class SessionMetadata extends Service implements ISessionMetadata {
     @IAtomicDocumentStore private readonly store: IAtomicDocumentStore,
     @ILogService private readonly log: ILogService,
     @ISessionIndexMirror private readonly mirror: ISessionIndexMirror,
+    @IEventService private readonly eventService: IEventService,
   ) {
     super();
     this._register({
@@ -155,6 +161,18 @@ export class SessionMetadata extends Service implements ISessionMetadata {
 
   async setTitle(title: string): Promise<void> {
     await this.update({ title, titleKind: 'custom' }, { touchUpdatedAt: false });
+    // Fan the rename out like the prompt-derived and generated title paths do
+    // — remote sidebars (hub web, kimi web) refresh from this frame, not from
+    // their next poll.
+    this.eventService.publish({
+      type: 'session.meta.updated',
+      payload: {
+        agentId: 'main',
+        sessionId: this.ctx.sessionId,
+        title,
+        patch: { title, isCustomTitle: true },
+      },
+    });
   }
 
   async setGeneratedTitleIfUncustomized(

@@ -1,10 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SyncDescriptor } from '#/_base/di/descriptors';
-import { DisposableStore } from '#/_base/di/lifecycle';
+import { DisposableStore, type IDisposable } from '#/_base/di/lifecycle';
 import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
+import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
+import { type DomainEvent, IEventService } from '#/app/event/event';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
@@ -20,6 +22,22 @@ import { stubSessionIndexMirror } from '../../app/sessionIndex/stubs';
 import { stubLog } from '../../_base/log/stubs';
 
 const META_SCOPE = 'sessions/wd_test/s1/session-meta';
+
+class FakeEventService implements IEventService {
+  declare readonly _serviceBrand: undefined;
+  private readonly emitter = new Emitter<DomainEvent>();
+  readonly onDidPublish = this.emitter.event;
+  readonly published: DomainEvent[] = [];
+
+  publish(event: DomainEvent): void {
+    this.published.push(event);
+    this.emitter.fire(event);
+  }
+
+  subscribe(handler: (event: DomainEvent) => void): IDisposable {
+    return this.emitter.event(handler);
+  }
+}
 
 function createFreshMetadata(ix: TestInstantiationService): SessionMetadata {
   return ix
@@ -42,14 +60,17 @@ describe('SessionMetadata', () => {
   let disposables: DisposableStore;
   let ix: TestInstantiationService;
   let mirror: ReturnType<typeof stubSessionIndexMirror>;
+  let events: FakeEventService;
 
   beforeEach(() => {
     disposables = new DisposableStore();
     ix = disposables.add(new TestInstantiationService());
     mirror = stubSessionIndexMirror();
+    events = new FakeEventService();
     ix.stub(ILogService, stubLog());
     ix.stub(ISessionContext, makeContext());
     ix.stub(ISessionIndexMirror, mirror);
+    ix.stub(IEventService, events);
     ix.set(ISessionStateService, new SyncDescriptor(SessionStateService));
     ix.set(IFileSystemStorageService, new SyncDescriptor(InMemoryStorageService));
     ix.set(IAtomicDocumentStore, new SyncDescriptor(JsonAtomicDocumentStore));
@@ -98,6 +119,21 @@ describe('SessionMetadata', () => {
     await meta.setTitle('t');
     await meta.setArchived(true);
     expect(await meta.read()).toMatchObject({ title: 't', titleKind: 'custom', archived: true });
+  });
+
+  it('setTitle rebroadcasts session.meta.updated like the prompt/generated title paths', async () => {
+    const meta = ix.get(ISessionMetadata);
+    await meta.setTitle('user title');
+    const metaEvents = events.published.filter((e) => e.type === 'session.meta.updated');
+    expect(metaEvents).toHaveLength(1);
+    expect(metaEvents[0]!.payload).toEqual({
+      agentId: 'main',
+      sessionId: 's1',
+      title: 'user title',
+      patch: { title: 'user title', isCustomTitle: true },
+    });
+    await meta.setArchived(true);
+    expect(events.published.filter((e) => e.type === 'session.meta.updated')).toHaveLength(1);
   });
 
   it('sets a generated title while the metadata remains uncustomized', async () => {
