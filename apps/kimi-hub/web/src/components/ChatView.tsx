@@ -71,17 +71,19 @@ import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui'
 
 /**
  * Should this scroll event re-arm the tail pin? Direction-aware: only a move
- * TOWARD the tail (dy > 0) landing within the tail zone re-pins, plus the
- * resting-on-the-tail state (dist ≤ 0 with no upward motion). NEVER re-pin on
- * an upward tick even while still inside the tail zone — distance alone
+ * TOWARD the tail (dy > 0) landing within `zone` of the tail re-pins, plus
+ * the resting-on-the-tail state (dist ≤ 0 with no upward motion). NEVER
+ * re-pin on an upward tick even while inside the zone — distance alone
  * cannot tell "arriving at the tail" from "just left it": a slow trackpad
  * scroll unpins via the input listeners, but each 1–2px wheel tick used to
- * land inside the 80px zone and re-arm the pin, so the next growth snap
- * yanked the viewport back down (a fast flick escaped past 80px in one
- * event — which is why only SLOW scrolling fought).
+ * land inside the zone and re-arm the pin, so the next growth snap yanked
+ * the viewport back down (a fast flick escaped the zone in one event —
+ * which is why only SLOW scrolling fought). The callers pass ~half a
+ * viewport as `zone`: momentum that runs out a little early still counts as
+ * "watching it live".
  */
-export function shouldRepin(dy: number, distanceFromBottom: number): boolean {
-  if (dy > 0) return distanceFromBottom < 80;
+export function shouldRepin(dy: number, distanceFromBottom: number, zone = 80): boolean {
+  if (dy > 0) return distanceFromBottom < zone;
   return dy === 0 && distanceFromBottom <= 0;
 }
 
@@ -259,11 +261,17 @@ export function ChatView({
   // Growth: pinned → keep the tail in view (streaming text follows); not
   // pinned → leave the viewport alone and only keep the jump pill truthful.
   // Gated on `loaded` — until then the entry snap below owns the position.
+  // Silent re-pin: a viewport jammed against the tail (dist < 24px — the
+  // noise floor of clamp/rounding) re-arms the pin without waiting for a
+  // gesture; the direction-gated scroll handler covers deliberate returns.
   useLayoutEffect(() => {
     if (!loaded) return;
-    if (pinnedRef.current) {
-      const el = scrollRef.current;
-      if (el !== null) el.scrollTop = el.scrollHeight;
+    const el = scrollRef.current;
+    if (el !== null && !pinnedRef.current && el.scrollHeight - el.scrollTop - el.clientHeight < 24) {
+      pinnedRef.current = true;
+    }
+    if (pinnedRef.current && el !== null) {
+      el.scrollTop = el.scrollHeight;
     }
     syncJumpPill();
   }, [loaded, items, syncJumpPill]);
@@ -369,7 +377,12 @@ export function ChatView({
       const y = el.scrollTop;
       const dy = y - lastScrollTopRef.current;
       lastScrollTopRef.current = y;
-      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight)) {
+      // Coming back down counts as "watch it live" anywhere within half a
+      // viewport of the tail — an 80px gate silently drops pins when a
+      // gesture's momentum runs out a little early and no further scroll
+      // events ever re-evaluate it.
+      const zone = Math.min(el.clientHeight * 0.5, 480);
+      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight, zone)) {
         pinnedRef.current = true;
       }
     }
