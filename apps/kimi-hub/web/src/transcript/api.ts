@@ -45,8 +45,14 @@ export interface TranscriptPage {
   readonly seq?: number | undefined;
 }
 
-/** Turns per REST page: the viewport grows in slices of recent history. */
-export const TRANSCRIPT_PAGE_SIZE = 20;
+/**
+ * Turns per REST page: the viewport grows in slices of recent history. Kept
+ * SMALL on purpose: a page also caps the payload (tool-output frames run tens
+ * of KB each, so 20 turns frequently crossed a megabyte — brutal on a phone
+ * link). 10 turns keeps pages quick to fetch, parse, and paint; the 400px
+ * sentinel margin refills well ahead of the scroll edge anyway.
+ */
+export const TRANSCRIPT_PAGE_SIZE = 10;
 
 export async function fetchTranscriptPage(
   endpoint: HttpEndpoint & {
