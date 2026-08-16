@@ -69,6 +69,22 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, markerLabel, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
+/**
+ * Should this scroll event re-arm the tail pin? Direction-aware: only a move
+ * TOWARD the tail (dy > 0) landing within the tail zone re-pins, plus the
+ * resting-on-the-tail state (dist ≤ 0 with no upward motion). NEVER re-pin on
+ * an upward tick even while still inside the tail zone — distance alone
+ * cannot tell "arriving at the tail" from "just left it": a slow trackpad
+ * scroll unpins via the input listeners, but each 1–2px wheel tick used to
+ * land inside the 80px zone and re-arm the pin, so the next growth snap
+ * yanked the viewport back down (a fast flick escaped past 80px in one
+ * event — which is why only SLOW scrolling fought).
+ */
+export function shouldRepin(dy: number, distanceFromBottom: number): boolean {
+  if (dy > 0) return distanceFromBottom < 80;
+  return dy === 0 && distanceFromBottom <= 0;
+}
+
 /** Keyboard keys able to scroll a container — they cancel a settling snap. */
 const SCROLL_KEYS = new Set([
   'PageUp',
@@ -119,9 +135,13 @@ export function ChatView({
   /**
    * Pin-follow: while true, transcript/late-layout growth re-lands on the
    * tail. Set on entry/send/pill snap; any user scroll input clears it; it
-   * re-arms when a scroll event finds the viewport back at the tail.
+   * re-arms when a scroll event moves the viewport back DOWN to the tail
+   * (see shouldRepin — distance alone re-pins on every upward tick and the
+   * growth snap fights slow scroll gestures).
    */
   const pinnedRef = useRef(true);
+  /** Last observed scrollTop — onScroll derives the scroll direction from it. */
+  const lastScrollTopRef = useRef(0);
   const queryClient = useQueryClient();
 
   const { store, state, agents, loaded, loadError } = useTranscriptChannel(
@@ -334,10 +354,13 @@ export function ChatView({
 
   const onScroll = () => {
     const el = scrollRef.current;
-    // Repin when the user scrolls back down to the tail (same 80px tolerance
-    // as the jump pill).
-    if (el !== null && el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
-      pinnedRef.current = true;
+    if (el !== null) {
+      const y = el.scrollTop;
+      const dy = y - lastScrollTopRef.current;
+      lastScrollTopRef.current = y;
+      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight)) {
+        pinnedRef.current = true;
+      }
     }
     syncJumpPill();
   };
