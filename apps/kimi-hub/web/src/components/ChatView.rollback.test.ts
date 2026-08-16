@@ -36,6 +36,15 @@ describe('shouldRepin', () => {
     expect(shouldRepin(10, 500, 450)).toBe(false);
   });
 
+  it('ignores elastic-bounce fake downward motion (needs >60px real drift)', () => {
+    // Bounce-back from an upward fling: a little downward movement inside the
+    // zone must NOT re-pin (that was the welded-scroll bug).
+    expect(shouldRepin(30, 100, 450, 10)).toBe(false);
+    expect(shouldRepin(30, 100, 450, 59)).toBe(false);
+    // …but a genuine come-back scroll does.
+    expect(shouldRepin(70, 300, 450, 70)).toBe(true);
+  });
+
   it('does not re-pin while far from the tail even when scrolling down', () => {
     expect(shouldRepin(10, 200)).toBe(false);
   });
