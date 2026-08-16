@@ -9,14 +9,15 @@
  * re-render paints the increment (no per-character effects). The trailing
  * frame of a running turn+step carries a blinking caret.
  *
- * Scrolling: SNAP, never follow. The view jumps to the tail on session/tab
- * entry and when the LOCAL USER sends a prompt — model streaming or any
- * other content growth NEVER moves the viewport (a tail-following pin would
- * scroll once per reasoning token). Each snap converges through a bounded
- * settle window: content-visibility rows start as 200px estimates and
- * reflow to real heights, fonts/images shift, scroll-anchoring pulls back —
- * so a snap re-lands for ~1.2s unless the user scrolls first. A "↓ latest"
- * pill appears whenever newer content sits off-screen and offers the jump.
+ * Scrolling: pin-follow. While the viewport sits at the tail the view
+ * follows growth — streaming text keeps the tail pinned. Any user scroll
+ * away from the bottom drops the pin and growth never re-grabs the viewport
+ * (reading back-scroll in peace); scrolling back down to the tail re-pins.
+ * Session/tab entry, a LOCAL user-send, and the "↓ latest" pill snap to the
+ * tail and converge through a bounded settle window (content-visibility
+ * rows start as 200px estimates, fonts/images reflow, scroll-anchoring
+ * nudges back — a one-shot snap lands on the estimated bottom), with any
+ * user scroll input killing the retries.
  * Older history loads lazily in the other direction: the initial paint is
  * one page of turns and an IntersectionObserver sentinel 400px above the top
  * lines prefetches earlier pages, restoring the viewport by its distance
@@ -115,6 +116,12 @@ export function ChatView({
   const snapRetriesRef = useRef<number[]>([]);
   /** Newer content sits off-screen — shows the "↓ latest" pill. */
   const [showJump, setShowJump] = useState(false);
+  /**
+   * Pin-follow: while true, transcript/late-layout growth re-lands on the
+   * tail. Set on entry/send/pill snap; any user scroll input clears it; it
+   * re-arms when a scroll event finds the viewport back at the tail.
+   */
+  const pinnedRef = useRef(true);
   const queryClient = useQueryClient();
 
   const { store, state, agents, loaded, loadError } = useTranscriptChannel(
@@ -218,11 +225,15 @@ export function ChatView({
     setShowJump(el.scrollHeight - el.scrollTop - el.clientHeight >= 80);
   }, []);
 
-  // Model output NEVER scrolls the view: new transcript items only refresh
-  // the jump pill. Gated on `loaded` — until then the entry snap below owns
-  // the position and the pill.
+  // Growth: pinned → keep the tail in view (streaming text follows); not
+  // pinned → leave the viewport alone and only keep the jump pill truthful.
+  // Gated on `loaded` — until then the entry snap below owns the position.
   useLayoutEffect(() => {
     if (!loaded) return;
+    if (pinnedRef.current) {
+      const el = scrollRef.current;
+      if (el !== null) el.scrollTop = el.scrollHeight;
+    }
     syncJumpPill();
   }, [loaded, items, syncJumpPill]);
 
@@ -235,23 +246,28 @@ export function ChatView({
     snapRetriesRef.current = [];
   }, []);
 
-  // A user scroll gesture kills a settling snap's remaining retries — the
-  // convergence of a requested jump must never fight the person driving the
-  // viewport. Composer keystrokes are not scroll keys and cannot cancel.
+  // A user scroll gesture kills a settling snap's remaining retries AND
+  // drops the pin — neither the snap's convergence nor growth-following may
+  // ever fight the person driving the viewport. (A scroll-back-down to the
+  // tail re-pins via onScroll.) Composer keystrokes are not scroll keys.
   useEffect(() => {
     const el = scrollRef.current;
     if (el === null) return;
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (SCROLL_KEYS.has(event.key)) cancelSnapRetries();
+    const onUserScroll = (): void => {
+      cancelSnapRetries();
+      pinnedRef.current = false;
     };
-    el.addEventListener('wheel', cancelSnapRetries, { passive: true });
-    el.addEventListener('touchmove', cancelSnapRetries, { passive: true });
-    el.addEventListener('pointerdown', cancelSnapRetries);
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (SCROLL_KEYS.has(event.key)) onUserScroll();
+    };
+    el.addEventListener('wheel', onUserScroll, { passive: true });
+    el.addEventListener('touchmove', onUserScroll, { passive: true });
+    el.addEventListener('pointerdown', onUserScroll);
     window.addEventListener('keydown', onKeyDown);
     return () => {
-      el.removeEventListener('wheel', cancelSnapRetries);
-      el.removeEventListener('touchmove', cancelSnapRetries);
-      el.removeEventListener('pointerdown', cancelSnapRetries);
+      el.removeEventListener('wheel', onUserScroll);
+      el.removeEventListener('touchmove', onUserScroll);
+      el.removeEventListener('pointerdown', onUserScroll);
       window.removeEventListener('keydown', onKeyDown);
       cancelSnapRetries();
     };
@@ -269,6 +285,7 @@ export function ChatView({
     cancelSnapRetries();
     const el = scrollRef.current;
     if (el === null) return;
+    pinnedRef.current = true;
     el.scrollTop = el.scrollHeight;
     setShowJump(false);
     const timers = snapRetriesRef.current;
@@ -298,19 +315,30 @@ export function ChatView({
   }, [loaded, snapToBottom]);
 
   // Late growth the transcript never sees (attachment/image loads, markdown
-  // reflow, header/composer/window resizes): still no scrolling — just keep
-  // the jump pill truthful.
+  // reflow, header/composer/window resizes): pinned keeps the tail, otherwise
+  // just keep the jump pill truthful.
   useEffect(() => {
     const scroll = scrollRef.current;
     const content = contentRef.current;
     if (scroll === null || content === null) return;
-    const observer = new ResizeObserver(syncJumpPill);
+    const observer = new ResizeObserver(() => {
+      if (pinnedRef.current) scroll.scrollTop = scroll.scrollHeight;
+      syncJumpPill();
+    });
     observer.observe(content);
     observer.observe(scroll);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+    };
   }, [syncJumpPill]);
 
   const onScroll = () => {
+    const el = scrollRef.current;
+    // Repin when the user scrolls back down to the tail (same 80px tolerance
+    // as the jump pill).
+    if (el !== null && el.scrollHeight - el.scrollTop - el.clientHeight < 80) {
+      pinnedRef.current = true;
+    }
     syncJumpPill();
   };
 
