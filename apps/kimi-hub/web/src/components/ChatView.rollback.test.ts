@@ -30,6 +30,12 @@ describe('shouldRepin', () => {
     expect(shouldRepin(10, 0)).toBe(true);
   });
 
+  it('honors a wider return zone (momentum that dies a bit early)', () => {
+    expect(shouldRepin(10, 200)).toBe(false); // default zone is 80
+    expect(shouldRepin(10, 200, 450)).toBe(true);
+    expect(shouldRepin(10, 500, 450)).toBe(false);
+  });
+
   it('does not re-pin while far from the tail even when scrolling down', () => {
     expect(shouldRepin(10, 200)).toBe(false);
   });
