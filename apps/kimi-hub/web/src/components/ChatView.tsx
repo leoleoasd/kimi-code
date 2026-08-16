@@ -82,9 +82,26 @@ import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui'
  * viewport as `zone`: momentum that runs out a little early still counts as
  * "watching it live".
  */
-export function shouldRepin(dy: number, distanceFromBottom: number, zone = 80): boolean {
-  if (dy > 0) return distanceFromBottom < zone;
-  return dy === 0 && distanceFromBottom <= 0;
+/**
+ * Should this scroll event re-arm the tail pin? Direction-aware and
+ * bounce-proof: ONLY downward travel re-pins, and away from the exact tail
+ * it takes GENUINE downward travel — `downDrift` is this gesture's
+ * accumulated downward pixels, so an elastic bounce's 10–40px of fake
+ * downward motion (or a mixed trackpad stream's noise ticks) never arms
+ * anything (v0.1.21's distance-only half-viewport zone welded the pin to
+ * those bounces and made scrolling up impossible). A jam at/over the tail
+ * while moving down (dist ≤ 0) or resting exactly on it re-arms directly.
+ */
+export function shouldRepin(
+  dy: number,
+  distanceFromBottom: number,
+  zone = 80,
+  downDrift = 61,
+): boolean {
+  if (dy > 0 && distanceFromBottom <= 0) return true;
+  if (dy === 0 && distanceFromBottom <= 0) return true;
+  if (dy < 0) return false;
+  return downDrift > 60 && distanceFromBottom < zone;
 }
 
 /** Keyboard keys able to scroll a container — they cancel a settling snap. */
@@ -261,17 +278,11 @@ export function ChatView({
   // Growth: pinned → keep the tail in view (streaming text follows); not
   // pinned → leave the viewport alone and only keep the jump pill truthful.
   // Gated on `loaded` — until then the entry snap below owns the position.
-  // Silent re-pin: a viewport jammed against the tail (dist < 24px — the
-  // noise floor of clamp/rounding) re-arms the pin without waiting for a
-  // gesture; the direction-gated scroll handler covers deliberate returns.
   useLayoutEffect(() => {
     if (!loaded) return;
-    const el = scrollRef.current;
-    if (el !== null && !pinnedRef.current && el.scrollHeight - el.scrollTop - el.clientHeight < 24) {
-      pinnedRef.current = true;
-    }
-    if (pinnedRef.current && el !== null) {
-      el.scrollTop = el.scrollHeight;
+    if (pinnedRef.current) {
+      const el = scrollRef.current;
+      if (el !== null) el.scrollTop = el.scrollHeight;
     }
     syncJumpPill();
   }, [loaded, items, syncJumpPill]);
@@ -371,18 +382,19 @@ export function ChatView({
     };
   }, [syncJumpPill]);
 
+  /** This gesture's accumulated downward drift — resets on any upward tick. */
+  const downDriftRef = useRef(0);
   const onScroll = () => {
     const el = scrollRef.current;
     if (el !== null) {
       const y = el.scrollTop;
       const dy = y - lastScrollTopRef.current;
       lastScrollTopRef.current = y;
-      // Coming back down counts as "watch it live" anywhere within half a
-      // viewport of the tail — an 80px gate silently drops pins when a
-      // gesture's momentum runs out a little early and no further scroll
-      // events ever re-evaluate it.
+      downDriftRef.current = dy > 0 ? downDriftRef.current + dy : 0;
+      // Coming back down counts as "watch it live" on real downward travel
+      // within half a viewport of the tail.
       const zone = Math.min(el.clientHeight * 0.5, 480);
-      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight, zone)) {
+      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight, zone, downDriftRef.current)) {
         pinnedRef.current = true;
       }
     }
