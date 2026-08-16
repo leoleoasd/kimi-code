@@ -338,8 +338,11 @@ export class AgentTranscriptProjector {
             ...restOf(event),
           }),
         ];
-      case 'context.spliced':
-        return [this.markerOp('undo', restOf(event))];
+      case 'context.spliced': {
+        if (event.deleteCount === 0) return [];
+        const { messages: _messages, ...payload } = restOf(event);
+        return [this.markerOp('undo', payload)];
+      }
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':

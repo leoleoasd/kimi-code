@@ -81,9 +81,8 @@ export function planHintKey(event: {
   readonly key: string;
   readonly shiftKey?: boolean;
   readonly isComposing?: boolean;
-  readonly imeActive?: boolean;
 }): HintKeyAction {
-  if (event.isComposing === true || event.imeActive === true) return { kind: 'none' };
+  if (event.isComposing === true) return { kind: 'none' };
   switch (event.key) {
     case 'ArrowDown':
       return { kind: 'move', delta: 1 };

@@ -9,6 +9,7 @@ import Fastify from 'fastify';
 import { createTunnelRegistry, type TunnelRegistry } from '@moonshot-ai/remote-tunnel/hub';
 
 import { createHubAuthHook } from '#/auth';
+import { installCompression } from '#/compress';
 import { resolveHubConfig, type HubCliArgs, type HubConfig } from '#/config';
 import { errEnvelope, HUB_ERROR_CODES } from '#/envelope';
 import { formatHostErrorMessage, isAllowedHost, parseAllowedHosts } from '#/hostnames';
@@ -87,6 +88,11 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
     }
   });
   app.addHook('onRequest', createHubAuthHook({ token: config.token, disableAuth: config.disableAuth }));
+
+  // Compress at the browser-facing edge (br/gzip): tunneled API reads like
+  // transcript pages run megabytes of JSON, and the hub is the phone's last
+  // hop.
+  installCompression(app);
 
   // Buffer request bodies verbatim for the proxy routes: fastify's JSON/text
   // parsing must never run on tunneled traffic. The '*' catch-all does NOT

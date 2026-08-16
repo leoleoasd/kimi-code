@@ -91,6 +91,13 @@ async function startFakeAgentServer(): Promise<LocalServer> {
       res.end(JSON.stringify({ ok: true }));
       return;
     }
+    if (url.pathname === '/api/v1/big' && req.method === 'GET') {
+      // A multi-KB JSON read — stands in for transcript pages when checking
+      // the hub's edge compression.
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ blob: 'x'.repeat(8 * 1024) }));
+      return;
+    }
     if (url.pathname === '/api/v1/echo' && req.method === 'POST') {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -442,6 +449,17 @@ describe('kimi-hub-server', () => {
     });
     expect(v2.status).toBe(404);
     expect(await v2.text()).toBe('not found');
+  });
+
+  it('compresses large tunneled JSON at the hub edge (accept-encoding negotiation)', async () => {
+    const res = await fetch(`${ctx.hub.origin}/agents/${ctx.agentId}/api/v1/big`, {
+      headers: { authorization: `Bearer ${HUB_TOKEN}`, 'accept-encoding': 'gzip' },
+    });
+    expect(res.status).toBe(200);
+    // The upstream spoke identity; the hub edge encoded the relayed body.
+    // (Node fetch decodes transparently but keeps the header.)
+    expect(res.headers.get('content-encoding')).toBe('gzip');
+    expect(await res.json()).toEqual({ blob: 'x'.repeat(8 * 1024) });
   });
 
   it('(g) answers unknown agents with 404 + the 40401 envelope', async () => {

@@ -23,11 +23,8 @@ describe('planSendOnEnter', () => {
     expect(planSendOnEnter({ key: 'Enter', shiftKey: true })).toBe('noop');
   });
 
-  it('never sends while an IME composition is active (either signal)', () => {
-    // The native flag (the primary guard).
+  it('never sends while an IME composition is active (candidate selection)', () => {
     expect(planSendOnEnter({ key: 'Enter', shiftKey: false, isComposing: true })).toBe('noop');
-    // The compositionstart/end fallback for browsers that misreport the flag.
-    expect(planSendOnEnter({ key: 'Enter', shiftKey: false, imeActive: true })).toBe('noop');
   });
 
   it('a send already in flight is not re-entered', () => {
@@ -53,11 +50,9 @@ describe('planComposerKey', () => {
     expect(planComposerKey({ key: 'Escape', busy: false, isComposing: false })).toBe('noop');
   });
 
-  it('an active IME composition swallows Escape (either signal, busy or not)', () => {
+  it('an active IME composition swallows Escape (busy or not)', () => {
     expect(planComposerKey({ key: 'Escape', busy: true, isComposing: true })).toBe('noop');
-    expect(planComposerKey({ key: 'Escape', busy: true, imeActive: true })).toBe('noop');
     expect(planComposerKey({ key: 'Escape', busy: false, isComposing: true })).toBe('noop');
-    expect(planComposerKey({ key: 'Escape', busy: false, imeActive: true })).toBe('noop');
   });
 
   it('non-Escape keys never abort, however busy', () => {

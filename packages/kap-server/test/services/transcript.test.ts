@@ -1438,7 +1438,17 @@ describe('AgentTranscriptProjector', () => {
         blocked: true,
       }),
     );
-    feed(ev({ type: 'context.spliced', start: 1, deleteCount: 2, messages: [] }));
+    feed(
+      ev({
+        type: 'context.spliced',
+        start: 1,
+        deleteCount: 2,
+        messages: [{ role: 'user' }, { role: 'assistant' }],
+      }),
+    );
+    // Insert-only splices (a fresh prompt appended to context) are already
+    // projected via turn/message events and must NOT produce an undo marker.
+    feed(ev({ type: 'context.spliced', start: 3, deleteCount: 0, messages: [{ role: 'user' }] }));
 
     const markers = tx
       .getItems()
@@ -1464,6 +1474,9 @@ describe('AgentTranscriptProjector', () => {
       blocked: true,
     });
     expect(markers[7]!.payload).toMatchObject({ start: 1, deleteCount: 2 });
+    // The spliced-out context messages stay in wire.jsonl for replay — they
+    // must NOT ride the (potentially megabyte-sized) marker payload.
+    expect(markers[7]!.payload).not.toHaveProperty('messages');
   });
 
   it('projects error / warning events as notice markers outside any step', () => {

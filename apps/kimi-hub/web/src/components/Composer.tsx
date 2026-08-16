@@ -3,9 +3,12 @@
  * Enter-to-send, image attachments (paste + drag-and-drop → `/api/v1/files`),
  * and the slash-command intercept.
  *
- *  - Enter sends, Shift+Enter newline; NEVER while an IME composition is
- *    active (`nativeEvent.isComposing`, belt-and-suspenders with
- *    compositionstart/end tracking for browsers that misreport it).
+ *  - Enter sends, Shift+Enter newline; NEVER mid-IME-composition
+ *    (`nativeEvent.isComposing`) — that's candidate selection, not a send
+ *    gesture. `isComposing` is the single source of truth: a companion
+ *    compositionstart/end tracker once co-guarded this, but a missed
+ *    compositionend on mobile IMEs leaves the tracker stuck true and
+ *    swallows EVERY later Enter forever.
  *  - Paste/drop: image items become attachment chips; `preventDefault` only
  *    fires when at least one image was actually present, so pasting plain
  *    text still lands in the textarea. A failed upload keeps the chip (red ✕,
@@ -48,8 +51,6 @@ export interface EnterKeyEventish {
   readonly shiftKey: boolean;
   /** `KeyboardEvent.nativeEvent.isComposing` (true mid-IME). */
   readonly isComposing?: boolean;
-  /** The composer's own compositionstart/end tracking — defensive fallback. */
-  readonly imeActive?: boolean;
   /** A send is already in flight. */
   readonly sending?: boolean;
 }
@@ -58,7 +59,7 @@ export interface EnterKeyEventish {
 export function planSendOnEnter(event: EnterKeyEventish): 'send' | 'noop' {
   if (event.key !== 'Enter') return 'noop';
   if (event.shiftKey) return 'noop';
-  if (event.isComposing === true || event.imeActive === true) return 'noop';
+  if (event.isComposing === true) return 'noop';
   if (event.sending === true) return 'noop';
   return 'send';
 }
@@ -67,8 +68,6 @@ export interface ComposerKeyEventish {
   readonly key: string;
   /** `KeyboardEvent.nativeEvent.isComposing` (true mid-IME). */
   readonly isComposing?: boolean;
-  /** The composer's own compositionstart/end tracking — defensive fallback. */
-  readonly imeActive?: boolean;
   /** A turn is running — Escape aborts it; otherwise Escape is a noop. */
   readonly busy: boolean;
 }
@@ -81,7 +80,7 @@ export interface ComposerKeyEventish {
  */
 export function planComposerKey(event: ComposerKeyEventish): 'abort-turn' | 'noop' {
   if (event.key !== 'Escape') return 'noop';
-  if (event.isComposing === true || event.imeActive === true) return 'noop';
+  if (event.isComposing === true) return 'noop';
   if (!event.busy) return 'noop';
   return 'abort-turn';
 }
@@ -186,7 +185,6 @@ export function Composer({
   const [hintIndex, setHintIndex] = useState(0);
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const imeActiveRef = useRef(false);
   const pasteCounterRef = useRef(0);
   /** Latest attachments for the unmount cleanup (revoke dangling object URLs). */
   const attachmentsRef = useRef(attachments);
@@ -457,7 +455,6 @@ export function Composer({
               const hintAction = planHintKey({
                 key: e.key,
                 isComposing: e.nativeEvent.isComposing,
-                imeActive: imeActiveRef.current,
               });
               if (hintAction.kind === 'move') {
                 e.preventDefault();
@@ -482,7 +479,6 @@ export function Composer({
               planComposerKey({
                 key: e.key,
                 isComposing: e.nativeEvent.isComposing,
-                imeActive: imeActiveRef.current,
                 busy,
               }) === 'abort-turn'
             ) {
@@ -496,19 +492,12 @@ export function Composer({
                 key: e.key,
                 shiftKey: e.shiftKey,
                 isComposing: e.nativeEvent.isComposing,
-                imeActive: imeActiveRef.current,
                 sending,
               }) === 'send'
             ) {
               e.preventDefault();
               void send();
             }
-          }}
-          onCompositionStart={() => {
-            imeActiveRef.current = true;
-          }}
-          onCompositionEnd={() => {
-            imeActiveRef.current = false;
           }}
           onPaste={(e) => {
             const images = collectImagesFromClipboard(e.clipboardData.items);
