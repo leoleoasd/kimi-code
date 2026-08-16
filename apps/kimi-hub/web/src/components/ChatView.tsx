@@ -10,14 +10,16 @@
  * frame of a running turn+step carries a blinking caret.
  *
  * Scrolling: pin-follow. While the viewport sits at the tail the view
- * follows growth — streaming text keeps the tail pinned. Any user scroll
- * away from the bottom drops the pin and growth never re-grabs the viewport
- * (reading back-scroll in peace); scrolling back down to the tail re-pins.
- * Session/tab entry, a LOCAL user-send, and the "↓ latest" pill snap to the
- * tail and converge through a bounded settle window (content-visibility
- * rows start as 200px estimates, fonts/images reflow, scroll-anchoring
- * nudges back — a one-shot snap lands on the estimated bottom), with any
- * user scroll input killing the retries.
+ * follows growth — streaming text keeps the tail pinned. Any upward scroll
+ * (dy < 0 — wheel / trackpad / touch / keys / scrollbar, one signal for all)
+ * drops the pin and growth never re-grabs the viewport; the pin re-arms ONLY
+ * by scrolling all the way back to the tail (dist ≤ 4px) or by the "↓
+ * latest" pill — a small nudge downward from anywhere never glues it back.
+ * Session/tab entry, a LOCAL user-send, and the pill snap to the tail and
+ * converge through a bounded settle window (content-visibility rows start as
+ * 200px estimates, fonts/images reflow, scroll-anchoring nudges back — a
+ * one-shot snap lands on the estimated bottom), with any upward scroll
+ * killing the retries.
  * Older history loads lazily in the other direction: the initial paint is
  * one page of turns and an IntersectionObserver sentinel 400px above the top
  * lines prefetches earlier pages, restoring the viewport by its distance
@@ -69,54 +71,6 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, markerLabel, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
-/**
- * Should this scroll event re-arm the tail pin? Direction-aware: only a move
- * TOWARD the tail (dy > 0) landing within `zone` of the tail re-pins, plus
- * the resting-on-the-tail state (dist ≤ 0 with no upward motion). NEVER
- * re-pin on an upward tick even while inside the zone — distance alone
- * cannot tell "arriving at the tail" from "just left it": a slow trackpad
- * scroll unpins via the input listeners, but each 1–2px wheel tick used to
- * land inside the zone and re-arm the pin, so the next growth snap yanked
- * the viewport back down (a fast flick escaped the zone in one event —
- * which is why only SLOW scrolling fought). The callers pass ~half a
- * viewport as `zone`: momentum that runs out a little early still counts as
- * "watching it live".
- */
-/**
- * Should this scroll event re-arm the tail pin? Direction-aware and
- * bounce-proof: ONLY downward travel re-pins, and away from the exact tail
- * it takes GENUINE downward travel — `downDrift` is this gesture's
- * accumulated downward pixels, so an elastic bounce's 10–40px of fake
- * downward motion (or a mixed trackpad stream's noise ticks) never arms
- * anything (v0.1.21's distance-only half-viewport zone welded the pin to
- * those bounces and made scrolling up impossible). A jam at/over the tail
- * while moving down (dist ≤ 0) or resting exactly on it re-arms directly.
- */
-export function shouldRepin(
-  dy: number,
-  distanceFromBottom: number,
-  zone = 80,
-  downDrift = 61,
-): boolean {
-  if (dy > 0 && distanceFromBottom <= 0) return true;
-  if (dy === 0 && distanceFromBottom <= 0) return true;
-  if (dy < 0) return false;
-  return downDrift > 60 && distanceFromBottom < zone;
-}
-
-/** Keyboard keys able to scroll a container — they cancel a settling snap. */
-const SCROLL_KEYS = new Set([
-  'PageUp',
-  'PageDown',
-  'Home',
-  'End',
-  ' ',
-  'ArrowUp',
-  'ArrowDown',
-  'ArrowLeft',
-  'ArrowRight',
-]);
-
 export function ChatView({
   baseUrl,
   token,
@@ -153,10 +107,9 @@ export function ChatView({
   const [showJump, setShowJump] = useState(false);
   /**
    * Pin-follow: while true, transcript/late-layout growth re-lands on the
-   * tail. Set on entry/send/pill snap; any user scroll input clears it; it
-   * re-arms when a scroll event moves the viewport back DOWN to the tail
-   * (see shouldRepin — distance alone re-pins on every upward tick and the
-   * growth snap fights slow scroll gestures).
+   * tail. Set on entry/send/pill snap; an upward scroll (dy < 0, any device)
+   * drops it permanently; a scroll landing within 4px of the tail — and
+   * nothing else — re-arms it.
    */
   const pinnedRef = useRef(true);
   /** Last observed scrollTop — onScroll derives the scroll direction from it. */
@@ -296,33 +249,6 @@ export function ChatView({
     snapRetriesRef.current = [];
   }, []);
 
-  // A user scroll gesture kills a settling snap's remaining retries AND
-  // drops the pin — neither the snap's convergence nor growth-following may
-  // ever fight the person driving the viewport. (A scroll-back-down to the
-  // tail re-pins via onScroll.) Composer keystrokes are not scroll keys.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (el === null) return;
-    const onUserScroll = (): void => {
-      cancelSnapRetries();
-      pinnedRef.current = false;
-    };
-    const onKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (SCROLL_KEYS.has(event.key)) onUserScroll();
-    };
-    el.addEventListener('wheel', onUserScroll, { passive: true });
-    el.addEventListener('touchmove', onUserScroll, { passive: true });
-    el.addEventListener('pointerdown', onUserScroll);
-    window.addEventListener('keydown', onKeyDown);
-    return () => {
-      el.removeEventListener('wheel', onUserScroll);
-      el.removeEventListener('touchmove', onUserScroll);
-      el.removeEventListener('pointerdown', onUserScroll);
-      window.removeEventListener('keydown', onKeyDown);
-      cancelSnapRetries();
-    };
-  }, [cancelSnapRetries]);
-
   /**
    * Jump to the tail, then keep re-landing through a bounded settle window:
    * content-visibility rows refine from 200px estimates to real heights as
@@ -382,19 +308,25 @@ export function ChatView({
     };
   }, [syncJumpPill]);
 
-  /** This gesture's accumulated downward drift — resets on any upward tick. */
-  const downDriftRef = useRef(0);
+  /**
+   * The whole pin state machine, in one scroll handler:
+   *   dy < 0 (moving AWAY from the tail, whatever the input device — wheel /
+   *     trackpad / touch / keys / scrollbar all funnel into it) drops the pin
+   *     and any settling snap, instantly and permanently;
+   *   landing within 4px of the tail re-arms it — and NOTHING else does. No
+   *   down-drift meters, no zones: a small nudge downward from anywhere must
+   *   never glue the view back (only really reaching the bottom may).
+   */
   const onScroll = () => {
     const el = scrollRef.current;
     if (el !== null) {
       const y = el.scrollTop;
       const dy = y - lastScrollTopRef.current;
       lastScrollTopRef.current = y;
-      downDriftRef.current = dy > 0 ? downDriftRef.current + dy : 0;
-      // Coming back down counts as "watch it live" on real downward travel
-      // within half a viewport of the tail.
-      const zone = Math.min(el.clientHeight * 0.5, 480);
-      if (shouldRepin(dy, el.scrollHeight - y - el.clientHeight, zone, downDriftRef.current)) {
+      if (dy < 0) {
+        if (pinnedRef.current) pinnedRef.current = false;
+        cancelSnapRetries();
+      } else if (el.scrollHeight - y - el.clientHeight <= 4) {
         pinnedRef.current = true;
       }
     }
