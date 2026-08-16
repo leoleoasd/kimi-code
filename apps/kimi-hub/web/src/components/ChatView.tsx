@@ -35,7 +35,7 @@ import {
   type TranscriptMarker,
   type TurnState,
 } from '@moonshot-ai/transcript';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '#/transcript/api';
 import { oldestTurnId } from '#/transcript/store';
@@ -177,7 +177,10 @@ export function ChatView({
   // writes to main — same targeting as before).
   // ChatView mounts ONLY for the selected (agent, session) and unmounts on
   // deselect, so this 2s poll never runs for idle background sessions.
-  const queueQueryKey = ['promptQueue', baseUrl, sessionId, transcriptAgentId] as const;
+  const queueQueryKey = useMemo(
+    () => ['promptQueue', baseUrl, sessionId, transcriptAgentId] as const,
+    [baseUrl, sessionId, transcriptAgentId],
+  );
   const queue = useQuery({
     queryKey: queueQueryKey,
     queryFn: () => fetchPromptQueue({ baseUrl, token, sessionId, agentId: transcriptAgentId }),
@@ -225,8 +228,9 @@ export function ChatView({
   // (`:undo { count }`), so the clicked user turn maps to its ordinal from
   // the end. Turn-view confirm is per-bubble; the transcript resyncs itself
   // off the undo's context splice ops — the extra invalidations are a
-  // promptness nicety for queue/status.
-  const rollbackCounts = rollbackCountsForItems(items);
+  // promptness nicety for queue/status. Memoized: ItemView memoization hinges
+  // on reference stability between item-level updates.
+  const rollbackCounts = useMemo(() => rollbackCountsForItems(items), [items]);
   const rollbackTurn = async (turnId: string): Promise<void> => {
     const count = rollbackCounts.get(turnId);
     if (count === undefined) return;
@@ -235,6 +239,13 @@ export function ChatView({
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
     await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
   };
+  // Stable rollback entrypoint for the memoized rows: latest logic via ref,
+  // one identity forever.
+  const rollbackTurnRef = useRef(rollbackTurn);
+  rollbackTurnRef.current = rollbackTurn;
+  const handleRollback = useCallback((turnId: string): void => {
+    void rollbackTurnRef.current(turnId).catch(setViewError);
+  }, []);
 
   // One position check is the source of truth for the jump pill across the
   // scroll / items / resize paths: newer content within ~80px of the tail
@@ -368,24 +379,21 @@ export function ChatView({
   // Infinite top-loading: a top sentinel (IntersectionObserver, 400px early
   // margin) pages the previous 20 turns in as the user scrolls up. The
   // invariant preserved across a prepend is the distance-from-bottom of the
-  // viewport — captured BEFORE the await, restored in the layout effect keyed
-  // on `items` (the observer can fire during the entry snap; the pages land
-  // above the viewed tail and never disturb it).
+  // viewport — captured AT APPLY TIME (the fetch takes hundreds of ms on a
+  // phone, all of it user-scroll time; recording the anchor at fetch time
+  // restored to a stale spot and teleported the viewport), restored in the
+  // layout effect keyed on `items`.
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
   const loadingOlderRef = useRef(false);
-  /** Pre-pend anchor: `distanceFromBottom` recorded before the previous-page fetch. */
+  /** Pre-pend anchor: `distanceFromBottom` recorded right before the page merges. */
   const olderAnchorRef = useRef<{ distanceFromBottom: number } | null>(null);
   const olderSentinelRef = useRef<HTMLDivElement>(null);
 
   const loadOlder = useCallback(async () => {
-    if (store === null || loadingOlderRef.current) return;
+    if (store === null || loadingOlderRef.current || !state.hasMoreOlder) return;
     const oldest = oldestTurnId(items);
     if (oldest === undefined) return;
-    const el = scrollRef.current;
-    if (el !== null) {
-      olderAnchorRef.current = { distanceFromBottom: el.scrollHeight - el.scrollTop };
-    }
     loadingOlderRef.current = true;
     setLoadingOlder(true);
     try {
@@ -397,7 +405,18 @@ export function ChatView({
         beforeTurn: oldest,
         pageSize: TRANSCRIPT_PAGE_SIZE,
       });
+      const el = scrollRef.current;
+      if (el !== null) {
+        olderAnchorRef.current = { distanceFromBottom: el.scrollHeight - el.scrollTop };
+      }
+      const stateBefore = store.getState();
       store.applyPage(page);
+      if (store.getState() === stateBefore) {
+        // applyPage merged nothing (already at the top of history): there is
+        // no items change and no layout effect — never let a stale anchor get
+        // consumed by a later, unrelated update.
+        olderAnchorRef.current = null;
+      }
       setOlderError(null);
     } catch (error) {
       olderAnchorRef.current = null;
@@ -406,7 +425,7 @@ export function ChatView({
       loadingOlderRef.current = false;
       setLoadingOlder(false);
     }
-  }, [store, items, baseUrl, token, sessionId, transcriptAgentId]);
+  }, [store, items, state.hasMoreOlder, baseUrl, token, sessionId, transcriptAgentId]);
 
   useLayoutEffect(() => {
     const anchor = olderAnchorRef.current;
@@ -626,7 +645,7 @@ export function ChatView({
                 items={items}
                 attachments={state.attachments}
                 rollbackCounts={transcriptAgentId === 'main' ? rollbackCounts : undefined}
-                onRollback={(turnId) => void rollbackTurn(turnId).catch(setViewError)}
+                onRollback={handleRollback}
                 planByMarkerId={planByMarkerId}
                 baseUrl={baseUrl}
                 token={token}
@@ -740,7 +759,7 @@ function ItemList({
             item={row.item}
             repeat={row.repeat}
             attachments={attachments}
-            rollbackCounts={rollbackCounts}
+            rollbackCount={row.item.kind === 'turn' ? rollbackCounts?.get(row.item.turnId) : undefined}
             onRollback={onRollback}
             planContent={row.item.kind === 'marker' ? planByMarkerId?.get(row.item.markerId) : undefined}
             baseUrl={baseUrl}
@@ -754,11 +773,17 @@ function ItemList({
   );
 }
 
-function ItemView({
+/**
+ * Memoized per item: stream deltas / poll tickles re-render ChatView's whole
+ * shell constantly but each transcript item object is referentially stable
+ * until its own content moves, so unchanged rows cost zero — on a phone with
+ * a few pages mounted this is the difference between smooth and stutter.
+ */
+const ItemView = memo(function ItemView({
   item,
   repeat,
   attachments,
-  rollbackCounts,
+  rollbackCount,
   onRollback,
   planContent,
   baseUrl,
@@ -770,7 +795,7 @@ function ItemView({
   /** Size of the collapsed run this row stands for (1 = a lone item). */
   repeat: number;
   attachments: ReadonlyMap<string, TranscriptAttachment>;
-  rollbackCounts?: ReadonlyMap<string, number>;
+  rollbackCount?: number;
   onRollback?: (turnId: string) => void;
   planContent?: PlanMarkerContent;
   baseUrl: string;
@@ -784,7 +809,7 @@ function ItemView({
         <TurnView
           turn={item}
           attachments={attachments}
-          rollbackCount={rollbackCounts?.get(item.turnId)}
+          rollbackCount={rollbackCount}
           onRollback={onRollback}
           baseUrl={baseUrl}
           token={token}
@@ -806,7 +831,7 @@ function ItemView({
         </div>
       );
   }
-}
+});
 
 function MarkerView({
   marker,
