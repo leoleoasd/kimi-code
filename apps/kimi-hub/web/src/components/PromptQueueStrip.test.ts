@@ -43,7 +43,15 @@ describe('buildQueueStripRows', () => {
     expect(rows.map((r) => r.promptId)).toEqual(['p-1', 'p-2', 'p-3']);
     expect(rows.map((r) => r.label)).toEqual(['queued · first', 'queued · second', 'queued · third']);
     expect(rows[0]?.abortTitle).toBe('drop this queued prompt');
+    expect(rows[0]?.recallTitle).toContain('load back into the composer');
     expect(rows.map((r) => r.key)).toEqual(['queued:p-1', 'queued:p-2', 'queued:p-3']);
+  });
+
+  it('keeps the UNTRIMMED text for composer recall (the label snippet is display-only)', () => {
+    const long = `${'x'.repeat(100)}\nsecond line`;
+    const rows = buildQueueStripRows({ queued: [item('p-1', long)] });
+    expect(rows[0]?.label).toHaveLength(49); // 'queued · ' + 40-char snippet
+    expect(rows[0]?.text).toBe(long);
   });
 
   it('tolerates an absent or empty queued list', () => {
