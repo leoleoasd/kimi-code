@@ -29,6 +29,15 @@ describe('promptSubmissionSchema', () => {
     expect(parsed.metadata).toEqual({ source: 'cli' });
   });
 
+  it('accepts an optional steer flag and defaults it to absent', () => {
+    expect(
+      promptSubmissionSchema.parse({ content: [{ type: 'text', text: 'hi' }] }).steer,
+    ).toBeUndefined();
+    expect(
+      promptSubmissionSchema.parse({ content: [{ type: 'text', text: 'hi' }], steer: true }).steer,
+    ).toBe(true);
+  });
+
   it('accepts image + text mixed content', () => {
     const parsed = promptSubmissionSchema.parse({
       content: [

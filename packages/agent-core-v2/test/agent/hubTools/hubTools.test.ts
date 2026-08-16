@@ -66,7 +66,7 @@ interface HubStubOptions {
   connection?: HubConnection | undefined;
 }
 
-function stubHub(opts: HubStubOptions, sent: { agentId: string; sessionId: string; text: string }[]): IHubConnectionService {
+function stubHub(opts: HubStubOptions, sent: { agentId: string; sessionId: string; text: string; steer?: boolean }[]): IHubConnectionService {
   return {
     _serviceBrand: undefined,
     configure: () => undefined,
@@ -150,8 +150,8 @@ describe('SendHubMessageTool', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('targets the owning agent and wraps the message with the sender identity', async () => {
-    const sent: { agentId: string; sessionId: string; text: string }[] = [];
+  it('targets the owning agent, steers into its turn, and wraps the sender identity + continuation', async () => {
+    const sent: { agentId: string; sessionId: string; text: string; steer?: boolean }[] = [];
     const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'));
     const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'I changed X' }));
     expect(result.isError).toBe(false);
@@ -159,7 +159,10 @@ describe('SendHubMessageTool', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.agentId).toBe('a2');
     expect(sent[0]!.sessionId).toBe('ses-ci');
+    // Mid-turn delivery rides the server's steer mode, never the prompt FIFO.
+    expect(sent[0]!.steer).toBe(true);
     expect(sent[0]!.text).toContain('[kimi-hub message from dev-box (session ses-mine)]');
+    expect(sent[0]!.text).toContain('continue with whatever you were working on');
     expect(sent[0]!.text).toContain('I changed X');
     expect(sent[0]!.text.endsWith('I changed X')).toBe(true);
   });

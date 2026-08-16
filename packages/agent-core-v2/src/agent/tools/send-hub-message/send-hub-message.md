@@ -1,4 +1,4 @@
-Send a plain-text message to the agent running ANOTHER session on the same kimi hub (possibly on another machine). The message lands in that session as a user-role message: queued and read right after if the agent is mid-turn, starting a new turn if it is idle.
+Send a plain-text message to the agent running ANOTHER session on the same kimi hub (possibly on another machine). The message lands in that session as a user-role message: steered into the running turn mid-flight if the agent is busy (it answers at its next step, then continues its own work — previously queued prompts stay in line), starting a new turn if it is idle.
 
 A message is text only — no files, diffs, or conversation history travel with it. The receiving agent (and its user) sees it marked as coming from your session, and it can reply to your session the same way.
 

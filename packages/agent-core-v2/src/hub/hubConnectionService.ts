@@ -105,13 +105,16 @@ export class HubConnectionService implements IHubConnectionService {
     agentId: string;
     sessionId: string;
     text: string;
+    steer?: boolean;
   }): Promise<HubMessageReceipt> {
     const path = `/agents/${encodeURIComponent(target.agentId)}/api/v1/sessions/${encodeURIComponent(
       target.sessionId,
     )}/prompts`;
     const data = await this.request(path, {
       method: 'POST',
-      body: { content: [{ type: 'text', text: target.text }] },
+      // `steer` stays undefined (and off the wire) unless requested, so
+      // receivers predating the field treat the submission as a plain queue.
+      body: { content: [{ type: 'text', text: target.text }], steer: target.steer },
     });
     const item = data as Record<string, unknown> | undefined;
     const status = item?.['status'];

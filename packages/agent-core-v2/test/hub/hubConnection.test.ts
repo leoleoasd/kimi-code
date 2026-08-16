@@ -216,6 +216,28 @@ describe('HubConnectionService', () => {
     });
   });
 
+  it('forwards steer: true in the prompt body when requested', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 0,
+          msg: 'success',
+          data: { prompt_id: 'p2', user_message_id: 'p2', status: 'running', content: [], created_at: '2026-08-14T20:00:00Z' },
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    service.configure(CONN);
+
+    await service.sendToSession({ agentId: 'a', sessionId: 's', text: 'ping', steer: true });
+    const [, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      content: [{ type: 'text', text: 'ping' }],
+      steer: true,
+    });
+  });
+
   it('humanizes known hub envelope failures', async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ code: 40302, msg: 'session-scoped agent', data: null }), {

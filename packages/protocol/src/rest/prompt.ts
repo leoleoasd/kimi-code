@@ -9,11 +9,17 @@
  *              permission_mode?: 'manual'|'yolo'|'auto',
  *              plan_mode?: boolean,
  *              disabled_tools?: string[],
+ *              steer?: boolean,
  *            }
  *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
  *            status='running' when sent immediately, status='queued' when
  *            another prompt is already active, status='blocked' when rejected
- *            before a turn is launched.
+ *            before a turn is launched. With steer=true and another prompt
+ *            active, the submission is steered into that active turn instead
+ *            of waiting in the FIFO (the reply still reads 'running'); when
+ *            steering is impossible (idle session — the submission already
+ *            launched as its own turn — or a compaction holding the context),
+ *            it silently degrades to the plain queue/launch behavior.
  *
  *   GET /v1/sessions/{sid}/prompts
  *     Reply: { active: PromptItem | null, queued: PromptItem[] }
@@ -61,6 +67,11 @@ export const promptSubmissionSchema = z.object({
   // bound profile's own deny always survives. Omit to keep the persisted
   // value, send `[]` to clear the client portion.
   disabled_tools: z.array(z.string()).optional(),
+  // Submit as a steer: with another prompt active, inject this submission
+  // into that running turn (next step boundary) instead of waiting in the
+  // FIFO; other queued prompts are untouched. Degrades to the plain
+  // queue/launch behavior when there is nothing to steer into.
+  steer: z.boolean().optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;
 

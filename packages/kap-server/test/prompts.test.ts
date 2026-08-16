@@ -16,7 +16,7 @@ import {
   closeSessionById,
   getLiveSessionById,
 } from '@moonshot-ai/agent-core-v2';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { promptSubmitResultSchema } from '../src/protocol/rest-prompt';
 import { type RunningServer, startServer } from '../src/start';
@@ -785,6 +785,36 @@ describe('server-v2 /api/v1 prompts', () => {
       `/api/v1/sessions/${id}/prompts/prompt_x:abort?agent_id=agent_does_not_exist`,
     );
     expect(abort.body.code).toBe(40401);
+  });
+
+  it('routes steer:true submissions through prompt.steer and swallows its degrade', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+    const session = getLiveSessionById(server!.core.accessor, id);
+    if (session === undefined) throw new Error(`session ${id} not found`);
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const prompt = lifecycle.get('main')!.accessor.get(IAgentPromptService);
+    const steerSpy = vi.spyOn(prompt, 'steer');
+
+    // steer: true — the route must hand the fresh prompt id to prompt.steer.
+    // The stub-model turn settles instantly, so there is nothing to steer
+    // into: the engine throws PROMPT_NOT_FOUND and the route must swallow it
+    // (idle/degraded steer replies like a normal submission).
+    const steered = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'steer me in' }],
+      steer: true,
+    });
+    expect(steered.body.code).toBe(0);
+    expect(steered.body.data.status).toBe('running');
+    expect(steerSpy).toHaveBeenCalledTimes(1);
+    expect(steerSpy).toHaveBeenCalledWith([steered.body.data.prompt_id]);
+
+    // steer omitted — the plain queue path must not touch prompt.steer.
+    const plain = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'wait your turn' }],
+    });
+    expect(plain.body.code).toBe(0);
+    expect(steerSpy).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an unknown agent profile with 40001', async () => {
