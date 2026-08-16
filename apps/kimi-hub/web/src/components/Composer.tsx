@@ -161,6 +161,7 @@ export function Composer({
   onSend,
   onAbort,
   onCommand,
+  draftRequest,
 }: {
   busy: boolean;
   /** Agent proxy base + hub token, for image upload/preview fetches. */
@@ -171,6 +172,12 @@ export function Composer({
   onSend: (text: string, images: readonly UploadedImage[]) => Promise<{ status: 'running' | 'queued' | 'blocked' }>;
   onAbort: () => Promise<void>;
   onCommand: (action: ComposerAction) => Promise<void>;
+  /**
+   * A recalled queued prompt, dropped in from the queue strip. `nonce` makes
+   * each recall a one-shot (same text recalled twice still lands twice); an
+   * in-progress draft is preserved by appending on a new line.
+   */
+  draftRequest?: { text: string; nonce: number } | null;
 }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -191,6 +198,31 @@ export function Composer({
   useEffect(() => {
     attachmentsRef.current = attachments;
   }, [attachments]);
+  /** Latest input for the draftRequest effect (keeps it off the dep list). */
+  const inputRef = useRef(input);
+  useEffect(() => {
+    inputRef.current = input;
+  }, [input]);
+
+  // Recalled queue entries land here: append to an in-progress draft (new
+  // line) instead of clobbering it, fill an empty composer outright, and
+  // focus. `nonce` dedups a re-render storm but not two real recalls.
+  const draftNonceRef = useRef(0);
+  useEffect(() => {
+    if (draftRequest === undefined || draftRequest === null) return;
+    if (draftRequest.nonce <= draftNonceRef.current) return;
+    draftNonceRef.current = draftRequest.nonce;
+    const prev = inputRef.current;
+    const next =
+      prev.trim() === ''
+        ? draftRequest.text
+        : draftRequest.text.trim() === ''
+          ? prev
+          : `${prev}\n${draftRequest.text}`;
+    setInput(next);
+    if (next.startsWith('/')) setHintDismissedFor(next);
+    textareaRef.current?.focus();
+  }, [draftRequest]);
 
   const uploadingCount = attachments.filter((a) => a.status === 'uploading').length;
   const ready = readyAttachments(attachments);

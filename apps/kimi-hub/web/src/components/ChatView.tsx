@@ -196,6 +196,20 @@ export function ChatView({
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
   };
 
+  // Queue-strip chip click = edit: drop the entry AND hand its text to the
+  // composer (the TUI's recall-last-queued). The nonce makes every recall a
+  // distinct request even when the text repeats.
+  const [recallDraft, setRecallDraft] = useState<{ text: string; nonce: number } | null>(null);
+  const recallNonceRef = useRef(0);
+  const recallQueued = async (promptId: string, text: string): Promise<void> => {
+    await abortQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
+    await queryClient.invalidateQueries({ queryKey: queueQueryKey });
+    if (text.trim() !== '') {
+      recallNonceRef.current += 1;
+      setRecallDraft({ text, nonce: recallNonceRef.current });
+    }
+  };
+
   // Per-message rollback: the engine cuts by the count of trailing prompts
   // (`:undo { count }`), so the clicked user turn maps to its ordinal from
   // the end. Turn-view confirm is per-bubble; the transcript resyncs itself
@@ -634,6 +648,7 @@ export function ChatView({
       <PromptQueueStrip
         queue={queue.data}
         onAbortQueued={(promptId) => void abortQueued(promptId).catch(setViewError)}
+        onRecallQueued={(promptId, text) => void recallQueued(promptId, text).catch(setViewError)}
       />
       <TodoListPanel todos={state.todos} />
       <Composer
@@ -644,6 +659,7 @@ export function ChatView({
         onSend={submitPrompt}
         onAbort={abortTurn}
         onCommand={runCommand}
+        draftRequest={recallDraft}
       />
     </div>
   );
