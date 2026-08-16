@@ -34,6 +34,7 @@ import { createAsyncApiDocument } from './protocol/asyncapi';
 import Fastify, { type FastifyInstance } from 'fastify';
 
 import { installErrorHandler } from './error-handler';
+import { installCompression } from './middleware/compression';
 import { createInstanceRegistry, type InstanceRegistration } from './instanceRegistry';
 import { transformOpenApiDocument } from './openapi/transforms';
 import type { SessionCommandBridge } from './transport/commandBridge';
@@ -371,6 +372,12 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
+  // Transparent content negotiation (br/gzip/deflate) — transcript pages and
+  // other JSON reads can be megabytes; browsers advertise support themselves.
+  // Tunneled (hub-relayed) replies pass through the connector's undici fetch,
+  // which decompresses and strips the encoding header, so the hub edge can
+  // re-encode for the browser.
+  installCompression(app);
   const hostCheck = createHostCheck({
     boundHost: host,
     extra: [...parseAllowedHosts(process.env), ...(opts.allowedHosts ?? [])],

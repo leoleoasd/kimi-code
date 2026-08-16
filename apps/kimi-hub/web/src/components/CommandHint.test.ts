@@ -66,7 +66,7 @@ describe('planHintKey', () => {
   it('closes on Escape and yields nothing mid-IME composition', () => {
     expect(planHintKey({ key: 'Escape' })).toEqual({ kind: 'close' });
     expect(planHintKey({ key: 'Escape', isComposing: true })).toEqual({ kind: 'none' });
-    expect(planHintKey({ key: 'ArrowDown', imeActive: true })).toEqual({ kind: 'none' });
+    expect(planHintKey({ key: 'ArrowDown', isComposing: true })).toEqual({ kind: 'none' });
   });
 });
 

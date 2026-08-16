@@ -43,8 +43,9 @@
  *     terminal events synthesize a minimal entity when submitted was missed.
  *   - `hook.result` becomes a 'hook' marker with the raw payload.
  *   - `context.spliced` (undo/clear) is projected as a bare 'undo' marker with
- *     the raw payload — no `items.remove` reconstruction in v1. Known
- *     limitation.
+ *     the raw payload minus `messages` (the spliced-out context is huge and
+ *     unread; wire.jsonl keeps it) — no `items.remove` reconstruction in v1.
+ *     Known limitation.
  *   - `error` / `warning` become `marker.upsert{ marker: 'notice' }` and never
  *     enter a step.
  *   - `swarm.*` / plan-mode transition events do not exist on the v2 bus;
@@ -296,7 +297,7 @@ export class AgentTranscriptProjector {
             ...restOf(event),
           }),
         ];
-      case 'context.spliced':
+      case 'context.spliced': {
         // Insert-only splices (a fresh prompt/message appended to context) are
         // already represented by the turn/message projections — mapping them
         // to an 'undo' marker would fabricate a rollback per prompt. Only a
@@ -304,7 +305,13 @@ export class AgentTranscriptProjector {
         // Known limitation: undo/clear still share this one bare 'undo' marker
         // (raw payload attached); no `items.remove` reconstruction in v1.
         if (event.deleteCount === 0) return [];
-        return [this.markerOp('undo', restOf(event))];
+        // Drop `messages`: the spliced-out context can be megabytes and no
+        // renderer reads it (wire.jsonl keeps it for context replay) — the
+        // marker travels whole through the store, the op journal, and every
+        // transcript page that includes it.
+        const { messages: _messages, ...payload } = restOf(event);
+        return [this.markerOp('undo', payload)];
+      }
       case 'error':
         return [this.noticeOp('error', event.message, restOf(event))];
       case 'warning':
