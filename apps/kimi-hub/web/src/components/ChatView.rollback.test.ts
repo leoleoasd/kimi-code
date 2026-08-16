@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
 
-import { rollbackCountsForItems } from './ChatView';
+import { rollbackCountsForItems, shouldRepin } from './ChatView';
 
 function turn(
   turnId: string,
@@ -15,6 +15,34 @@ function turn(
 function marker(markerId: string): TranscriptItem {
   return { kind: 'marker', markerId, marker: { kind: 'notice', level: 'info', text: 'x' } } as unknown as TranscriptItem;
 }
+
+describe('shouldRepin', () => {
+  it('never re-pins on upward ticks inside the tail zone (slow trackpad scroll)', () => {
+    // The reported bug: each 1–2px wheel tick re-armed the pin, so the next
+    // growth snap yanked the viewport back to the tail.
+    expect(shouldRepin(-2, 2)).toBe(false);
+    expect(shouldRepin(-2, 79)).toBe(false);
+    expect(shouldRepin(-100, 400)).toBe(false);
+  });
+
+  it('re-pins when scrolling down into the tail zone', () => {
+    expect(shouldRepin(10, 79)).toBe(true);
+    expect(shouldRepin(10, 0)).toBe(true);
+  });
+
+  it('does not re-pin while far from the tail even when scrolling down', () => {
+    expect(shouldRepin(10, 200)).toBe(false);
+  });
+
+  it('re-pins when resting exactly on the tail (no upward motion)', () => {
+    expect(shouldRepin(0, 0)).toBe(true);
+    expect(shouldRepin(0, -1)).toBe(true);
+  });
+
+  it('does not re-pin while leaving overscroll below the tail', () => {
+    expect(shouldRepin(-1, -3)).toBe(false);
+  });
+});
 
 describe('rollbackCountsForItems', () => {
   it('counts user turns back from the end (tail-complete view)', () => {
