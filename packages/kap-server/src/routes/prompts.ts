@@ -402,6 +402,19 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           () => staging?.discard(),
           () => staging?.discard(),
         );
+        if (req.body.steer === true) {
+          // Steer mode: pull the just-minted prompt out of the FIFO and inject
+          // it into the active turn at the next step boundary. PROMPT_NOT_FOUND
+          // means there is nothing to steer into — the session was idle (the
+          // enqueue itself already launched this prompt) or a compaction holds
+          // the context — so leave it queued/launched, mirroring the engine's
+          // own `submitSteer` degradation.
+          try {
+            await resolved.prompt.steer([handle.id]);
+          } catch (error) {
+            if (!(isError2(error) && error.code === ErrorCodes.PROMPT_NOT_FOUND)) throw error;
+          }
+        }
         reply.send(okEnvelope(projectPromptHandle(handle), req.id));
       } catch (error) {
         if (!enqueued) await preparedMedia?.discard();

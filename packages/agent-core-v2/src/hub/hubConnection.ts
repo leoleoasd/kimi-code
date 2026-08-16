@@ -10,7 +10,9 @@
  * roster read (`GET /hub/api/agents`, plus one proxied
  * `GET /agents/{agentId}/api/v2/sessions` per scoped agent to resolve session
  * titles) and the cross-session prompt submit
- * (`POST /agents/{agentId}/api/v1/sessions/{sessionId}/prompts`).
+ * (`POST /agents/{agentId}/api/v1/sessions/{sessionId}/prompts`, with
+ * `steer: true` when the message should be injected into the target's active
+ * turn instead of waiting in its FIFO).
  * Bound at App scope.
  */
 
@@ -59,6 +61,12 @@ export interface IHubConnectionService {
     agentId: string;
     sessionId: string;
     text: string;
+    /**
+     * Ask the receiver's server to inject the message into its active turn
+     * (steer) instead of leaving it in the prompt FIFO. Degrades to the
+     * queued/launched behavior when there is nothing to steer into.
+     */
+    steer?: boolean;
   }): Promise<HubMessageReceipt>;
 }
 

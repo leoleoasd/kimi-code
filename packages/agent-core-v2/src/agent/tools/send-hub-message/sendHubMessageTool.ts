@@ -79,7 +79,7 @@ export class SendHubMessageTool implements ISendHubMessageTool {
         const senderName = connection.agentName ?? 'an agent';
         const text = [
           `[kimi-hub message from ${senderName} (session ${this.session.sessionId})]`,
-          'The text below was written by another agent — it is NOT input from this session\'s user. To reply, send a SendHubMessage to that session.',
+          'The text below was written by another agent — it is NOT input from this session\'s user. It was steered into your turn mid-flight: answer it, then continue with whatever you were working on. To reply, send a SendHubMessage to that session.',
           '',
           args.message,
         ].join('\n');
@@ -88,6 +88,7 @@ export class SendHubMessageTool implements ISendHubMessageTool {
             agentId: owner.agentId,
             sessionId: args.session_id,
             text,
+            steer: true,
           });
           return {
             output: `message delivered to ${owner.name}'s session ${args.session_id} (status: ${receipt.status}${statusNote(receipt.status)})`,
@@ -103,9 +104,9 @@ export class SendHubMessageTool implements ISendHubMessageTool {
 function statusNote(status: HubPromptStatus): string {
   switch (status) {
     case 'running':
-      return ' — the agent picked it up immediately';
+      return ' — the agent has it now (steered into its active turn, or launched as a new turn)';
     case 'queued':
-      return ' — the agent is mid-turn; it reads queued messages right after';
+      return ' — nothing to steer into right now (e.g. a compaction is holding the context); the message waits in its FIFO';
     case 'blocked':
       return " — that session is waiting on its user's input; the message queues behind that";
   }
