@@ -30,7 +30,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { parseComposerCommand, type ComposerAction } from '#/sessions/commands';
-import type { SessionCommandInfo } from '#/sessions/api';
+import type { ModelChoice, SessionCommandInfo } from '#/sessions/api';
 import {
   buildImagePreviewUrl,
   composerAttachmentsReducer,
@@ -41,7 +41,9 @@ import {
   type ComposerAttachment,
   type UploadedImage,
 } from '#/sessions/files';
+import { commitDraftEffort, draftEffortFor, segmentsFor } from '#/sessions/thinking';
 import { CommandHint, commandHints, fillFor, hintSource, planHintKey } from './CommandHint';
+import { filterModels, ModelPicker, modelPickerQuery, planPickerKey } from './ModelPicker';
 import { errorMessage, Spinner } from './ui';
 
 // ------------------------------------------------------------------ pure plan
@@ -158,6 +160,7 @@ export function Composer({
   baseUrl,
   token,
   commandCatalog,
+  modelPicker,
   onSend,
   onAbort,
   onCommand,
@@ -169,6 +172,18 @@ export function Composer({
   token: string;
   /** The agent's slash-command catalog (`GET …/commands`) feeding the hint popover. */
   commandCatalog: readonly SessionCommandInfo[];
+  /**
+   * Feeds the `/model` popup (ModelPicker): the agent's model catalog plus the
+   * live binding. Absent (catalog unavailable) → `/model` keeps its old
+   * short-circuit notice path.
+   */
+  modelPicker?: {
+    readonly models: readonly ModelChoice[];
+    readonly currentModel?: string | undefined;
+    readonly currentEffort?: string | undefined;
+    readonly saving: boolean;
+    readonly onApply: (model: string, effort: string) => Promise<void>;
+  };
   onSend: (text: string, images: readonly UploadedImage[]) => Promise<{ status: 'running' | 'queued' | 'blocked' }>;
   onAbort: () => Promise<void>;
   onCommand: (action: ComposerAction) => Promise<void>;
@@ -190,6 +205,10 @@ export function Composer({
   // exact input — any further edit reopens it on the next slash word.
   const [hintDismissedFor, setHintDismissedFor] = useState<string | null>(null);
   const [hintIndex, setHintIndex] = useState(0);
+  // `/model` popup (ModelPicker): highlighted row (null = follow the live
+  // model) + per-alias draft-effort overrides from ←/→ stepping.
+  const [pickerIndex, setPickerIndex] = useState<number | null>(null);
+  const [pickerEffortDrafts, setPickerEffortDrafts] = useState<Record<string, string>>({});
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const pasteCounterRef = useRef(0);
@@ -233,6 +252,56 @@ export function Composer({
   useEffect(() => {
     if (hintIndex >= hints.length) setHintIndex(0);
   }, [hintIndex, hints.length]);
+
+  // The `/model` popup: open while the input is the bare word (+ optional
+  // filter tail). An empty CATALOG closes it too — the composer then falls
+  // back to the dialog short-circuit notice (same as before the popup).
+  const pickerQuery = modelPicker === undefined ? null : modelPickerQuery(input);
+  const pickerCatalog = modelPicker?.models ?? [];
+  const pickerModels = pickerQuery === null ? [] : filterModels(pickerCatalog, pickerQuery.filter);
+  const pickerOpen = pickerQuery !== null && pickerCatalog.length > 0;
+  // `null` = no explicit ↑/↓ cursor yet — the highlight follows the LIVE model
+  // (TUI parity: the dialog opens on the current row).
+  const pickerActive = Math.min(
+    pickerIndex ??
+      Math.max(
+        pickerModels.findIndex((model) => model.id === modelPicker?.currentModel),
+        0,
+      ),
+    Math.max(pickerModels.length - 1, 0),
+  );
+
+  const pickerDraftOf = (model: ModelChoice): string =>
+    draftEffortFor(model, {
+      override: pickerEffortDrafts[model.id],
+      liveEffort: model.id === modelPicker?.currentModel ? modelPicker.currentEffort : undefined,
+    });
+
+  /** ←/→ cycle the highlighted row's draft (TUI parity: 2 segments flip, more clamp). */
+  const stepPickerEffort = (delta: 1 | -1): void => {
+    const row = pickerModels[pickerActive];
+    if (row === undefined) return;
+    const segments = segmentsFor(row);
+    if (segments.length < 2) return;
+    const idx = segments.indexOf(pickerDraftOf(row));
+    const next = segments.length === 2 ? segments[idx === 0 ? 1 : 0] : segments[idx + delta];
+    if (next === undefined) return;
+    setPickerEffortDrafts((drafts) => ({ ...drafts, [row.id]: next }));
+  };
+
+  /** Enter / row-click: commit { model, committedDraftEffort } and close (input cleared). */
+  const applyPickerRow = async (row: ModelChoice): Promise<void> => {
+    if (modelPicker === undefined) return;
+    const effort = commitDraftEffort(row, pickerDraftOf(row));
+    setError(null);
+    setInput('');
+    setPickerIndex(null);
+    try {
+      await modelPicker.onApply(row.id, effort);
+    } catch (error) {
+      setError(error);
+    }
+  };
 
   const acceptHint = (candidate: (typeof hints)[number]): void => {
     const fill = fillFor(candidate);
@@ -323,6 +392,15 @@ export function Composer({
       case 'blocked-uploading':
         return;
       case 'command': {
+        // With the `/model` popup open and models to pick, Enter/Send applies
+        // the highlighted row instead of dispatching the line — same gesture
+        // as the TUI dialog. An empty FILTER result falls through: `/model
+        // <unknown>` still forwards to the agent's command bridge as before.
+        const pickerRow = pickerOpen ? pickerModels[pickerActive] : undefined;
+        if (pickerOpen && pickerRow !== undefined) {
+          void applyPickerRow(pickerRow);
+          return;
+        }
         const text = input.trim();
         setSending(true);
         setError(null);
@@ -393,6 +471,25 @@ export function Composer({
       }}
     >
       {hintOpen ? <CommandHint active={hintIndex} candidates={hints} onAccept={acceptHint} /> : null}
+      {pickerOpen && modelPicker !== undefined ? (
+        <ModelPicker
+          models={pickerModels}
+          currentModel={modelPicker.currentModel}
+          currentEffort={modelPicker.currentEffort}
+          active={pickerActive}
+          effortDrafts={pickerEffortDrafts}
+          disabled={modelPicker.saving}
+          onApply={(model, effort) => {
+            setInput('');
+            setPickerIndex(null);
+            void modelPicker.onApply(model, effort).catch(setError);
+          }}
+          onClose={() => {
+            setInput('');
+            setPickerIndex(null);
+          }}
+        />
+      ) : null}
 
       {/* -------------------------------------------- attachment chips */}
       {attachments.length > 0 ? (
@@ -481,6 +578,43 @@ export function Composer({
             setQueuedHint(false);
           }}
           onKeyDown={(e) => {
+            // The `/model` popup wins every key while open (like the hint
+            // popover) — including Escape, whose turn-abort binding only
+            // applies once it's closed. Empty filter results let Enter fall
+            // through to the normal send path (remote `/model <unknown>`).
+            if (pickerOpen) {
+              const pickerAction = planPickerKey({
+                key: e.key,
+                isComposing: e.nativeEvent.isComposing,
+              });
+              if (pickerAction.kind === 'move') {
+                e.preventDefault();
+                setPickerIndex(
+                  (pickerActive + pickerAction.delta + pickerModels.length) % pickerModels.length,
+                );
+                return;
+              }
+              if (pickerAction.kind === 'effort') {
+                e.preventDefault();
+                stepPickerEffort(pickerAction.delta);
+                return;
+              }
+              if (pickerAction.kind === 'apply') {
+                const row = pickerModels[pickerActive];
+                if (row !== undefined) {
+                  e.preventDefault();
+                  void applyPickerRow(row);
+                  return;
+                }
+              }
+              if (pickerAction.kind === 'close') {
+                e.preventDefault();
+                e.stopPropagation();
+                setInput('');
+                setPickerIndex(null);
+                return;
+              }
+            }
             // Hint popover wins every key while open — including Escape, whose
             // turn-abort binding only applies once it's closed.
             if (hintOpen) {

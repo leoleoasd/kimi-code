@@ -13,10 +13,11 @@
  * download lives here — the TUI's own variant lands on the agent machine).
  * One more class never leaves the page: the host's INTERACTIVE-dialog
  * commands (`DIALOG_COMMANDS`, e.g. bare `/model`) would pop a TUI overlay on
- * the agent's screen with no way for the page to see or drive it — they're
- * short-circuited with a pointer at the matching native control. Everything
- * else — including words this build has never heard of — reaches the
- * dispatch untouched.
+ * the agent's screen with no way for the page to see or drive it. `/model`
+ * normally never gets this far — the composer's ModelPicker popup intercepts
+ * the word while it's typed — so this notice is the fallback for a session
+ * whose model catalog is unavailable. Everything else — including words this
+ * build has never heard of — reaches the dispatch untouched.
  */
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
@@ -71,7 +72,7 @@ export const LOCAL_COMMANDS = [
  * behead the dialog on the host and is forwarded as usual).
  */
 const DIALOG_COMMAND_NOTICES: Record<string, string> = {
-  '/model': "the TUI /model dialog opens on the agent's own screen, not here — use the model dropdown in the chat header",
+  '/model': "the TUI /model dialog opens on the agent's own screen, not here — type /model to open the model picker above the composer, or use the dropdown in the chat header",
 };
 
 /** The DOM fallback for `/export-debug-zip`: anchor-click an object URL, revoke deferred. */

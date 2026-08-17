@@ -462,10 +462,11 @@ export function ChatView({
     staleTime: 60_000,
   });
   const [modelSaving, setModelSaving] = useState(false);
-  const saveModel = async (model: string): Promise<void> => {
+  /** Header dropdown AND the `/model` popup: model + optional thinking effort in one profile write. */
+  const saveModel = async (model: string, thinking?: string): Promise<void> => {
     setModelSaving(true);
     try {
-      await setSessionModel({ baseUrl, token, sessionId, model });
+      await setSessionModel({ baseUrl, token, sessionId, model, thinking });
       await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
     } finally {
       setModelSaving(false);
@@ -709,6 +710,17 @@ export function ChatView({
         baseUrl={baseUrl}
         token={token}
         commandCatalog={commandCatalog.data ?? []}
+        modelPicker={
+          models.data !== undefined && models.data.length > 0
+            ? {
+                models: models.data,
+                currentModel: status.data?.model,
+                currentEffort: status.data?.thinkingLevel,
+                saving: modelSaving,
+                onApply: saveModel,
+              }
+            : undefined
+        }
         onSend={submitPrompt}
         onAbort={abortTurn}
         onCommand={runCommand}
