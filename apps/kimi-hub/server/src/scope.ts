@@ -8,7 +8,10 @@
  *
  *   REST (path evaluated after the `/agents/:agentId` prefix is stripped):
  *   - always allowed: `GET /api/v1/healthz`, `GET /api/v1/meta`,
- *     `GET /api/v1/auth` (bootstrap agents/UI need them);
+ *     `GET /api/v1/auth` (bootstrap agents/UI need them),
+ *     `GET /api/v1/models` (the configured catalog — alias/display names only,
+ *     no credentials; the prompt surface already accepts any of these via its
+ *     `model` field, so the hub UI's model picker needs the same list);
  *   - `/api/v1/files[/{id}]` (upload/GET/DELETE): the prompt-attachment
  *     store — required for image sending from the hub UI; file ids are
  *     unguessable, and prompt bodies stay session-checked;
@@ -38,7 +41,12 @@
  */
 
 /** Paths that stay reachable on a scoped agent (GET only, exact match). */
-const ALWAYS_ALLOWED_GET_PATHS = new Set(['/api/v1/healthz', '/api/v1/meta', '/api/v1/auth']);
+const ALWAYS_ALLOWED_GET_PATHS = new Set([
+  '/api/v1/healthz',
+  '/api/v1/meta',
+  '/api/v1/auth',
+  '/api/v1/models',
+]);
 
 /** `/api/v1/files[/{id}]` — any method: up/download/delete prompt attachments. */
 const FILES_PATH_PATTERN = /^\/api\/v1\/files(?:\/[^/]+)?$/;

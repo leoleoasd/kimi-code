@@ -46,6 +46,7 @@ import type { SessionMetaUpdated } from '#/transcript/ws';
 import {
   abortQueuedPrompt,
   abortSession,
+  fetchModels,
   fetchPromptQueue,
   fetchSession,
   fetchSessionCommands,
@@ -53,6 +54,7 @@ import {
   fetchSessionStatus,
   sendPrompt,
   sessionInfoQueryKey,
+  setSessionModel,
   undoSession,
 } from '#/sessions/api';
 import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
@@ -450,6 +452,26 @@ export function ChatView({
     retry: false,
   });
 
+  // The model dropdown: catalog is agent-wide (`GET /models`), the current
+  // value rides the status poll; a selection persists at the engine profile
+  // (`POST …/profile agent_config.model`) and the status refetch shows it.
+  const models = useQuery({
+    queryKey: ['agent-models', baseUrl],
+    queryFn: () => fetchModels({ baseUrl, token }),
+    retry: false,
+    staleTime: 60_000,
+  });
+  const [modelSaving, setModelSaving] = useState(false);
+  const saveModel = async (model: string): Promise<void> => {
+    setModelSaving(true);
+    try {
+      await setSessionModel({ baseUrl, token, sessionId, model });
+      await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
+    } finally {
+      setModelSaving(false);
+    }
+  };
+
   const submitPrompt = async (
     text: string,
     images: readonly UploadedImage[],
@@ -551,10 +573,41 @@ export function ChatView({
           </Badge>
         ) : null}
         {status.data !== undefined ? (
-          <span className="ml-auto text-[10px] text-neutral-600">
-            {status.data.model ?? ''}
+          <span className="ml-auto flex items-center gap-1.5 text-[10px] text-neutral-600">
+            {models.data !== undefined && models.data.length > 0 ? (
+              <select
+                aria-label="model"
+                title="switch model"
+                value={status.data.model ?? ''}
+                disabled={modelSaving}
+                className="max-w-[9rem] rounded border border-neutral-800 bg-neutral-900 px-1 py-0.5 text-[10px] text-neutral-400 hover:border-neutral-700 disabled:opacity-50"
+                onChange={(e) => {
+                  void saveModel(e.target.value).catch(setViewError);
+                }}
+              >
+                {status.data.model === undefined || status.data.model === '' ? (
+                  <option value="" disabled>
+                    model…
+                  </option>
+                ) : null}
+                {models.data.map((choice) => (
+                  <option key={choice.id} value={choice.id}>
+                    {choice.label}
+                  </option>
+                ))}
+                {status.data.model !== undefined &&
+                status.data.model !== '' &&
+                !models.data.some((choice) => choice.id === status.data.model) ? (
+                  // An alias the catalog doesn't list (renamed/foreign config):
+                  // still offer it so the select can display the live value.
+                  <option value={status.data.model}>{status.data.model}</option>
+                ) : null}
+              </select>
+            ) : (
+              <span>{status.data.model ?? ''}</span>
+            )}
             {status.data.maxContextTokens !== undefined
-              ? ` · ctx ${Math.round(status.data.contextUsage * 100)}%`
+              ? `ctx ${Math.round(status.data.contextUsage * 100)}%`
               : ''}
           </span>
         ) : null}

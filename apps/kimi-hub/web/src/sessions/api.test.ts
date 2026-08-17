@@ -8,7 +8,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { EnvelopeError } from '#/http';
-import { abortQueuedPrompt, fetchPromptQueue } from './api';
+import {
+  abortQueuedPrompt,
+  fetchModels,
+  fetchPromptQueue,
+  fetchSessionCommands,
+  setSessionModel,
+} from './api';
 
 const ENDPOINT = { baseUrl: 'http://hub.example.com/agents/a1', token: 'tok' };
 
@@ -189,5 +195,78 @@ describe('abortQueuedPrompt', () => {
     expect(calls[0]).toBe(
       'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts/p%202:abort?agent_id=sub2',
     );
+  });
+});
+
+describe('fetchModels', () => {
+  it('normalizes the catalog; shared display names keep their alias in the label', async () => {
+    const models = await fetchModels({
+      ...ENDPOINT,
+      fetchImpl: async () =>
+        jsonResponse({
+          code: 0,
+          msg: 'ok',
+          data: {
+            items: [
+              {
+                provider: 'flashflame-gw',
+                model: 'k3-gw',
+                display_name: 'kimi-k3',
+                max_context_size: 1048576,
+              },
+              { provider: 'b300', model: 'k3-b300', display_name: 'kimi-k3' },
+              { provider: 'selfhost', model: 'my-tiny' },
+              { bogus: true },
+            ],
+          },
+        }),
+    });
+    expect(models).toEqual([
+      { id: 'k3-gw', label: 'kimi-k3 (k3-gw · flashflame-gw)', provider: 'flashflame-gw' },
+      { id: 'k3-b300', label: 'kimi-k3 (k3-b300 · b300)', provider: 'b300' },
+      { id: 'my-tiny', label: 'my-tiny · selfhost', provider: 'selfhost' },
+    ]);
+  });
+});
+
+describe('setSessionModel', () => {
+  it('posts the alias as agent_config.model to the session profile', async () => {
+    let captured: { url: string; body: unknown } | undefined;
+    await setSessionModel({
+      ...ENDPOINT,
+      sessionId: 's 1',
+      model: 'k3-b300',
+      fetchImpl: async (input, init) => {
+        captured = {
+          url: requestUrl(input),
+          body: JSON.parse((init as RequestInit).body as string),
+        };
+        return jsonResponse({ code: 0, msg: 'ok', data: {} });
+      },
+    });
+    expect(captured?.url).toBe('http://hub.example.com/agents/a1/api/v1/sessions/s%201/profile');
+    expect(captured?.body).toEqual({ agent_config: { model: 'k3-b300' } });
+  });
+});
+
+describe('fetchSessionCommands', () => {
+  it('drops TUI-dialog commands (/model) from the hint catalog', async () => {
+    const rows = await fetchSessionCommands({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: async () =>
+        jsonResponse({
+          code: 0,
+          msg: 'ok',
+          data: {
+            commands: [
+              { name: 'model', aliases: [], usage: '/model', description: 'pick a model' },
+              { name: 'clear', aliases: [], usage: '/clear', description: 'clear context' },
+              { name: 'model-broken' },
+            ],
+          },
+        }),
+    });
+    expect(rows.map((row) => row.name)).toEqual(['clear']);
   });
 });

@@ -229,6 +229,10 @@ async function startScopedAgentServer(): Promise<ScopedLocalServer> {
       envelope({ path: url.pathname });
       return;
     }
+    if (req.method === 'GET' && url.pathname === '/api/v1/models') {
+      envelope({ items: [{ provider: 'p1', model: 'm1', max_context_size: 1024 }] });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/v1/sessions') {
       // A non-envelope body must pass the hub's list filter unchanged.
       if (url.searchParams.get('raw') === '1') {
@@ -625,10 +629,13 @@ describe('session-scoped agent', () => {
     const sub = await scopedFetch(ctx, `/api/v1/sessions/${SCOPE_IN}/profile`);
     expect(sub.status).toBe(200);
 
-    for (const path of ['/api/v1/healthz', '/api/v1/meta', '/api/v1/auth']) {
+    for (const path of ['/api/v1/healthz', '/api/v1/meta', '/api/v1/auth', '/api/v1/models']) {
       const res = await scopedFetch(ctx, path);
       expect(res.status).toBe(200);
     }
+    // …but the catalog write surfaces (/api/v1/providers*) stay gated.
+    const providers = await scopedFetch(ctx, '/api/v1/providers');
+    expect(providers.status).toBe(403);
   });
 
   it('(a) REST denies out-of-scope sessions, host paths, and session create (40302)', async () => {

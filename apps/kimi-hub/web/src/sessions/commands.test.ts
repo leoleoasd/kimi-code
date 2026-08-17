@@ -43,6 +43,20 @@ describe('parseComposerCommand', () => {
       });
     }
   });
+
+  it('short-circuits bare dialog commands — /model pops a TUI overlay, never the page', () => {
+    const parsed = parseComposerCommand('/model');
+    expect(parsed?.kind).toBe('action');
+    expect(parsed?.action.kind).toBe('notice');
+    if (parsed?.action.kind === 'notice') {
+      expect(parsed.action.notice).toContain('model dropdown');
+    }
+    // …but an ARG-CARRYING line still forwards: it may head the dialog server-side.
+    expect(parseComposerCommand('/model k3-b300')).toEqual({
+      kind: 'action',
+      action: { kind: 'remote', input: '/model k3-b300' },
+    });
+  });
 });
 
 /** Envelope-level fake fetch — mirrors files.test.ts: assert the request, reply the envelope. */
