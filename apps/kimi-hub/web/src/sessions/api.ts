@@ -279,6 +279,58 @@ export async function abortSession(endpoint: HttpEndpoint & { sessionId: string 
   });
 }
 
+// ------------------------------------------------------------------ model catalog
+
+/**
+ * One selectable model from the agent's configured catalog (`GET
+ * /api/v1/models`). `id` is the catalog alias — the same string `GET
+ * …/status` reports as the session's current model and
+ * `POST …/profile {agent_config:{model}}` takes.
+ */
+export interface ModelChoice {
+  readonly id: string;
+  readonly label: string;
+  readonly provider: string;
+}
+
+function parseModelChoice(value: unknown): ModelChoice | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const m = value as Record<string, unknown>;
+  const provider = m['provider'];
+  const alias = m['model'];
+  if (typeof provider !== 'string' || typeof alias !== 'string') return undefined;
+  const display =
+    typeof m['display_name'] === 'string' && m['display_name'] !== ''
+      ? m['display_name']
+      : undefined;
+  // Two aliases can share one display name (k3-gw / k3-b300 are both
+  // "kimi-k3"); the label keeps the alias visible so they stay tellable.
+  const label =
+    display === undefined || display === alias
+      ? `${alias} · ${provider}`
+      : `${display} (${alias} · ${provider})`;
+  return { id: alias, label, provider };
+}
+
+/** The agent-wide model catalog the header picker offers. */
+export async function fetchModels(endpoint: HttpEndpoint): Promise<readonly ModelChoice[]> {
+  const data = await getJson({ ...endpoint, path: '/api/v1/models' });
+  const d = (data ?? {}) as Record<string, unknown>;
+  if (!Array.isArray(d['items'])) throw new Error('models: unexpected response shape');
+  return (d['items'] as unknown[]).map(parseModelChoice).filter((m): m is ModelChoice => m !== undefined);
+}
+
+/** Switch the session's main agent to a catalog alias — persists at the engine profile. */
+export async function setSessionModel(
+  endpoint: HttpEndpoint & { sessionId: string; model: string },
+): Promise<void> {
+  await postJson({
+    ...endpoint,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/profile`,
+    body: { agent_config: { model: endpoint.model } },
+  });
+}
+
 // ---------------------------------------------------------------- commands
 
 /** One row of the agent's slash-command catalog (`GET …/commands`; bridge-provided). */
@@ -288,6 +340,16 @@ export interface SessionCommandInfo {
   readonly usage: string;
   readonly description?: string;
 }
+
+/**
+ * Commands that open an INTERACTIVE dialog on the host TUI's screen (a picker
+ * overlay, not a line of output). The hub page can neither render nor drive
+ * those — they're dropped from the hint catalog, and `parseComposerCommand`
+ * short-circuits them locally with a pointer at the native control
+ * (`model` has the header dropdown). Add a name here whenever a bridged
+ * command turns out to be dialog-only on the host.
+ */
+export const DIALOG_COMMANDS: ReadonlySet<string> = new Set(['model']);
 
 /**
  * The commands the agent exposes — the connected TUI's registry when bridged,
@@ -305,7 +367,7 @@ export async function fetchSessionCommands(
   if (!Array.isArray(c['commands'])) throw new Error('commands: unexpected response shape');
   return (c['commands'] as unknown[])
     .map(parseCommandInfo)
-    .filter((row): row is SessionCommandInfo => row !== undefined);
+    .filter((row): row is SessionCommandInfo => row !== undefined && !DIALOG_COMMANDS.has(row.name));
 }
 
 function parseCommandInfo(value: unknown): SessionCommandInfo | undefined {

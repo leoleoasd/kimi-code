@@ -11,8 +11,12 @@
  * Only two actions stay local, because their substance IS the browser, not
  * the agent: `/copy` (the clipboard lives here) and `/export-debug-zip` (the
  * download lives here — the TUI's own variant lands on the agent machine).
- * Everything else — including words this build has never heard of — reaches
- * the dispatch untouched.
+ * One more class never leaves the page: the host's INTERACTIVE-dialog
+ * commands (`DIALOG_COMMANDS`, e.g. bare `/model`) would pop a TUI overlay on
+ * the agent's screen with no way for the page to see or drive it — they're
+ * short-circuited with a pointer at the matching native control. Everything
+ * else — including words this build has never heard of — reaches the
+ * dispatch untouched.
  */
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
@@ -24,7 +28,8 @@ import { exportSession, runSessionCommand } from './api';
 export type ComposerAction =
   | { readonly kind: 'remote'; readonly input: string }
   | { readonly kind: 'copy' }
-  | { readonly kind: 'export-debug-zip' };
+  | { readonly kind: 'export-debug-zip' }
+  | { readonly kind: 'notice'; readonly notice: string };
 
 export interface ParsedComposerCommand {
   readonly kind: 'action';
@@ -60,6 +65,15 @@ export const LOCAL_COMMANDS = [
   { usage: '/export-debug-zip', description: 'Download the session as a debug ZIP archive' },
 ] as const;
 
+/**
+ * Bare dialog commands → the short-circuit notice the composer surfaces.
+ * Keys are the full lines (bare form only — an /xxx with arguments may well
+ * behead the dialog on the host and is forwarded as usual).
+ */
+const DIALOG_COMMAND_NOTICES: Record<string, string> = {
+  '/model': "the TUI /model dialog opens on the agent's own screen, not here — use the model dropdown in the chat header",
+};
+
 /** The DOM fallback for `/export-debug-zip`: anchor-click an object URL, revoke deferred. */
 function defaultDownload(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -87,6 +101,10 @@ export function parseComposerCommand(input: string): ParsedComposerCommand | nul
   if (input === '/export-debug-zip') {
     return { kind: 'action', action: { kind: 'export-debug-zip' } };
   }
+  const dialogNotice = DIALOG_COMMAND_NOTICES[input];
+  if (dialogNotice !== undefined) {
+    return { kind: 'action', action: { kind: 'notice', notice: dialogNotice } };
+  }
   return { kind: 'action', action: { kind: 'remote', input } };
 }
 
@@ -95,6 +113,9 @@ export async function runComposerCommand(
   action: ComposerAction,
   ctx: CommandContext,
 ): Promise<CommandResult> {
+  if (action.kind === 'notice') {
+    return { notice: action.notice };
+  }
   if (action.kind === 'remote') {
     const result = await runSessionCommand({ ...ctx, input: action.input });
     const notice = [...result.errors, ...result.notices].join('\n');
