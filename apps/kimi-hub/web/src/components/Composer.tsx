@@ -43,7 +43,7 @@ import {
 } from '#/sessions/files';
 import { commitDraftEffort, draftEffortFor, segmentsFor } from '#/sessions/thinking';
 import { CommandHint, commandHints, fillFor, hintSource, planHintKey } from './CommandHint';
-import { filterModels, ModelPicker, modelPickerQuery, planPickerKey } from './ModelPicker';
+import { ModelPicker, planPickerKey } from './ModelPicker';
 import { errorMessage, Spinner } from './ui';
 
 // ------------------------------------------------------------------ pure plan
@@ -173,8 +173,8 @@ export function Composer({
   /** The agent's slash-command catalog (`GET …/commands`) feeding the hint popover. */
   commandCatalog: readonly SessionCommandInfo[];
   /**
-   * Feeds the `/model` popup (ModelPicker): the agent's model catalog plus the
-   * live binding. Absent (catalog unavailable) → `/model` keeps its old
+   * Feeds the `/model` dialog (ModelPicker): the agent's model catalog plus
+   * the live binding. Absent (catalog unavailable) → `/model` keeps its old
    * short-circuit notice path.
    */
   modelPicker?: {
@@ -205,8 +205,11 @@ export function Composer({
   // exact input — any further edit reopens it on the next slash word.
   const [hintDismissedFor, setHintDismissedFor] = useState<string | null>(null);
   const [hintIndex, setHintIndex] = useState(0);
-  // `/model` popup (ModelPicker): highlighted row (null = follow the live
-  // model) + per-alias draft-effort overrides from ←/→ stepping.
+  // `/model` dialog (ModelPicker): opened by SUBMITTING the bare command
+  // (Enter on `/model`), not while typing; closed by Esc/✕/an apply. Holds
+  // the highlighted row (null = follow the live model) + per-alias
+  // draft-effort overrides from ←/→ stepping.
+  const [pickerOpen, setPickerOpen] = useState(false);
   const [pickerIndex, setPickerIndex] = useState<number | null>(null);
   const [pickerEffortDrafts, setPickerEffortDrafts] = useState<Record<string, string>>({});
 
@@ -253,13 +256,9 @@ export function Composer({
     if (hintIndex >= hints.length) setHintIndex(0);
   }, [hintIndex, hints.length]);
 
-  // The `/model` popup: open while the input is the bare word (+ optional
-  // filter tail). An empty CATALOG closes it too — the composer then falls
-  // back to the dialog short-circuit notice (same as before the popup).
-  const pickerQuery = modelPicker === undefined ? null : modelPickerQuery(input);
-  const pickerCatalog = modelPicker?.models ?? [];
-  const pickerModels = pickerQuery === null ? [] : filterModels(pickerCatalog, pickerQuery.filter);
-  const pickerOpen = pickerQuery !== null && pickerCatalog.length > 0;
+  // `/model` dialog rows: the full agent catalog (no filtering — submitting
+  // the bare command opened the dialog; input stays free for real prompts).
+  const pickerModels = modelPicker?.models ?? [];
   // `null` = no explicit ↑/↓ cursor yet — the highlight follows the LIVE model
   // (TUI parity: the dialog opens on the current row).
   const pickerActive = Math.min(
@@ -270,6 +269,20 @@ export function Composer({
       ),
     Math.max(pickerModels.length - 1, 0),
   );
+
+  /** Open the dialog (bare `/model` submit); a no-catalog session keeps the notice fallback. */
+  const openPicker = (): void => {
+    setPickerIndex(null);
+    setPickerOpen(true);
+    textareaRef.current?.focus();
+  };
+
+  /** Close without applying (Esc / ✕): the draft cursor resets for the next open. */
+  const closePicker = (): void => {
+    setPickerOpen(false);
+    setPickerIndex(null);
+    textareaRef.current?.focus();
+  };
 
   const pickerDraftOf = (model: ModelChoice): string =>
     draftEffortFor(model, {
@@ -289,12 +302,12 @@ export function Composer({
     setPickerEffortDrafts((drafts) => ({ ...drafts, [row.id]: next }));
   };
 
-  /** Enter / row-click: commit { model, committedDraftEffort } and close (input cleared). */
+  /** Enter / row-click: commit { model, committedDraftEffort } and close the dialog. */
   const applyPickerRow = async (row: ModelChoice): Promise<void> => {
     if (modelPicker === undefined) return;
     const effort = commitDraftEffort(row, pickerDraftOf(row));
     setError(null);
-    setInput('');
+    setPickerOpen(false);
     setPickerIndex(null);
     try {
       await modelPicker.onApply(row.id, effort);
@@ -392,13 +405,14 @@ export function Composer({
       case 'blocked-uploading':
         return;
       case 'command': {
-        // With the `/model` popup open and models to pick, Enter/Send applies
-        // the highlighted row instead of dispatching the line — same gesture
-        // as the TUI dialog. An empty FILTER result falls through: `/model
-        // <unknown>` still forwards to the agent's command bridge as before.
-        const pickerRow = pickerOpen ? pickerModels[pickerActive] : undefined;
-        if (pickerOpen && pickerRow !== undefined) {
-          void applyPickerRow(pickerRow);
+        // Bare `/model` OPENS the page's model dialog instead of dispatching:
+        // the TUI's own dialog can't render over the hub (it would pop the
+        // host's screen). A session whose catalog is unavailable keeps the
+        // short-circuit-notice fallback; `/model <args>` still forwards to
+        // the agent's command bridge as before.
+        if (input.trim() === '/model' && modelPicker !== undefined && modelPicker.models.length > 0) {
+          setInput('');
+          openPicker();
           return;
         }
         const text = input.trim();
@@ -480,14 +494,11 @@ export function Composer({
           effortDrafts={pickerEffortDrafts}
           disabled={modelPicker.saving}
           onApply={(model, effort) => {
-            setInput('');
+            setPickerOpen(false);
             setPickerIndex(null);
             void modelPicker.onApply(model, effort).catch(setError);
           }}
-          onClose={() => {
-            setInput('');
-            setPickerIndex(null);
-          }}
+          onClose={closePicker}
         />
       ) : null}
 
@@ -578,10 +589,10 @@ export function Composer({
             setQueuedHint(false);
           }}
           onKeyDown={(e) => {
-            // The `/model` popup wins every key while open (like the hint
+            // The `/model` dialog wins every key while open (like the hint
             // popover) — including Escape, whose turn-abort binding only
-            // applies once it's closed. Empty filter results let Enter fall
-            // through to the normal send path (remote `/model <unknown>`).
+            // applies once it's closed. Typing keeps working though: any
+            // non-picker key still lands in the textarea while it is up.
             if (pickerOpen) {
               const pickerAction = planPickerKey({
                 key: e.key,
@@ -610,8 +621,7 @@ export function Composer({
               if (pickerAction.kind === 'close') {
                 e.preventDefault();
                 e.stopPropagation();
-                setInput('');
-                setPickerIndex(null);
+                closePicker();
                 return;
               }
             }
