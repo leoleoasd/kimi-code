@@ -49,7 +49,7 @@ describe('parseComposerCommand', () => {
     expect(parsed?.kind).toBe('action');
     expect(parsed?.action.kind).toBe('notice');
     if (parsed?.action.kind === 'notice') {
-      expect(parsed.action.notice).toContain('model dropdown');
+      expect(parsed.action.notice).toContain('model picker');
     }
     // …but an ARG-CARRYING line still forwards: it may head the dialog server-side.
     expect(parseComposerCommand('/model k3-b300')).toEqual({

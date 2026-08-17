@@ -13,6 +13,7 @@ import {
   fetchModels,
   fetchPromptQueue,
   fetchSessionCommands,
+  fetchSessionStatus,
   setSessionModel,
 } from './api';
 
@@ -213,6 +214,9 @@ describe('fetchModels', () => {
                 model: 'k3-gw',
                 display_name: 'kimi-k3',
                 max_context_size: 1048576,
+                capabilities: ['thinking', 'vision'],
+                support_efforts: ['low', 'high', 'max'],
+                default_effort: 'high',
               },
               { provider: 'b300', model: 'k3-b300', display_name: 'kimi-k3' },
               { provider: 'selfhost', model: 'my-tiny' },
@@ -222,9 +226,30 @@ describe('fetchModels', () => {
         }),
     });
     expect(models).toEqual([
-      { id: 'k3-gw', label: 'kimi-k3 (k3-gw · flashflame-gw)', provider: 'flashflame-gw' },
-      { id: 'k3-b300', label: 'kimi-k3 (k3-b300 · b300)', provider: 'b300' },
-      { id: 'my-tiny', label: 'my-tiny · selfhost', provider: 'selfhost' },
+      {
+        id: 'k3-gw',
+        label: 'kimi-k3 (k3-gw · flashflame-gw)',
+        provider: 'flashflame-gw',
+        capabilities: ['thinking', 'vision'],
+        supportEfforts: ['low', 'high', 'max'],
+        defaultEffort: 'high',
+      },
+      {
+        id: 'k3-b300',
+        label: 'kimi-k3 (k3-b300 · b300)',
+        provider: 'b300',
+        capabilities: undefined,
+        supportEfforts: undefined,
+        defaultEffort: undefined,
+      },
+      {
+        id: 'my-tiny',
+        label: 'my-tiny · selfhost',
+        provider: 'selfhost',
+        capabilities: undefined,
+        supportEfforts: undefined,
+        defaultEffort: undefined,
+      },
     ]);
   });
 });
@@ -246,6 +271,49 @@ describe('setSessionModel', () => {
     });
     expect(captured?.url).toBe('http://hub.example.com/agents/a1/api/v1/sessions/s%201/profile');
     expect(captured?.body).toEqual({ agent_config: { model: 'k3-b300' } });
+  });
+
+  it('rides an optional thinking effort in the same profile write', async () => {
+    let capturedBody: unknown;
+    await setSessionModel({
+      ...ENDPOINT,
+      sessionId: 's1',
+      model: 'k3-b300',
+      thinking: 'max',
+      fetchImpl: async (_input, init) => {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return jsonResponse({ code: 0, msg: 'ok', data: {} });
+      },
+    });
+    expect(capturedBody).toEqual({ agent_config: { model: 'k3-b300', thinking: 'max' } });
+  });
+});
+
+describe('fetchSessionStatus', () => {
+  it('reads thinking_level; an empty wire value (no model bound) reads as absent', async () => {
+    const running = await fetchSessionStatus({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: queueFetch([], {
+        busy: true,
+        model: 'k3-b300',
+        thinking_level: 'max',
+        permission: 'yolo',
+        plan_mode: false,
+        swarm_mode: false,
+        context_tokens: 7,
+        context_usage: 0.01,
+      }),
+    });
+    expect(running.thinkingLevel).toBe('max');
+
+    const unbound = await fetchSessionStatus({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: queueFetch([], { busy: false, thinking_level: '', permission: 'default' }),
+    });
+    expect(unbound.model).toBeUndefined();
+    expect(unbound.thinkingLevel).toBeUndefined();
   });
 });
 

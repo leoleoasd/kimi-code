@@ -240,6 +240,8 @@ export async function fetchSessionPlans(
 export interface SessionStatus {
   readonly busy: boolean;
   readonly model?: string;
+  /** The model's effective thinking effort ('off'/'on'/'high'/…); '' on the wire (no model bound) reads as absent. */
+  readonly thinkingLevel?: string;
   readonly permission?: string;
   readonly planMode?: boolean;
   readonly swarmMode?: boolean;
@@ -258,9 +260,12 @@ export async function fetchSessionStatus(
   });
   const s = (data ?? {}) as Record<string, unknown>;
   if (typeof s['busy'] !== 'boolean') throw new Error('session status: unexpected response shape');
+  const thinkingLevel = s['thinking_level'];
   return {
     busy: s['busy'],
     model: typeof s['model'] === 'string' ? s['model'] : undefined,
+    thinkingLevel:
+      typeof thinkingLevel === 'string' && thinkingLevel !== '' ? thinkingLevel : undefined,
     permission: typeof s['permission'] === 'string' ? s['permission'] : undefined,
     planMode: s['plan_mode'] === true ? true : undefined,
     swarmMode: s['swarm_mode'] === true ? true : undefined,
@@ -291,6 +296,16 @@ export interface ModelChoice {
   readonly id: string;
   readonly label: string;
   readonly provider: string;
+  /** Raw capability strings ('thinking' / 'always_thinking' / …) — the effort segments derive from these. */
+  readonly capabilities?: readonly string[];
+  /** Declared effort levels (e.g. ['low','high']); absent → the legacy on/off model. */
+  readonly supportEfforts?: readonly string[];
+  readonly defaultEffort?: string;
+}
+
+function stringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  return value.filter((entry): entry is string => typeof entry === 'string' && entry !== '');
 }
 
 function parseModelChoice(value: unknown): ModelChoice | undefined {
@@ -309,7 +324,14 @@ function parseModelChoice(value: unknown): ModelChoice | undefined {
     display === undefined || display === alias
       ? `${alias} · ${provider}`
       : `${display} (${alias} · ${provider})`;
-  return { id: alias, label, provider };
+  return {
+    id: alias,
+    label,
+    provider,
+    capabilities: stringList(m['capabilities']),
+    supportEfforts: stringList(m['support_efforts']),
+    defaultEffort: typeof m['default_effort'] === 'string' ? m['default_effort'] : undefined,
+  };
 }
 
 /** The agent-wide model catalog the header picker offers. */
@@ -320,14 +342,20 @@ export async function fetchModels(endpoint: HttpEndpoint): Promise<readonly Mode
   return (d['items'] as unknown[]).map(parseModelChoice).filter((m): m is ModelChoice => m !== undefined);
 }
 
-/** Switch the session's main agent to a catalog alias — persists at the engine profile. */
+/**
+ * Switch the session's main agent to a catalog alias — persists at the engine
+ * profile. An optional `thinking` effort rides the SAME write: the server
+ * applies model first, then validates the effort against the NEW model
+ * (sessionAgentConfig.ts), so an effort the new model rejects fails the whole
+ * request with the model already bound.
+ */
 export async function setSessionModel(
-  endpoint: HttpEndpoint & { sessionId: string; model: string },
+  endpoint: HttpEndpoint & { sessionId: string; model: string; thinking?: string },
 ): Promise<void> {
   await postJson({
     ...endpoint,
     path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/profile`,
-    body: { agent_config: { model: endpoint.model } },
+    body: { agent_config: { model: endpoint.model, thinking: endpoint.thinking } },
   });
 }
 
@@ -346,8 +374,9 @@ export interface SessionCommandInfo {
  * overlay, not a line of output). The hub page can neither render nor drive
  * those — they're dropped from the hint catalog, and `parseComposerCommand`
  * short-circuits them locally with a pointer at the native control
- * (`model` has the header dropdown). Add a name here whenever a bridged
- * command turns out to be dialog-only on the host.
+ * (`model` has the composer's ModelPicker popup and the header dropdown).
+ * Add a name here whenever a bridged command turns out to be dialog-only on
+ * the host.
  */
 export const DIALOG_COMMANDS: ReadonlySet<string> = new Set(['model']);
 
