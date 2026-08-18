@@ -21,8 +21,9 @@
  * one-shot snap lands on the estimated bottom), with any upward scroll
  * killing the retries.
  * Older history loads lazily in the other direction: the initial paint is
- * one page of turns and an IntersectionObserver sentinel 400px above the top
- * lines prefetches earlier pages, restoring the viewport by its distance
+ * one page of turns and an IntersectionObserver sentinel 3000px above the
+ * top lines prefetches earlier pages (only while the tail is unpinned, so
+ * opening a session stays one page), restoring the viewport by its distance
  * from the bottom so prepends never yank what you're reading; a fetch
  * failure parks a retry button until cleared.
  */
@@ -65,6 +66,7 @@ import {
 } from '#/sessions/commands';
 import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
+import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import { TodoListPanel } from './TodoListPanel';
@@ -167,23 +169,46 @@ export function ChatView({
   // open, so the page adds nothing here (the spirit of the push chain is
   // "wake the device whose page isn't watching").
 
-  // Plan contents for `plan.revision` markers: the markers carry only blob
-  // references, so the server-side recovery route projects the actual plan
-  // text per ExitPlanMode call. The query re-runs when a new revision marker
-  // arrives; pairing keys the map by markerId so MarkerView stays dumb.
-  const planRevisionCount = items.reduce(
-    (n, item) => (item.kind === 'marker' && item.marker === 'plan.revision' ? n + 1 : n),
-    0,
-  );
+  // Plan contents for both plan surfaces (`plan.revision` markers and
+  // ExitPlanMode tool frames): the markers carry only blob references and
+  // plan-file-mode args carry no plan, so the server-side recovery route
+  // projects the actual plan text per ExitPlanMode call; markers pair by
+  // markerId, tool frames by toolCallId. The query re-runs when a new
+  // revision marker or call arrives; it stays enabled in sessions without
+  // `plan.revision` markers as long as an ExitPlanMode frame exists. Both
+  // counts share one memoized scan — a plain per-render reduce over every
+  // frame was a phone jank source at long loaded histories.
+  const { planRevisionCount, exitPlanCallCount } = useMemo(() => {
+    let revisionCount = 0;
+    let exitCallCount = 0;
+    for (const item of items) {
+      if (item.kind === 'marker') {
+        if (item.marker === 'plan.revision') revisionCount += 1;
+        continue;
+      }
+      if (item.kind !== 'turn') continue;
+      for (const step of item.steps) {
+        for (const frame of step.frames) {
+          if (frame.kind === 'tool' && frame.name === 'ExitPlanMode') exitCallCount += 1;
+        }
+      }
+    }
+    return { planRevisionCount: revisionCount, exitPlanCallCount: exitCallCount };
+  }, [items]);
   const plans = useQuery({
-    queryKey: ['session-plans', baseUrl, sessionId, transcriptAgentId, planRevisionCount],
+    queryKey: ['session-plans', baseUrl, sessionId, transcriptAgentId, planRevisionCount, exitPlanCallCount],
     queryFn: () => fetchSessionPlans({ baseUrl, token, sessionId, agentId: transcriptAgentId }),
-    enabled: planRevisionCount > 0 && sessionId !== '',
+    enabled: planRevisionCount + exitPlanCallCount > 0 && sessionId !== '',
   });
   const planByMarkerId = useMemo(
     () => buildPlanByMarker(items, plans.data ?? []),
     [items, plans.data],
   );
+  const planByToolCallId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of plans.data ?? []) map.set(entry.toolCallId, entry.plan);
+    return map;
+  }, [plans.data]);
 
   // Both abort paths invalidate the queue query — the 2s poll would settle
   // on its own; this is a promptness nicety (the abort's drain freebie shows
@@ -349,13 +374,16 @@ export function ChatView({
     syncJumpPill();
   };
 
-  // Infinite top-loading: a top sentinel (IntersectionObserver, 400px early
-  // margin) pages the previous 20 turns in as the user scrolls up. The
-  // invariant preserved across a prepend is the distance-from-bottom of the
-  // viewport — captured AT APPLY TIME (the fetch takes hundreds of ms on a
-  // phone, all of it user-scroll time; recording the anchor at fetch time
-  // restored to a stale spot and teleported the viewport), restored in the
-  // layout effect keyed on `items`.
+  // Infinite top-loading: a top sentinel (IntersectionObserver, 3000px early
+  // margin — several phone screens, so a page is usually in hand BEFORE the
+  // user scrolls into it) pages the previous 10 turns in as the user scrolls
+  // up. Prefetching is gated on `!pinnedRef`: at the bottom (entry / "↓
+  // latest") history stays unfetched — the whole point of the small initial
+  // page is fast entry. The invariant preserved across a prepend is the
+  // distance-from-bottom of the viewport — captured AT APPLY TIME (the fetch
+  // takes hundreds of ms on a phone, all of it user-scroll time; recording
+  // the anchor at fetch time restored to a stale spot and teleported the
+  // viewport), restored in the layout effect keyed on `items`.
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
   const loadingOlderRef = useRef(false);
@@ -415,9 +443,13 @@ export function ChatView({
     if (sentinel === null || root === null) return;
     const observer = new IntersectionObserver(
       (entries) => {
-        if (entries.some((entry) => entry.isIntersecting)) void loadOlder();
+        if (!entries.some((entry) => entry.isIntersecting)) return;
+        // Only fetch ahead while the user is actually browsing history — at
+        // the pinned tail (entry / "↓ latest") loading older pages would
+        // just re-inflate the transcript we deliberately entered small.
+        if (!pinnedRef.current) void loadOlder();
       },
-      { root, rootMargin: '400px 0px 0px 0px' },
+      { root, rootMargin: '3000px 0px 0px 0px' },
     );
     observer.observe(sentinel);
     return () => {
@@ -672,6 +704,7 @@ export function ChatView({
                 rollbackCounts={transcriptAgentId === 'main' ? rollbackCounts : undefined}
                 onRollback={handleRollback}
                 planByMarkerId={planByMarkerId}
+                planByToolCallId={planByToolCallId}
                 baseUrl={baseUrl}
                 token={token}
                 sessionId={sessionId}
@@ -757,12 +790,13 @@ export function rollbackCountsForItems(items: readonly TranscriptItem[]): Readon
 
 // ------------------------------------------------------------------ items
 
-function ItemList({
+const ItemList = memo(function ItemList({
   items,
   attachments,
   rollbackCounts,
   onRollback,
   planByMarkerId,
+  planByToolCallId,
   baseUrl,
   token,
   sessionId,
@@ -775,6 +809,8 @@ function ItemList({
   onRollback?: (turnId: string) => void;
   /** `plan.revision` markerId → recovered plan content (TUI PlanBox parity). */
   planByMarkerId?: ReadonlyMap<string, PlanMarkerContent>;
+  /** ExitPlanMode toolCallId → recovered plan content (same recovery entries). */
+  planByToolCallId?: ReadonlyMap<string, string>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -782,7 +818,7 @@ function ItemList({
 }) {
   // Conversation rows: bookkeeping markers out, marker/taskref runs collapsed
   // — raw `items` stay the source for turn ordinals/anchors (see callers).
-  const rows = collapseMarkerRuns(items);
+  const rows = useMemo(() => collapseMarkerRuns(items), [items]);
   return (
     <>
       {rows.map((row) => (
@@ -800,6 +836,7 @@ function ItemList({
             rollbackCount={row.item.kind === 'turn' ? rollbackCounts?.get(row.item.turnId) : undefined}
             onRollback={onRollback}
             planContent={row.item.kind === 'marker' ? planByMarkerId?.get(row.item.markerId) : undefined}
+            planByToolCallId={planByToolCallId}
             baseUrl={baseUrl}
             token={token}
             sessionId={sessionId}
@@ -809,7 +846,7 @@ function ItemList({
       ))}
     </>
   );
-}
+});
 
 /**
  * Memoized per item: stream deltas / poll tickles re-render ChatView's whole
@@ -824,6 +861,7 @@ const ItemView = memo(function ItemView({
   rollbackCount,
   onRollback,
   planContent,
+  planByToolCallId,
   baseUrl,
   token,
   sessionId,
@@ -836,6 +874,7 @@ const ItemView = memo(function ItemView({
   rollbackCount?: number;
   onRollback?: (turnId: string) => void;
   planContent?: PlanMarkerContent;
+  planByToolCallId?: ReadonlyMap<string, string>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -849,6 +888,7 @@ const ItemView = memo(function ItemView({
           attachments={attachments}
           rollbackCount={rollbackCount}
           onRollback={onRollback}
+          planByToolCallId={planByToolCallId}
           baseUrl={baseUrl}
           token={token}
           sessionId={sessionId}
@@ -940,6 +980,7 @@ function TurnView({
   attachments,
   rollbackCount,
   onRollback,
+  planByToolCallId,
   baseUrl,
   token,
   sessionId,
@@ -950,6 +991,7 @@ function TurnView({
   /** Undo-count to roll back to before this turn; undefined → no button. */
   rollbackCount?: number;
   onRollback?: (turnId: string) => void;
+  planByToolCallId?: ReadonlyMap<string, string>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -1049,7 +1091,12 @@ function TurnView({
       {turn.steps.map((step) => (
         <div key={step.stepId}>
           {step.frames.map((frame) => (
-            <FrameView key={frame.frameId} frame={frame} streaming={frame.frameId === openTailFrameId} />
+            <FrameView
+              key={frame.frameId}
+              frame={frame}
+              streaming={frame.frameId === openTailFrameId}
+              planByToolCallId={planByToolCallId}
+            />
           ))}
           {step.state === 'interrupted' ? (
             <div className="mb-2 text-[10px] text-neutral-600 italic">step interrupted</div>
@@ -1065,7 +1112,15 @@ function TurnView({
   );
 }
 
-function FrameView({ frame, streaming }: { frame: TranscriptFrame; streaming: boolean }) {
+function FrameView({
+  frame,
+  streaming,
+  planByToolCallId,
+}: {
+  frame: TranscriptFrame;
+  streaming: boolean;
+  planByToolCallId?: ReadonlyMap<string, string>;
+}) {
   switch (frame.kind) {
     case 'text':
       return frame.role === 'user' ? (
@@ -1084,13 +1139,25 @@ function FrameView({ frame, streaming }: { frame: TranscriptFrame; streaming: bo
     case 'thinking':
       return <ThinkingFrame text={frame.text} streaming={streaming} />;
     case 'tool':
-      return <ToolFrameView frame={frame} />;
+      return <ToolFrameView frame={frame} planByToolCallId={planByToolCallId} />;
     case 'notice':
       return <NoticeFrameView frame={frame} />;
   }
 }
 
-function ToolFrameView({ frame }: { frame: ToolCallFrame }) {
+function ToolFrameView({
+  frame,
+  planByToolCallId,
+}: {
+  frame: ToolCallFrame;
+  planByToolCallId?: ReadonlyMap<string, string>;
+}) {
+  if (frame.name === 'ExitPlanMode') {
+    const display = resolveExitPlanDisplay(frame, planByToolCallId?.get(frame.toolCallId));
+    // With a recoverable plan the call renders as a plan card (TUI PlanBox
+    // parity) instead of a JSON-in-details row.
+    if (display.plan !== '') return <ExitPlanModeCard display={display} />;
+  }
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   return (
@@ -1140,6 +1207,40 @@ function ToolFrameView({ frame }: { frame: ToolCallFrame }) {
         </pre>
       ) : null}
     </details>
+  );
+}
+
+/**
+ * ExitPlanMode as a plan card (TUI PlanBox parity): the resolved plan
+ * markdown plus the review outcome. Chrome matches the `plan.revision`
+ * marker card so a plan reads the same no matter which surface carries it.
+ */
+function ExitPlanModeCard({ display }: { display: ExitPlanDisplay }) {
+  return (
+    <div className="mb-3 max-w-full rounded border border-neutral-700/80 bg-neutral-900/40 sm:max-w-[92%]">
+      <div className="flex items-center gap-2 border-b border-neutral-800 px-3 py-1.5 text-[10px] text-neutral-500">
+        <span>current plan</span>
+        {display.outcome === 'approved' ? (
+          <Badge tone="green">
+            approved{display.chosen !== undefined ? `: ${display.chosen}` : ''}
+          </Badge>
+        ) : display.outcome === 'auto_approved' ? (
+          <Badge tone="amber">auto-approved · not user-reviewed</Badge>
+        ) : display.outcome === 'rejected' ? (
+          <Badge tone="red">rejected</Badge>
+        ) : (
+          <Badge tone="amber">awaiting review…</Badge>
+        )}
+      </div>
+      <div className="px-3 py-2">
+        <Markdown text={display.plan} />
+        {display.outcome === 'rejected' && display.feedback !== undefined ? (
+          <div className="mt-2 rounded bg-amber-950/40 px-2 py-1 text-[11px] whitespace-pre-wrap text-amber-300">
+            {display.feedback}
+          </div>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
