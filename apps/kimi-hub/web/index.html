@@ -6,6 +6,29 @@
          safe-area env() insets are then applied per-edge in CSS (index.css). -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0b0d10" />
+    <script>
+      // Apply the persisted theme BEFORE first paint (mirrors src/theme.ts —
+      // keep the two in sync). Without this a saved light choice would flash
+      // the dark palette while the bundle loads.
+      (() => {
+        let theme = 'dark';
+        try {
+          const stored = localStorage.getItem('kimi-hub.theme');
+          theme =
+            stored === 'light' || stored === 'dark'
+              ? stored
+              : matchMedia('(prefers-color-scheme: light)').matches
+                ? 'light'
+                : 'dark';
+        } catch (e) {
+          /* localStorage/matchMedia unavailable — keep the dark default. */
+        }
+        document.documentElement.dataset.theme = theme;
+        document
+          .querySelector('meta[name="theme-color"]')
+          .setAttribute('content', theme === 'light' ? '#ffffff' : '#0b0d10');
+      })();
+    </script>
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" type="image/png" href="/icons/icon-64.png" />
     <!-- iOS "Add to Home Screen": apple-touch-icon + web-app metas are required;

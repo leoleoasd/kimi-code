@@ -128,7 +128,7 @@ export function SessionRail({
     selectedAgentName !== null && !roster.isLoading && agents.every((a) => a.name !== selectedAgentName);
 
   return (
-    <div className="flex h-full w-full flex-col bg-[#0e1116]">
+    <div className="flex h-full w-full flex-col bg-(--app-surface)">
       <div className="border-b border-neutral-800 px-3 py-2">
         <div className="text-[12px] font-semibold text-neutral-200">Sessions</div>
         <div className="text-[10px] text-neutral-600">
