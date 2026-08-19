@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { HubConnection, HubRemoteAgent, IHubConnectionService } from '#/hub/hubConnection';
 import type { ISessionContext } from '#/session/sessionContext/sessionContext';
+import type { ISessionMetadata, SessionMeta } from '#/session/sessionMetadata/sessionMetadata';
 import { formatRoster, ListHubSessionsTool } from '#/agent/tools/list-hub-sessions/listHubSessionsTool';
 import { SendHubMessageTool } from '#/agent/tools/send-hub-message/sendHubMessageTool';
 import type { ToolExecution } from '#/tool/toolContract';
@@ -78,6 +79,18 @@ function stubSession(sessionId: string): ISessionContext {
   return { _serviceBrand: undefined, sessionId } as ISessionContext;
 }
 
+function stubMetadata(meta?: Pick<SessionMeta, 'title' | 'titleKind'>): ISessionMetadata {
+  return {
+    _serviceBrand: undefined,
+    read: async () => {
+      if (meta === undefined) throw new Error('metadata unavailable');
+      return meta as SessionMeta;
+    },
+  } as unknown as ISessionMetadata;
+}
+
+const customMeta = stubMetadata({ title: 'kimi-code main', titleKind: 'custom' });
+
 async function run(execution: ToolExecution): Promise<{ output: string | unknown[]; isError?: boolean }> {
   if (!('execute' in execution)) throw new Error('expected a runnable execution');
   const result = await execution.execute({ turnId: 0, toolCallId: 'call-1', signal });
@@ -126,6 +139,7 @@ describe('SendHubMessageTool', () => {
     const tool = new SendHubMessageTool(
       stubHub({ connection: undefined }, []),
       stubSession('ses-mine'),
+      stubMetadata(),
     );
     const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'hi' }));
     expect(result.isError).toBe(true);
@@ -134,7 +148,7 @@ describe('SendHubMessageTool', () => {
 
   it('refuses to message its own session', async () => {
     const sent: { agentId: string; sessionId: string; text: string }[] = [];
-    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'));
+    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'), stubMetadata());
     const result = await run(tool.resolveExecution({ session_id: 'ses-mine', message: 'hi' }));
     expect(result.isError).toBe(true);
     expect(result.output).toContain('your own session');
@@ -143,7 +157,7 @@ describe('SendHubMessageTool', () => {
 
   it('targets the owning agent, steers into its turn, and wraps the sender identity + continuation', async () => {
     const sent: { agentId: string; sessionId: string; text: string; steer?: boolean }[] = [];
-    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'));
+    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'), stubMetadata());
     const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'I changed X' }));
     expect(result.isError).toBe(false);
     expect(String(result.output)).toContain('queued');
@@ -159,7 +173,7 @@ describe('SendHubMessageTool', () => {
 
   it('errors when no agent exposes the target session', async () => {
     const sent: { agentId: string; sessionId: string; text: string }[] = [];
-    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'));
+    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'), stubMetadata());
     const result = await run(tool.resolveExecution({ session_id: 'ses-nope', message: 'hi' }));
     expect(result.isError).toBe(true);
     expect(String(result.output)).toContain('ses-nope is not exposed on the hub');
@@ -170,9 +184,37 @@ describe('SendHubMessageTool', () => {
     const tool = new SendHubMessageTool(
       stubHub({ sendError: new Error('the hub timed out waiting for the target agent machine') }, []),
       stubSession('ses-mine'),
+      stubMetadata(),
     );
     const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'hi' }));
     expect(result.isError).toBe(true);
     expect(String(result.output)).toContain('timed out');
+  });
+
+  it('names the sender session by its user-set title in the envelope', async () => {
+    const sent: { agentId: string; sessionId: string; text: string }[] = [];
+    const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'), customMeta);
+    const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'hi' }));
+    expect(result.isError).toBe(false);
+    expect(sent[0]!.text).toContain(
+      '[kimi-hub message from dev-box ("kimi-code main", session ses-mine)]',
+    );
+  });
+
+  it('keeps the bare envelope when the title is generated or the metadata read fails', async () => {
+    for (const meta of [
+      stubMetadata({ title: 'auto summary', titleKind: 'generated' }),
+      stubMetadata({ title: 'auto summary', titleKind: 'replaceable' }),
+      stubMetadata({ titleKind: 'custom' }),
+      stubMetadata(),
+    ]) {
+      const sent: { agentId: string; sessionId: string; text: string }[] = [];
+      const tool = new SendHubMessageTool(stubHub({}, sent), stubSession('ses-mine'), meta);
+      const result = await run(tool.resolveExecution({ session_id: 'ses-ci', message: 'hi' }));
+      expect(result.isError).toBe(false);
+      expect(sent[0]!.text).toContain('[kimi-hub message from dev-box (session ses-mine)]');
+      expect(sent[0]!.text).not.toContain('auto summary');
+      expect(sent[0]!.text).not.toContain('undefined');
+    }
   });
 });

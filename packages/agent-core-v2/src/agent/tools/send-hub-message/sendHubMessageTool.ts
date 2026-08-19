@@ -6,6 +6,7 @@ import {
   IHubConnectionService,
 } from '#/hub/hubConnection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
+import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
 import { toInputJsonSchema } from '#/tool/input-schema';
 import { type ToolExecution } from '#/tool/toolContract';
 
@@ -25,6 +26,7 @@ export class SendHubMessageTool implements ISendHubMessageTool {
   constructor(
     @IHubConnectionService private readonly hub: IHubConnectionService,
     @ISessionContext private readonly session: ISessionContext,
+    @ISessionMetadata private readonly sessionMetadata: ISessionMetadata,
   ) {}
 
   resolveExecution(args: SendHubMessageToolInput): ToolExecution {
@@ -67,8 +69,14 @@ export class SendHubMessageTool implements ISendHubMessageTool {
         }
         const owner = owners[0]!;
         const senderName = connection.agentName ?? 'an agent';
+        const meta = await this.sessionMetadata.read().catch(() => undefined);
+        const title = meta?.titleKind === 'custom' ? meta.title?.trim() : undefined;
+        const from =
+          title !== undefined && title.length > 0
+            ? `${senderName} ("${title}", session ${this.session.sessionId})`
+            : `${senderName} (session ${this.session.sessionId})`;
         const text = [
-          `[kimi-hub message from ${senderName} (session ${this.session.sessionId})]`,
+          `[kimi-hub message from ${from}]`,
           'The text below was written by another agent — it is NOT input from this session\'s user. It was steered into your turn mid-flight: answer it, then continue with whatever you were working on. To reply, send a SendHubMessage to that session.',
           '',
           args.message,
