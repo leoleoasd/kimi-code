@@ -16,7 +16,15 @@
 
 import { useLayoutEffect, useRef, useState } from 'react';
 
-export function ThinkingFrame({ text, streaming = false }: { text: string; streaming?: boolean }) {
+export function ThinkingFrame({
+  text,
+  streaming = false,
+  label = 'thinking',
+}: {
+  text: string;
+  streaming?: boolean;
+  label?: string;
+}) {
   const [expanded, setExpanded] = useState(false);
   // Measured clipping: the collapsed window truncates visually (wrapped
   // rows), which simple line counting cannot predict — offer expand only
@@ -37,7 +45,9 @@ export function ThinkingFrame({ text, streaming = false }: { text: string; strea
         onClick={() => setExpanded((value) => !value)}
         disabled={!canExpand}
       >
-        thinking{streaming ? ' …' : ''}{expanded ? ' ▾' : canExpand ? ' ▸' : ''}
+        {label}
+        {streaming ? ' …' : ''}
+        {expanded ? ' ▾' : canExpand ? ' ▸' : ''}
       </button>
       <div
         className={

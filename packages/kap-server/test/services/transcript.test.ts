@@ -2085,6 +2085,116 @@ describe('bindSessionTranscript', () => {
     binding.dispose();
   });
 
+  it('relays a foreground subagent\u2019s thinking/text deltas onto the Agent tool frame progress', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+    );
+
+    const main = agents.add('main');
+    main.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'go' }));
+    main.bus.emit(
+      ev({
+        type: 'tool.call.started',
+        turnId: 0,
+        toolCallId: 'call_1',
+        name: 'Agent',
+        args: { description: 'scan', prompt: 'x' },
+      }),
+    );
+    main.bus.emit(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-1',
+        subagentName: 'explore',
+        parentToolCallId: 'call_1',
+        runInBackground: false,
+      }),
+    );
+
+    const toolFrame = () => {
+      const items = store.getAgent('main')?.getItems() ?? [];
+      for (const item of items) {
+        if (item.kind !== 'turn') continue;
+        for (const step of item.steps) {
+          for (const frame of step.frames) {
+            if (frame.kind === 'tool' && frame.toolCallId === 'call_1') return frame;
+          }
+        }
+      }
+      return undefined;
+    };
+
+    const child = agents.add('agent-1');
+    child.bus.emit(ev({ type: 'thinking.delta', turnId: 0, delta: 't'.repeat(600) }));
+    let progress = toolFrame()?.progress;
+    expect(progress?.customKind).toBe('subagent_stream');
+    expect(progress?.text).toBe('t'.repeat(600));
+    expect(progress?.customData).toEqual({ channel: 'thinking', subagentName: 'explore' });
+
+    child.bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: 'hello' }));
+    progress = toolFrame()?.progress;
+    expect(progress?.text).toBe('hello');
+    expect(progress?.customData).toEqual({ channel: 'text', subagentName: 'explore' });
+
+    child.bus.emit(ev({ type: 'assistant.delta', turnId: 0, delta: ' world' }));
+    main.bus.emit(ev({ type: 'tool.result', toolCallId: 'call_1', output: 'done' }));
+    progress = toolFrame()?.progress;
+    expect(progress?.text).toBe('hello world');
+    expect(toolFrame()?.state).toBe('done');
+
+    const childItems = store.getAgent('agent-1')?.getItems() ?? [];
+    const childThinking = childItems
+      .flatMap((item) => (item.kind === 'turn' ? item.steps : []))
+      .flatMap((step) => step.frames)
+      .find((frame) => frame.kind === 'thinking');
+    expect(childThinking?.kind === 'thinking' && childThinking.text).toBe('t'.repeat(600));
+    binding.dispose();
+  });
+
+  it('does not relay a background subagent\u2019s deltas', () => {
+    const agents = new FakeAgents();
+    const store = new TranscriptStore('s1');
+    const binding = bindSessionTranscript(
+      store,
+      fakeSession(new SessionInteractionService(new TestSessionStateService()), agents),
+    );
+
+    const main = agents.add('main');
+    main.bus.emit(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'go' }));
+    main.bus.emit(
+      ev({
+        type: 'tool.call.started',
+        turnId: 0,
+        toolCallId: 'call_1',
+        name: 'Agent',
+        args: { description: 'scan', prompt: 'x' },
+      }),
+    );
+    main.bus.emit(
+      ev({
+        type: 'subagent.spawned',
+        subagentId: 'agent-2',
+        subagentName: 'coder',
+        parentToolCallId: 'call_1',
+        runInBackground: true,
+      }),
+    );
+
+    const child = agents.add('agent-2');
+    child.bus.emit(ev({ type: 'thinking.delta', turnId: 0, delta: 't'.repeat(600) }));
+
+    const items = store.getAgent('main')?.getItems() ?? [];
+    const frames = items
+      .flatMap((item) => (item.kind === 'turn' ? item.steps : []))
+      .flatMap((step) => step.frames);
+    const frame = frames.find((f) => f.kind === 'tool' && f.toolCallId === 'call_1');
+    expect(frame?.kind === 'tool' && frame.progress).toBeFalsy();
+    binding.dispose();
+  });
+
   it('seeds pre-attach Agent task mappings so a late-bound projector folds the lifecycle', () => {
     const agents = new FakeAgents();
     agents.add('main', {

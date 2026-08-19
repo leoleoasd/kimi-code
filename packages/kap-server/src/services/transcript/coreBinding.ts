@@ -18,6 +18,7 @@ import {
   AgentTranscriptProjector,
   type ProjectorBusEvent,
   type ProjectorInteraction,
+  type SubagentStreamDeltaEvent,
 } from './coreEventMap';
 
 /** Minimal warn sink (matches `JournalLogger`). */
@@ -53,6 +54,7 @@ export function bindSessionTranscript(
   const agentDisposables = new Map<string, IDisposable[]>();
   const subscribedAgents = new Set<string>();
   const projectors = new Map<string, AgentTranscriptProjector>();
+  const foregroundSubagentParents = new Map<string, string>();
   const interactionAgents = new Map<string, string>();
   const knownInteractions = new Set<string>();
   const unseeded = new Map<string, Interaction>();
@@ -134,9 +136,35 @@ export function bindSessionTranscript(
     const projector = projectorFor(handle.id);
     store.ensureAgent(handle.id, { agentId: handle.id });
     const bus = handle.accessor.get(IEventBus);
-    const busD = bus.subscribe((event) =>
-      applyOps(handle.id, projector.map(event as ProjectorBusEvent)),
-    );
+    const busD = bus.subscribe((event) => {
+      applyOps(handle.id, projector.map(event as ProjectorBusEvent));
+      const type = (event as { type?: unknown }).type;
+      if (type === 'subagent.spawned') {
+        const spawned = event as unknown as {
+          subagentId: string;
+          runInBackground: boolean;
+        };
+        if (spawned.runInBackground) return;
+        foregroundSubagentParents.set(spawned.subagentId, handle.id);
+        return;
+      }
+      if (type === 'subagent.completed' || type === 'subagent.failed') {
+        foregroundSubagentParents.delete((event as unknown as { subagentId: string }).subagentId);
+        return;
+      }
+      if (type !== 'thinking.delta' && type !== 'assistant.delta') return;
+      const parentId = foregroundSubagentParents.get(handle.id);
+      if (parentId === undefined) return;
+      const parentProjector = projectors.get(parentId);
+      if (parentProjector === undefined) return;
+      const relayed: SubagentStreamDeltaEvent = {
+        type: 'subagent.stream.delta',
+        subagentId: handle.id,
+        channel: type === 'thinking.delta' ? 'thinking' : 'text',
+        delta: (event as unknown as { delta: string }).delta,
+      };
+      applyOps(parentId, parentProjector.map(relayed));
+    });
     const list = agentDisposables.get(handle.id) ?? [];
     list.push(busD);
     agentDisposables.set(handle.id, list);

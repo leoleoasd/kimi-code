@@ -75,6 +75,23 @@ import { ThinkingFrame } from './ThinkingFrame';
 import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, markerLabel, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
+/**
+ * Narrow the Agent tool frame's `subagent_stream` progress (set by the
+ * kap-server projector while a foreground subagent runs) into render data.
+ */
+function readSubagentStreamProgress(progress: {
+  text?: string;
+  customData?: unknown;
+}): { text: string; channel: 'thinking' | 'text'; subagentName?: string } | undefined {
+  if (progress.text === undefined || progress.text.trim() === '') return undefined;
+  const data = progress.customData as { channel?: unknown; subagentName?: unknown } | undefined;
+  return {
+    text: progress.text,
+    channel: data?.channel === 'thinking' ? 'thinking' : 'text',
+    subagentName: typeof data?.subagentName === 'string' ? data.subagentName : undefined,
+  };
+}
+
 export function ChatView({
   baseUrl,
   token,
@@ -1160,6 +1177,10 @@ function ToolFrameView({
   }
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
+  const subagentStream =
+    frame.state === 'running' && frame.progress?.customKind === 'subagent_stream'
+      ? readSubagentStreamProgress(frame.progress)
+      : undefined;
   return (
     <details className="mb-2 max-w-full rounded border border-neutral-800 bg-neutral-900/50 px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%]">
       <summary className="flex cursor-pointer items-center gap-2 select-none">
@@ -1183,6 +1204,15 @@ function ToolFrameView({
             <JsonView data={frame.input} />
           )}
         </>
+      ) : null}
+      {subagentStream !== undefined ? (
+        <ThinkingFrame
+          text={subagentStream.text}
+          streaming
+          label={`${subagentStream.subagentName ?? 'subagent'} ${
+            subagentStream.channel === 'thinking' ? 'thinking' : 'speaking'
+          }`}
+        />
       ) : null}
       {frame.display !== undefined ? <JsonView data={frame.display} /> : null}
       {frame.output !== undefined ? (

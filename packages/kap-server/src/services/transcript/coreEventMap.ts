@@ -88,6 +88,19 @@ export interface ProjectorInteraction {
 
 type PlanRevisionEvent = { readonly type: 'plan.revision' } & PlanRevision;
 
+/**
+ * Synthetic stream event produced by the session binding (never published on
+ * an engine bus): the deltas of a FOREGROUND subagent, forwarded onto its
+ * parent's projector so the owning Agent tool frame can show the child's
+ * latest thinking / text while running — the TUI's subagent box parity.
+ */
+export interface SubagentStreamDeltaEvent {
+  readonly type: 'subagent.stream.delta';
+  readonly subagentId: string;
+  readonly channel: 'thinking' | 'text';
+  readonly delta: string;
+}
+
 type AgentActivityUpdatedEvent = { readonly type: 'agent.activity.updated' } & AgentActivityUpdated;
 type PromptCompletedEvent = { readonly type: 'prompt.completed' } & PromptCompleted;
 type PromptAbortedEvent = { readonly type: 'prompt.aborted' } & PromptAborted;
@@ -215,6 +228,15 @@ export class AgentTranscriptProjector {
       carried the registration (`taskId`): the task row keys by the task id so
       `/tasks/{id}` actions resolve, and lifecycle events fold back to it. */
   private readonly subagentTaskIds = new Map<string, string>();
+  /** subagent agent id → its parent Agent toolCallId (every spawned carries one). */
+  private readonly subagentToolCalls = new Map<string, string>();
+  private readonly subagentNames = new Map<string, string>();
+  /** foreground subagent toolCallId → accumulated child streams; the visible
+      text follows the channel the child emitted LAST (TUI parity). */
+  private readonly subagentStreams = new Map<
+    string,
+    { thinking: string; text: string; lastChannel: 'thinking' | 'text'; subagentName?: string }
+  >();
 
   /** Pre-seed the association and the row for a task registered before
       attach: a foreground Agent run emits no `task.started` at all, so
@@ -260,7 +282,9 @@ export class AgentTranscriptProjector {
     private readonly lookups?: ProjectorLookups,
   ) {}
 
-  map(event: ProjectorBusEvent | ProjectorPromptSubmittedEvent): TranscriptOperation[] {
+  map(
+    event: ProjectorBusEvent | ProjectorPromptSubmittedEvent | SubagentStreamDeltaEvent,
+  ): TranscriptOperation[] {
     switch (event.type) {
       case 'plan.revision':
         return this.onPlanRevision(event);
@@ -306,6 +330,8 @@ export class AgentTranscriptProjector {
       case 'subagent.failed':
       case 'subagent.suspended':
         return this.onSubagentRun(event);
+      case 'subagent.stream.delta':
+        return this.onSubagentStreamDelta(event);
       case 'goal.updated':
         return this.onGoalUpdated(event);
       case 'agent.status.updated':
@@ -816,12 +842,17 @@ export class AgentTranscriptProjector {
     const hit = this.toolFrames.get(event.toolCallId) ?? this.adoptToolFrame(event.toolCallId);
     if (hit === undefined) return [];
     const isError = event.isError === true;
-    const frame: ToolCallFrame = {
+    const streamBuf = this.subagentStreams.get(event.toolCallId);
+    this.subagentStreams.delete(event.toolCallId);
+    let frame: ToolCallFrame = {
       ...hit.frame,
       state: isError ? 'error' : 'done',
       output: event.output,
       error: isError && typeof event.output === 'string' ? event.output : undefined,
     };
+    if (streamBuf !== undefined) {
+      frame = this.subagentStreamFrame(frame, streamBuf);
+    }
     this.toolFrames.set(event.toolCallId, { ...hit, frame });
     const ops: TranscriptOperation[] = [
       { op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame },
@@ -1056,6 +1087,8 @@ export class AgentTranscriptProjector {
     } else {
       this.subagentTaskIds.delete(event.subagentId);
     }
+    this.subagentToolCalls.set(event.subagentId, event.parentToolCallId);
+    this.subagentNames.set(event.subagentId, event.subagentName);
     const task = this.upsertTask(taskKey, (prev) => ({
       taskId: taskKey,
       kind: 'subagent',
@@ -1121,6 +1154,49 @@ export class AgentTranscriptProjector {
     return [{ op: 'task.upsert', task }];
   }
 
+  /**
+   * `subagent.stream.delta` — a foreground child's thinking/text deltas ride
+   * the owning Agent tool frame's `progress` (a whole-frame upsert, so
+   * throttle by 512 chars, with a channel switch flushing immediately and
+   * `tool.result` landing the tail). The visible text mirrors the TUI: the
+   * channel the child emitted most recently.
+   */
+  private onSubagentStreamDelta(event: SubagentStreamDeltaEvent): TranscriptOperation[] {
+    const toolCallId = this.subagentToolCalls.get(event.subagentId);
+    if (toolCallId === undefined) return [];
+    const hit = this.toolFrames.get(toolCallId) ?? this.adoptToolFrame(toolCallId);
+    if (hit === undefined) return [];
+    let buf = this.subagentStreams.get(toolCallId);
+    if (buf === undefined) {
+      buf = { thinking: '', text: '', lastChannel: 'text', subagentName: this.subagentNames.get(event.subagentId) };
+      this.subagentStreams.set(toolCallId, buf);
+    }
+    if (event.channel === 'thinking') buf.thinking += event.delta;
+    else buf.text += event.delta;
+    const switched = buf.lastChannel !== event.channel;
+    buf.lastChannel = event.channel;
+    const text = buf.lastChannel === 'thinking' ? buf.thinking : buf.text;
+    const shown = hit.frame.progress?.customKind === 'subagent_stream' ? (hit.frame.progress.text ?? '') : '';
+    if (!switched && text.length - shown.length < 512) return [];
+    const frame = this.subagentStreamFrame(hit.frame, buf);
+    this.toolFrames.set(toolCallId, { ...hit, frame });
+    return [{ op: 'frame.upsert', turnId: hit.turnId, stepId: hit.stepId, frame }];
+  }
+
+  private subagentStreamFrame(
+    base: ToolCallFrame,
+    buf: { thinking: string; text: string; lastChannel: 'thinking' | 'text'; subagentName?: string },
+  ): ToolCallFrame {
+    return {
+      ...base,
+      progress: {
+        kind: 'custom',
+        customKind: 'subagent_stream',
+        text: buf.lastChannel === 'thinking' ? buf.thinking : buf.text,
+        customData: { channel: buf.lastChannel, subagentName: buf.subagentName },
+      },
+    };
+  }
   private onGoalUpdated(event: {
     readonly type: string;
     snapshot: {
