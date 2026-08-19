@@ -516,8 +516,6 @@ export class TranscriptService {
     }
     const reduced = reduceContextTranscript(records);
     const base = groupMessagesIntoSnapshot(reduced.entries, reduced.turnOrdinals);
-    // Second fold: tasks / interactions / todos / meta (goal, plan, swarm)
-    // come from the non-`context.*` records in the same journal.
     return foldWireRecordFacts(records, base);
   }
 
@@ -533,7 +531,6 @@ export class TranscriptService {
     agentId: string,
     sha256: string,
   ): Promise<AgentBlobResult> {
-    // Hostile ids must never reach the storage scope/key path arithmetic.
     if (!isPlainAgentId(agentId) || !SHA256_HEX_PATTERN.test(sha256)) {
       return { status: 'not_found' };
     }
@@ -638,7 +635,6 @@ export function snapshotTurnOps(turn: TranscriptTurn): TranscriptOperation[] {
 }
 
 const TURN_HEAL_DEBOUNCE_MS = 250;
-/** Blob-address form persisted by `IAgentBlobService`: a lowercase sha256 hex digest. */
 const SHA256_HEX_PATTERN = /^[0-9a-f]{64}$/;
 const TERMINAL_TURN_STATES: ReadonlySet<TranscriptTurn['state']> = new Set([
   'completed',

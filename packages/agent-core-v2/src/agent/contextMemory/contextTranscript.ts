@@ -43,7 +43,6 @@ interface MutableMessage {
 interface MutableEntry {
   message: MutableMessage;
   time?: number;
-  /** Engine ordinal when this entry is a turn's persisted prompt message. */
   turnOrdinal?: number;
 }
 
@@ -58,7 +57,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let foldedLength = 0;
   let clearFloor = 0;
   let openEntry: MutableEntry | undefined;
-  /** Queued engine ordinals announced by `turn.prompt` records, consumed in FIFO order by the next appended conversation message (the prompt's persisted copy). */
   const pendingTurnOrdinals: number[] = [];
   let turnOrdinalCounter = 0;
 
@@ -136,8 +134,6 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         break;
       }
       case 'turn.prompt':
-        // The next appended message is this prompt's persisted copy — it owns
-        // the engine's turn ordinal (record queue matches the enqueue order).
         pendingTurnOrdinals.push(turnOrdinalCounter);
         turnOrdinalCounter += 1;
         break;

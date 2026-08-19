@@ -1,24 +1,3 @@
-/**
- *   POST /v1/sessions/{sid}/prompts
- *     Body:  PromptSubmission { content, metadata?, agent_id?, profile?, model?, thinking?,
- *              permission_mode?, plan_mode?, swarm_mode?, goal_objective?, goal_control?,
- *              disabled_tools?, steer? }
- *     Reply: PromptSubmitResult { prompt_id, user_message_id, status, content, created_at }
- *            With steer=true and another prompt active, the submission is steered into that
- *            active turn instead of waiting in the FIFO (the reply still reads 'running');
- *            when there is nothing to steer into it degrades to the plain queue/launch behavior.
- *
- *   GET /v1/sessions/{sid}/prompts
- *     Reply: { active: PromptItem | null, queued: PromptItem[] }
- *
- *   POST /v1/sessions/{sid}/prompts/{pid}:steer
- *   POST /v1/sessions/{sid}/prompts:steer
- *     Reply: { steered: true, prompt_ids: string[] }
- *
- *   POST /v1/sessions/{sid}/prompts/{pid}:abort
- *     Reply: { aborted: true, at_seq: number }   (envelope code 0)
- *            { aborted: false, at_seq: number }  (envelope code 40903, idempotent)
- */
 
 import { z } from 'zod';
 
@@ -53,10 +32,6 @@ export const promptSubmissionSchema = z.object({
   disabled_tools: z.array(z.string()).optional(),
   prompt_id: z.string().min(1).optional(),
   skills: z.array(promptSkillActivationSchema).min(1).optional(),
-  // Submit as a steer: with another prompt active, inject this submission
-  // into that running turn (next step boundary) instead of waiting in the
-  // FIFO; other queued prompts are untouched. Degrades to the plain
-  // queue/launch behavior when there is nothing to steer into.
   steer: z.boolean().optional(),
 });
 export type PromptSubmission = z.infer<typeof promptSubmissionSchema>;

@@ -52,10 +52,6 @@ export class AgentPermissionModeService extends Service implements IAgentPermiss
     void this.dispatcher.dispatch(new PermissionSetMode({ mode }));
     if (changed) {
       this._onDidChangeMode.fire({ mode, previousMode });
-      // Publish the mode slice live (never on replay), so clients tracking
-      // `agent.status.updated` (the TUI badge, kap-server's transcript meta)
-      // see a change made from ANY surface: local dispatch, a sibling client,
-      // or the command bridge.
       void this.dispatcher.dispatch(new AgentStatusUpdated({ permission: mode }));
     }
   }

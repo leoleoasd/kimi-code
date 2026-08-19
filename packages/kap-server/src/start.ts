@@ -197,7 +197,7 @@ export interface ServerStartOptions {
    * run + enumerate the host's own `/…` command grammar (see
    * `transport/commandBridge.ts`). The TUI behind `/remote connect` injects
    * its dispatch here; leave unset for headless servers (`:command` then
-   * answers `40418 command.unavailable`, the catalog is empty).
+   * answers `40421 command.unavailable`, the catalog is empty).
    */
   readonly commandBridge?: SessionCommandBridge;
 }
@@ -258,12 +258,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   }
   const validateCredential = createCredentialValidator(authTokenService, opts.rpcToken);
   const logging = resolveLoggingConfig({ homeDir, env: process.env });
-  // `bootstrap()` seeds `IFileSystemStorageService` with a `FileStorageService`
-  // rooted at `homeDir`, so the Store facades above it (append-log, atomic
-  // document, blob) — and in turn session metadata, wire records, blobs, and
-  // the session index — all persist to disk. A host-injected `opts.core` is
-  // used as-is instead: the host bootstrapped that scope itself, so the
-  // bootstrap-time inputs are its call (see the option's doc).
   const ownsCore = opts.core === undefined;
   const core =
     opts.core ??
@@ -273,9 +267,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
         configPath,
         clientIdentity: opts.hostIdentity,
         args: {
-          // Default host identity headers derived from `hostIdentity`: outbound
-          // requests (model, WebSearch, registry refresh) carry the host
-          // product's User-Agent + X-Msh-* set.
           requestHeaders: createKimiDefaultHeaders({ homeDir, ...opts.hostIdentity }),
           skillDirs: opts.skillDirs,
           displayName: opts.hostIdentity.displayName,
@@ -342,11 +333,6 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
   app.setValidatorCompiler(() => () => true);
   app.setSerializerCompiler(() => (data) => JSON.stringify(data));
   installErrorHandler(app);
-  // Transparent content negotiation (br/gzip/deflate) — transcript pages and
-  // other JSON reads can be megabytes; browsers advertise support themselves.
-  // Tunneled (hub-relayed) replies pass through the connector's undici fetch,
-  // which decompresses and strips the encoding header, so the hub edge can
-  // re-encode for the browser.
   installCompression(app);
   const hostCheck = createHostCheck({
     boundHost: host,
@@ -388,23 +374,10 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
     }
     try {
       fsWatchBridge.dispose();
-      // An injected core stays the host's: skip every engine-level disposal
-      // and drain — the host's own teardown runs them. Only the owned-core
-      // path below shuts the engine down.
       if (ownsCore) {
-        // Settle session metadata writes first: requests have stopped, and a
-        // queued write must land before the mirror flushes its summary and the
-        // scope disposal marks the service disposed.
         await drainSessionMetadataWrites();
-        // Drain the session-index mirror while the query store is still open:
-        // requests have stopped, so no new summaries arrive and the queue just
-        // needs its final flush to land in the read model.
         await core.accessor.get(ISessionIndexMirror).drain();
         core.dispose();
-        // `core.dispose()` runs the mirror's, the search service's and the query
-        // store's synchronous `dispose()`, whose drains/closes are asynchronous —
-        // await them before releasing the instance registration (and before
-        // embedding hosts tear down homeDir).
         await drainSessionIndexMirror();
         await drainGlobalSearchDisposals();
         await drainQueryStoreDisposals();

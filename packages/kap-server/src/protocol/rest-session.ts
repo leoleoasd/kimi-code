@@ -172,9 +172,6 @@ export const sessionAbortResponseSchema = z.object({
 });
 export type SessionAbortResponse = z.infer<typeof sessionAbortResponseSchema>;
 
-// `:command` / `/commands` — the host-injected slash-command bridge
-// (`transport/commandBridge.ts`): grammar and execution live in the host, the
-// wire only carries the raw line in and the surfaced lines back out.
 export const sessionCommandRequestSchema = z.object({
   input: z.string().min(1),
 });

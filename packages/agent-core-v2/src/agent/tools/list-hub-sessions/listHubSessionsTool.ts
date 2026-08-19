@@ -1,12 +1,3 @@
-/**
- * `tools` domain — `IListHubSessionsTool` implementation.
- *
- * Reads the live connection + roster through `hubConnection`
- * (`IHubConnectionService`); the output is a compact, model-oriented listing
- * of every connected agent's exposed session ids. Sessions bridged from this
- * process are flagged so the model does not target its own machine. Bound at
- * Agent scope.
- */
 
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {

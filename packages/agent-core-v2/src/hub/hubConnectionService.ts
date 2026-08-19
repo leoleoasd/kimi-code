@@ -1,16 +1,3 @@
-/**
- * `hub` domain — `IHubConnectionService` implementation.
- *
- * The connection is connector-populated host state held as a plain field —
- * its identity is "the one live hub connection", which is process-wide, so it
- * belongs at App scope. Hub calls go to the hub origin with
- * `Authorization: Bearer <token>` (omitted for bypass-mode hubs whose token
- * is empty). The roster read additionally fans one scoped session-list
- * request per connected agent into the hub's proxy to resolve session titles
- * (tunnel data carries ids only; failures degrade to id-only rows). Failures
- * throw plain Errors whose message the calling tool renders straight to the
- * model. Bound at App scope.
- */
 
 import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { LifecycleScope } from '#/app/scopes';
@@ -59,9 +46,6 @@ export class HubConnectionService implements IHubConnectionService {
         legacy: scope === undefined || scope === null,
       };
     });
-    // Titles are not tunnel data — resolve them lazily through the agent's own
-    // session list (the hub proxies + scope-filters it), one request per agent,
-    // degrading to id-only rows when the lookup fails.
     await Promise.all(
       parsed.map(async (agent, index) => {
         if (agent.legacy || agent.sessionIds.length === 0) return;
@@ -71,7 +55,6 @@ export class HubConnectionService implements IHubConnectionService {
             sessionTitles: await this.fetchSessionTitles(agent.agentId, agent.sessionIds),
           };
         } catch {
-          // Keep the id-only row.
         }
       }),
     );
@@ -112,8 +95,6 @@ export class HubConnectionService implements IHubConnectionService {
     )}/prompts`;
     const data = await this.request(path, {
       method: 'POST',
-      // `steer` stays undefined (and off the wire) unless requested, so
-      // receivers predating the field treat the submission as a plain queue.
       body: { content: [{ type: 'text', text: target.text }], steer: target.steer },
     });
     const item = data as Record<string, unknown> | undefined;

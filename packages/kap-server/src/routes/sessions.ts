@@ -732,9 +732,6 @@ export function registerSessionsRoutes(
         }
 
         if (parsed.action === 'command') {
-          // The host-injected bridge owns the grammar + every policy call
-          // (unknown word, busy gate, wrong-session, interactive degrade) —
-          // the route only shuttles the raw line in and the lines back out.
           const bridge = deps?.commandBridge;
           if (bridge === undefined) {
             reply.send(
@@ -800,10 +797,6 @@ export function registerSessionsRoutes(
     sessionActionRoute.handler as Parameters<SessionRouteHost['post']>[2],
   );
 
-  // The slash-command catalog the session's composer can offer (bridge-owned;
-  // static per host). Deliberately answers an empty list — not an error —
-  // when no bridge is injected, so clients can render "no commands here"
-  // without special-casing transport failures.
   const listCommandsRoute = defineRoute(
     {
       method: 'GET',

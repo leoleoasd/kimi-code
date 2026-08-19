@@ -1,15 +1,3 @@
-/**
- * `tools` domain — `ISendHubMessageTool` contract.
- *
- * Delivers a plain-text message from this agent to the agent running another
- * session exposed on the same kimi hub, by submitting a wrapped user-role
- * prompt through the hub's proxy (`POST /agents/{agentId}/api/v1/sessions/
- * {sessionId}/prompts` with `steer: true` — a busy session gets the message
- * injected into its active turn at the next step boundary, like the TUI's
- * mid-turn typing; an idle one starts a fresh turn). Hub-gated, registered
- * per agent by the remote-control connector alongside `ListHubSessions`.
- * Bound at Agent scope.
- */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 import { z } from 'zod';

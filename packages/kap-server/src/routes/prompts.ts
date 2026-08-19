@@ -86,9 +86,6 @@ const sessionIdParamSchema = z.object({
 });
 
 const agentIdQuerySchema = z.object({
-  // Prompt queues are per AGENT (the same rule as the submission's
-  // `body.agent_id`): absent reads the main agent's queue, a forked
-  // side-channel agent's id reads that agent's queue.
   agent_id: z.string().min(1).optional(),
 });
 
@@ -300,12 +297,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
             throw error;
           }
         }
-        // Goal fields dispatch before the prompt is minted, so an objective's
-        // first turn is adopted by the goal it creates. Ordering and inputs
-        // mirror `applySessionAgentConfig` (objective before control, `resume`
-        // asks to continue); the engine's own validation and lifecycle
-        // conflicts (empty/oversized objective, existing goal, missing goal,
-        // unsupported agent) propagate to `sendMappedError` unchanged.
         if (req.body.goal_objective !== undefined && req.body.goal_control === 'cancel') {
           throw new Error2(
             ErrorCodes.REQUEST_INVALID,
@@ -329,11 +320,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           }
         }
         if (req.body.goal_objective === undefined && req.body.goal_control !== undefined) {
-          // A control-only submission acts on the goal itself: pause/resume/
-          // cancel launch no turn for the placeholder `content` (it is never a
-          // user message), so no prompt is minted and the queue is untouched.
-          // Reply with a receipt in the PromptSubmitResult shape whose
-          // `status: 'blocked'` says exactly that — never a fake 'running'.
           const receiptId = newMessageId();
           reply.send(
             okEnvelope(
@@ -403,12 +389,6 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           () => staging?.discard(),
         );
         if (req.body.steer === true) {
-          // Steer mode: pull the just-minted prompt out of the FIFO and inject
-          // it into the active turn at the next step boundary. PROMPT_NOT_FOUND
-          // means there is nothing to steer into — the session was idle (the
-          // enqueue itself already launched this prompt) or a compaction holds
-          // the context — so leave it queued/launched, mirroring the engine's
-          // own `submitSteer` degradation.
           try {
             await resolved.prompt.steer([handle.id]);
           } catch (error) {

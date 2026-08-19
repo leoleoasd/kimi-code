@@ -1,14 +1,3 @@
-/**
- * `tools` domain — `INotifyUserTool` contract.
- *
- * Public contract of the NotifyUser tool: the input schema the model calls
- * with and the Agent-scope identifier used to resolve the implementation
- * through the container. The tool pushes an out-of-band USER notification —
- * a deck nudge (browser Notification / TUI notice), NOT a transcript message:
- * the agent calls it when the user's attention is needed elsewhere (long work
- * done, waiting on an answer, a failure worth surfacing). Bound at Agent
- * scope.
- */
 
 import { z } from 'zod';
 

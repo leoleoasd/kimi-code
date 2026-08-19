@@ -812,12 +812,8 @@ export class SessionEventBroadcaster {
       return;
     }
     if (event.type === 'event.user.notify') {
-      const payload = userNotifyPayload(event.payload);
+      const payload = userNotifyPayload(corePayload);
       if (payload === undefined) return;
-      // The NotifyUser tool's surface: fan out to every connection (the
-      // `event.` prefix makes isGlobalEvent match), addressed at the owning
-      // session like `session.meta.updated` so scope-filtered remote clients
-      // keep their perimeter.
       void this.dispatchSessionEvent(payload.sessionId, {
         type: 'event.user.notify',
         ...payload,
@@ -1411,7 +1407,6 @@ function sessionMetaUpdatedSessionId(payload: unknown): string | undefined {
   return typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
 }
 
-/** Validate the `event.user.notify` payload (NotifyUser tool). */
 function userNotifyPayload(
   payload: unknown,
 ):

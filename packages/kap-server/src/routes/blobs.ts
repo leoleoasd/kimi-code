@@ -1,19 +1,3 @@
-/**
- * `/api/v1` blob routes — serve dehydrated `blobref:` payloads.
- *
- *   GET /sessions/{session_id}/agents/{agent_id}/blobs/{sha256}
- *
- * Large prompt-media bodies are offloaded into the agent-scoped blob store at
- * persistence (`IAgentBlobService`, key = content sha256); transcript
- * attachments reference them as `{kind:'blob', ref:'blobref:<mime>;<sha256>'}`
- * and a client turns the ref into this URL. The read goes through
- * `TranscriptService.readAgentBlob` (index-resolved, session cold or live —
- * never a live-only store's memory) and answers RAW bytes with
- * `Content-Type: application/octet-stream` (browsers sniff images inside
- * `<img>`); a missing blob answers a real HTTP 404 (40407 envelope body).
- * Unlike the envelope-only transcript family, the HTTP status carries the
- * outcome because the consumers are `<img>` / `fetch`, not envelope readers.
- */
 
 import { isPlainAgentId } from '@moonshot-ai/transcript';
 import { z } from 'zod';

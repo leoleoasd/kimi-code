@@ -173,9 +173,6 @@ export function groupMessagesIntoSnapshot(
     attachmentIds?: string[],
     engineOrdinal?: number,
   ): TurnDraft => {
-    // An engine-announced ordinal pins the id to the live numbering (the
-    // backfill then merges turn-for-turn with live ops); otherwise the fold
-    // numbers sequentially past every ordinal announced so far.
     const ordinal = engineOrdinal ?? nextOrdinal;
     nextOrdinal = Math.max(ordinal + 1, nextOrdinal);
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
@@ -183,13 +180,6 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  /**
-   * Fold one task-notification message INTO the open turn as a user-role
-   * frame — mirrors the live projector's `onTaskNotified`: mid-turn arrivals
-   * never open a new turn (and never consume an engine ordinal); only an
-   * arrival while the engine was idle opens a dedicated turn, which the
-   * journal announces with its own `turn.prompt` record (→ ordinal hint).
-   */
   const foldTaskNotificationIntoTurn = (message: HistoryMessage): void => {
     const current = ensureTurn();
     let step = current.steps.at(-1);
@@ -230,9 +220,6 @@ export function groupMessagesIntoSnapshot(
       }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
-          // A real turn boundary: advance the grouping (and the ordinal).
-          // The steering text is internal — the boundary lands promptless,
-          // mirroring the live path's displayable-origin gate.
           startTurn(mapOrigin(message), undefined, undefined, engineOrdinal);
         }
         continue;

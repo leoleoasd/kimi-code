@@ -1,13 +1,3 @@
-/**
- * `tools` domain — `ISendHubMessageTool` implementation.
- *
- * Owns the delivery semantics: locate the owning agent for the target
- * session in the hub roster, wrap the message in a provenance header (so the
- * receiving agent knows it came from another agent and how to reply), and
- * submit it through `hubConnection` (`IHubConnectionService`). Agent-scope
- * context (`ISessionContext`) supplies the sender identity; hub failures map
- * to `isError` results rendered for the model. Bound at Agent scope.
- */
 
 import { registerAgentToolService } from '#/agent/toolRegistry/toolContribution';
 import {

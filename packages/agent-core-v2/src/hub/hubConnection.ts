@@ -1,20 +1,3 @@
-/**
- * `hub` domain — `IHubConnectionService` contract.
- *
- * Holds this process's single live kimi-hub connection (hub URL + shared
- * token + the session ids the connection exposes) for the hub-gated agent
- * tools (`ListHubSessions` / `SendHubMessage`). The host's remote-control
- * connector (`kimi remote connect` / the TUI's `/remote connect`) populates
- * it when the tunnel comes up and clears it on disconnect. The service also
- * owns the outbound HTTPS calls the tools make against the hub: the agent
- * roster read (`GET /hub/api/agents`, plus one proxied
- * `GET /agents/{agentId}/api/v2/sessions` per scoped agent to resolve session
- * titles) and the cross-session prompt submit
- * (`POST /agents/{agentId}/api/v1/sessions/{sessionId}/prompts`, with
- * `steer: true` when the message should be injected into the target's active
- * turn instead of waiting in its FIFO).
- * Bound at App scope.
- */
 
 import { createDecorator, type ServiceIdentifier } from '#/_base/di/instantiation';
 
