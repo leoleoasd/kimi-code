@@ -45,9 +45,11 @@ import {
 } from './hub/notifications';
 import { useRosterStream } from './hub/stream';
 import { fetchSession, sessionInfoQueryKey } from './sessions/api';
+import { useTheme } from './theme';
 
 export function App() {
   const { hubOrigin, token, disconnect } = useConnection();
+  const { theme, toggleTheme } = useTheme();
   const queryClient = useQueryClient();
   const roster = useQuery({
     queryKey: HUB_AGENTS_QUERY_KEY,
@@ -313,6 +315,33 @@ export function App() {
         ) : null}
         <InstallButton />
         <button
+          className="flex min-h-[36px] min-w-[36px] items-center justify-center rounded border border-neutral-700 text-neutral-300 hover:bg-neutral-800"
+          aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
+          onClick={toggleTheme}
+        >
+          {theme === 'dark' ? (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <circle cx="8" cy="8" r="3" stroke="currentColor" strokeWidth="1.4" />
+              <path
+                d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+              />
+            </svg>
+          ) : (
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden>
+              <path
+                d="M13.5 9.5A5.5 5.5 0 1 1 6.5 2.5a4.4 4.4 0 0 0 7 7Z"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </button>
+        <button
           className="min-h-[36px] rounded border border-neutral-700 px-2 py-1 text-[11px] text-neutral-300 hover:bg-neutral-800"
           onClick={disconnect}
         >
@@ -370,7 +399,7 @@ export function App() {
         }}
       />
       <aside
-        className={`fixed inset-y-0 left-0 z-40 w-[280px] max-w-[85vw] border-r border-neutral-800 bg-[#0e1116] shadow-2xl transition-transform duration-200 ease-out lg:hidden ${
+        className={`fixed inset-y-0 left-0 z-40 w-[280px] max-w-[85vw] border-r border-neutral-800 bg-(--app-surface) shadow-2xl transition-transform duration-200 ease-out lg:hidden ${
           drawerOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
         aria-hidden={!drawerOpen}
