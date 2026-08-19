@@ -58,7 +58,7 @@ import {
   setSessionModel,
   undoSession,
 } from '#/sessions/api';
-import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
+import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
 import {
   lastAssistantText,
   runComposerCommand,
@@ -1284,6 +1284,7 @@ function AttachmentMedia({
   const source = attachment.source as
     | { kind: 'url'; url: string }
     | { kind: 'file'; fileId: string }
+    | { kind: 'session_media'; fileId: string }
     | { kind: 'blob'; ref: string }
     | undefined;
   const directUrl = source?.kind === 'url' ? source.url : undefined;
@@ -1295,7 +1296,9 @@ function AttachmentMedia({
     let cancelled = false;
     (source.kind === 'blob'
       ? buildBlobPreviewUrl({ baseUrl, token, sessionId, agentId, ref: source.ref })
-      : buildImagePreviewUrl({ baseUrl, token, fileId: source.fileId })
+      : source.kind === 'session_media'
+        ? buildSessionMediaPreviewUrl({ baseUrl, token, sessionId, fileId: source.fileId })
+        : buildImagePreviewUrl({ baseUrl, token, fileId: source.fileId })
     )
       .then((url) => {
         if (cancelled) revokePreviewUrl(url);

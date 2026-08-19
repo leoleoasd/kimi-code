@@ -197,6 +197,39 @@ export async function buildBlobPreviewUrl(
   return create(blob);
 }
 
+// ------------------------------------------------------------ session media
+
+/**
+ * Session-canonical media (`source.kind === 'session_media'`): the projektor
+ * assigns the turn-anchored fileId and the bytes stream from the per-session
+ * media route (`/api/v1/sessions/{sid}/media/{fid}`). Same object-URL
+ * contract as `buildImagePreviewUrl` — the caller MUST revoke.
+ */
+export async function buildSessionMediaPreviewUrl(
+  endpoint: HttpEndpoint & {
+    sessionId: string;
+    fileId: string;
+    createObjectUrl?: (blob: Blob) => string;
+  },
+): Promise<string> {
+  const doFetch = endpoint.fetchImpl ?? fetch;
+  const headers: Record<string, string> = {};
+  if (endpoint.token !== '') headers['authorization'] = `Bearer ${endpoint.token}`;
+  const res = await doFetch(
+    `${endpoint.baseUrl}/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/media/${encodeURIComponent(endpoint.fileId)}`,
+    { headers },
+  );
+  if (res.status === 401) {
+    throw new EnvelopeError(40101, 'unauthorized — check the hub token');
+  }
+  if (!res.ok) {
+    throw new Error(`http ${res.status} ${res.statusText}`);
+  }
+  const blob = await res.blob();
+  const create = endpoint.createObjectUrl ?? ((b: Blob) => URL.createObjectURL(b));
+  return create(blob);
+}
+
 // ------------------------------------------------------------------ prompts
 
 /**
