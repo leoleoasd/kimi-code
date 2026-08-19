@@ -112,3 +112,11 @@ export type MaybePromise<T> = T | Promise<T>;
 export type ApprovalHandler = (request: ApprovalRequest) => MaybePromise<ApprovalResponse>;
 
 export type QuestionHandler = (request: QuestionRequest) => MaybePromise<QuestionResult>;
+
+/**
+ * Unwind callback for an ask-handler prompt whose kernel interaction was
+ * resolved through another surface (REST answer, dismiss, turn cancel):
+ * the argument is the kernel interaction id (the tool call id, for
+ * tool-originated requests).
+ */
+export type InteractionCancelHandler = (interactionId: string) => void;

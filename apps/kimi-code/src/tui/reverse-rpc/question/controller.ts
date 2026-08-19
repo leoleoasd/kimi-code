@@ -8,4 +8,8 @@ export class QuestionController extends ReverseRpcController<
   protected createCancelResponse(_reason: string): QuestionPanelResponse {
     return { answers: [] };
   }
+
+  protected idOf(payload: QuestionPanelData): string {
+    return payload.id;
+  }
 }

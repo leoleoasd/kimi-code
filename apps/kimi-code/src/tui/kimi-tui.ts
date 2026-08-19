@@ -2394,6 +2394,8 @@ export class KimiTUI {
     this.clearReverseRpcPanels();
     previous?.setApprovalHandler(undefined);
     previous?.setQuestionHandler(undefined);
+    previous?.setApprovalCancelHandler(undefined);
+    previous?.setQuestionCancelHandler(undefined);
     this.approvalController.cancelAll(reason);
     this.questionController.cancelAll(reason);
     this.session = undefined;
@@ -2416,7 +2418,13 @@ export class KimiTUI {
         this.appendApprovalTranscriptEntry(request, response);
       }),
     );
+    session.setApprovalCancelHandler((interactionId) => {
+      this.approvalController.cancel(interactionId);
+    });
     session.setQuestionHandler(createQuestionAskHandler(this.questionController));
+    session.setQuestionCancelHandler((interactionId) => {
+      this.questionController.cancel(interactionId);
+    });
   }
 
   async fetchSessions(scope: 'cwd' | 'all' = this.state.sessionsScope): Promise<void> {

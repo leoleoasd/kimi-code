@@ -6,6 +6,10 @@ class TestController extends ReverseRpcController<string, string> {
   protected createCancelResponse(reason: string): string {
     return `cancel:${reason}`;
   }
+
+  protected idOf(payload: string): string {
+    return payload;
+  }
 }
 
 describe('ReverseRpcController', () => {
@@ -68,6 +72,9 @@ describe('ReverseRpcController', () => {
       protected createCancelResponse(reason: string): string {
         return `cancel:${reason}`;
       }
+      protected idOf(payload: { action: string; id: string }): string {
+        return payload.id;
+      }
       protected override autoResolveFor(
         resolved: { action: string; id: string },
         response: string,
@@ -120,5 +127,50 @@ describe('ReverseRpcController', () => {
     await expect(third).resolves.toBe('cancel:shutdown');
     expect(controller.hasPending()).toBe(false);
     expect(hidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancel() un-resolves only the matching panelled request and hides it', async () => {
+    const controller = new TestController();
+    const showPanel = vi.fn();
+    const hidePanel = vi.fn();
+    controller.setUIHooks({ showPanel, hidePanel });
+
+    const first = controller.show('first');
+    const second = controller.show('second');
+
+    // The kernel interaction behind `first` resolved through another surface.
+    controller.cancel('first');
+
+    await expect(first).resolves.toBe('cancel:resolved through another surface');
+    // The queued request advances to the panel.
+    expect(showPanel).toHaveBeenLastCalledWith('second');
+    expect(hidePanel).not.toHaveBeenCalled();
+    expect(controller.hasPending()).toBe(true);
+
+    controller.respond('answer-second');
+    await expect(second).resolves.toBe('answer-second');
+    expect(controller.hasPending()).toBe(false);
+    expect(hidePanel).toHaveBeenCalledTimes(1);
+  });
+
+  it('cancel() drops the matching queued request without touching the panel', async () => {
+    const controller = new TestController();
+    const showPanel = vi.fn();
+    const hidePanel = vi.fn();
+    controller.setUIHooks({ showPanel, hidePanel });
+
+    const first = controller.show('first');
+    const second = controller.show('second');
+    controller.cancel('second');
+
+    await expect(second).resolves.toBe('cancel:resolved through another surface');
+    expect(showPanel).toHaveBeenCalledTimes(1);
+    expect(hidePanel).not.toHaveBeenCalled();
+
+    controller.cancel('no-such-id');
+    expect(controller.hasPending()).toBe(true);
+    controller.respond('answer-first');
+    await expect(first).resolves.toBe('answer-first');
+    expect(controller.hasPending()).toBe(false);
   });
 });

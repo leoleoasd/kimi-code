@@ -11,6 +11,10 @@ export class ApprovalController extends ReverseRpcController<
     return { decision: 'cancelled', feedback: reason };
   }
 
+  protected idOf(payload: ApprovalPanelData): string {
+    return payload.id;
+  }
+
   protected override autoResolveFor(
     resolvedPayload: ApprovalPanelData,
     response: ApprovalResponse,

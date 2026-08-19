@@ -66,6 +66,28 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
     }
   }
 
+  /**
+   * Unwinds ONE pending request when its kernel interaction was resolved
+   * through another surface (hub web's REST answer, a dismiss, turn cancel):
+   * the entry settles with the cancel response and the panel closes (or the
+   * queued entry silently drops) — without this, an externally answered
+   * prompt would stay on screen until the user stabs at it.
+   */
+  cancel(id: string): void {
+    if (this.current !== null && this.idOf(this.current.payload) === id) {
+      const entry = this.current;
+      this.current = null;
+      entry.resolve(this.createCancelResponse('resolved through another surface'));
+      this.advanceOrHide();
+      return;
+    }
+    const index = this.queue.findIndex((entry) => this.idOf(entry.payload) === id);
+    if (index < 0) return;
+    const [entry] = this.queue.splice(index, 1);
+    if (entry === undefined) return;
+    entry.resolve(this.createCancelResponse('resolved through another surface'));
+  }
+
   hasPending(): boolean {
     return this.current !== null || this.queue.length > 0;
   }
@@ -108,4 +130,7 @@ export abstract class ReverseRpcController<TPayload, TResponse> {
   }
 
   protected abstract createCancelResponse(reason: string): TResponse;
+
+  /** The kernel interaction id a panel payload stands for (its tool call id). */
+  protected abstract idOf(payload: TPayload): string;
 }

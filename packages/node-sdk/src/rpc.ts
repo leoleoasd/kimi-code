@@ -22,7 +22,7 @@ import {
 } from '@moonshot-ai/agent-core';
 import type { Kaos } from '@moonshot-ai/kaos';
 
-import type { ApprovalHandler, QuestionHandler } from '#/events';
+import type { ApprovalHandler, InteractionCancelHandler, QuestionHandler } from '#/events';
 import type {
   AddAdditionalDirInput,
   AddAdditionalDirResult,
@@ -178,6 +178,14 @@ export abstract class SDKRpcClientBase {
   private readonly eventListeners = new Set<(event: Event) => void>();
   private readonly approvalHandlers = new Map<string, ApprovalHandler>();
   private readonly questionHandlers = new Map<string, QuestionHandler>();
+  /**
+   * Counterparts to the ask handlers: fired when an interaction the session's
+   * ask handler was shown got resolved through another surface (REST answer,
+   * dismiss, turn cancel) — the host unwinds its pending UI. See
+   * `SessionEventSink.cancelApproval` / `cancelQuestion`.
+   */
+  private readonly approvalCancelHandlers = new Map<string, InteractionCancelHandler>();
+  private readonly questionCancelHandlers = new Map<string, InteractionCancelHandler>();
 
   get interactiveAgentId(): string {
     return this.interactiveAgentScope.getStore() ?? MAIN_AGENT_ID;
@@ -1088,9 +1096,42 @@ export abstract class SDKRpcClientBase {
     this.questionHandlers.set(sessionId, handler);
   }
 
+  setApprovalCancelHandler(sessionId: string, handler: InteractionCancelHandler | undefined): void {
+    if (handler === undefined) {
+      this.approvalCancelHandlers.delete(sessionId);
+      return;
+    }
+    this.approvalCancelHandlers.set(sessionId, handler);
+  }
+
+  setQuestionCancelHandler(sessionId: string, handler: InteractionCancelHandler | undefined): void {
+    if (handler === undefined) {
+      this.questionCancelHandlers.delete(sessionId);
+      return;
+    }
+    this.questionCancelHandlers.set(sessionId, handler);
+  }
+
+  /**
+   * `SessionEventSink` surface: the interaction `interactionId` shown by this
+   * session's ask handler was resolved through another surface (REST answer,
+   * dismiss, turn cancel) — the host unwinds the pending UI. No handler
+   * registered → nothing to unwind (the ask promise dies with the bridge's
+   * race).
+   */
+  cancelApproval(request: { sessionId: string; agentId: string; interactionId: string }): void {
+    this.approvalCancelHandlers.get(request.sessionId)?.(request.interactionId);
+  }
+
+  cancelQuestion(request: { sessionId: string; agentId: string; interactionId: string }): void {
+    this.questionCancelHandlers.get(request.sessionId)?.(request.interactionId);
+  }
+
   clearSessionHandlers(sessionId: string): void {
     this.approvalHandlers.delete(sessionId);
     this.questionHandlers.delete(sessionId);
+    this.approvalCancelHandlers.delete(sessionId);
+    this.questionCancelHandlers.delete(sessionId);
   }
 
   async requestApproval(

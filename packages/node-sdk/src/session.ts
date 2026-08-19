@@ -6,7 +6,12 @@ import {
   type SwarmModeTrigger,
 } from '@moonshot-ai/agent-core';
 
-import { type ApprovalHandler, type Event, type QuestionHandler } from '#/events';
+import {
+  type ApprovalHandler,
+  type Event,
+  type InteractionCancelHandler,
+  type QuestionHandler,
+} from '#/events';
 import type { SDKRpcClientBase } from '#/rpc';
 import type {
   AddAdditionalDirOptions,
@@ -136,6 +141,21 @@ export class Session {
   setQuestionHandler(handler: QuestionHandler | undefined): void {
     this.ensureOpen();
     this.rpc.setQuestionHandler(this.id, handler);
+  }
+
+  /**
+   * Unwind hooks: fired when an interaction this session's ask handler was
+   * shown got resolved through another surface (kap-server's REST answer
+   * routes, a dismiss, turn cancellation) — close the pending panel.
+   */
+  setApprovalCancelHandler(handler: InteractionCancelHandler | undefined): void {
+    this.ensureOpen();
+    this.rpc.setApprovalCancelHandler(this.id, handler);
+  }
+
+  setQuestionCancelHandler(handler: InteractionCancelHandler | undefined): void {
+    this.ensureOpen();
+    this.rpc.setQuestionCancelHandler(this.id, handler);
   }
 
   async prompt(input: string | PromptInput, options?: { promptId?: string }): Promise<void> {

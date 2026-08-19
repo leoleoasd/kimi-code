@@ -21,6 +21,12 @@
  *   verbatim — and writes the outcome back through the typed session
  *   services. The kernel's `respond` no-ops on an id that is no longer
  *   pending, so a late answer after a turn cancellation is safe.
+ *   A bridged interaction may also be resolved through another surface
+ *   (kap-server's REST answer routes, a dismiss, the turn's cancellation) —
+ *   the bridge races the client callback against the kernel's `onDidResolve`
+ *   and, when the kernel wins, calls the sink's `cancelApproval` /
+ *   `cancelQuestion` hook so the client's pending UI unwinds instead of
+ *   staying open on a question that no longer exists.
  */
 import type {
   ApprovalRequest,
@@ -64,6 +70,14 @@ export interface SessionEventSink {
     request: QuestionRequest & { sessionId: string; agentId: string },
   ): Promise<QuestionResult>;
   toolCall(request: ToolCallRequest): Promise<ToolCallResponse>;
+  /**
+   * The kernel interaction this client was asked about was resolved through
+   * another surface (REST answer, dismiss, turn cancel) before its handler
+   * answered: unwind the client-side pending UI. Optional — a sink without a
+   * visible prompt can ignore it (its pending promise dies with the race).
+   */
+  cancelApproval?(request: { sessionId: string; agentId: string; interactionId: string }): void;
+  cancelQuestion?(request: { sessionId: string; agentId: string; interactionId: string }): void;
 }
 
 /**
@@ -185,6 +199,34 @@ export class SessionEventWiring {
   }
 
   /**
+   * Settles when the kernel resolves `interactionId` through any surface
+   * (REST answer, dismiss, turn cancel — and also this wiring's own write,
+   * which happens after its race already settled, so it only disposes the
+   * subscription). `cancel()` drops the subscription for the normal path.
+   */
+  private externalResolution(interactionId: string): {
+    readonly resolved: Promise<void>;
+    readonly cancel: () => void;
+  } {
+    const interactions = this.session.accessor.get(ISessionInteractionService);
+    let settle!: () => void;
+    const resolved = new Promise<void>((resolve) => {
+      settle = resolve;
+    });
+    const subscription = interactions.onDidResolve((event) => {
+      if (event.id !== interactionId) return;
+      subscription.dispose();
+      settle();
+    });
+    return {
+      resolved,
+      cancel: () => {
+        subscription.dispose();
+      },
+    };
+  }
+
+  /**
    * Feed a pending approval to the client's approval handler (through the
    * base-class `requestApproval`, which owns the no-handler cancellation and
    * the handler-failure error event) and decide the kernel request with the
@@ -193,16 +235,35 @@ export class SessionEventWiring {
    */
   private async bridgeApproval(interaction: Interaction): Promise<void> {
     const payload = interaction.payload as ApprovalInteractionPayload;
+    const agentId = payload.agentId ?? interaction.origin.agentId ?? MAIN_AGENT_ID;
     try {
-      const response = await this.sink.requestApproval({
-        turnId: payload.turnId,
-        toolCallId: payload.toolCallId ?? interaction.id,
-        toolName: payload.toolName,
-        action: payload.action,
-        display: payload.display,
-        sessionId: this.session.id,
-        agentId: payload.agentId ?? interaction.origin.agentId ?? MAIN_AGENT_ID,
-      });
+      const gate = this.externalResolution(interaction.id);
+      let response: ApprovalResponse | undefined;
+      try {
+        response = await Promise.race([
+          this.sink.requestApproval({
+            turnId: payload.turnId,
+            toolCallId: payload.toolCallId ?? interaction.id,
+            toolName: payload.toolName,
+            action: payload.action,
+            display: payload.display,
+            sessionId: this.session.id,
+            agentId,
+          }),
+          gate.resolved.then(() => undefined),
+        ]);
+      } finally {
+        gate.cancel();
+      }
+      if (response === undefined) {
+        // Resolved through another surface — unwind the client's panel.
+        this.sink.cancelApproval?.({
+          sessionId: this.session.id,
+          agentId,
+          interactionId: interaction.id,
+        });
+        return;
+      }
       this.session.accessor.get(ISessionApprovalService).decide(interaction.id, response);
     } catch {
       // The session scope died mid-bridge (close/reload): the parked engine
@@ -218,14 +279,33 @@ export class SessionEventWiring {
    */
   private async bridgeQuestion(interaction: Interaction): Promise<void> {
     const payload = interaction.payload as QuestionInteractionPayload;
+    const agentId = interaction.origin.agentId ?? MAIN_AGENT_ID;
     try {
-      const result = await this.sink.requestQuestion({
-        turnId: payload.turnId,
-        toolCallId: payload.toolCallId,
-        questions: payload.questions,
-        sessionId: this.session.id,
-        agentId: interaction.origin.agentId ?? MAIN_AGENT_ID,
-      });
+      const gate = this.externalResolution(interaction.id);
+      let result: QuestionResult | 'resolved-elsewhere';
+      try {
+        result = await Promise.race([
+          this.sink.requestQuestion({
+            turnId: payload.turnId,
+            toolCallId: payload.toolCallId,
+            questions: payload.questions,
+            sessionId: this.session.id,
+            agentId,
+          }),
+          gate.resolved.then(() => 'resolved-elsewhere' as const),
+        ]);
+      } finally {
+        gate.cancel();
+      }
+      if (result === 'resolved-elsewhere') {
+        // Resolved through another surface — unwind the client's dialog.
+        this.sink.cancelQuestion?.({
+          sessionId: this.session.id,
+          agentId,
+          interactionId: interaction.id,
+        });
+        return;
+      }
       const questions = this.session.accessor.get(ISessionQuestionService);
       if (result === null) {
         questions.dismiss(interaction.id);
