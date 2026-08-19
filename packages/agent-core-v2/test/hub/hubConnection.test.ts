@@ -1,11 +1,3 @@
-/**
- * Scenario: HubConnectionService bridges the agent tools to the hub's HTTPS
- * surface — roster read + cross-session prompt submit, with the bearer rules
- * (empty token = bypass hub → no Authorization header) and humanized errors.
- * Wiring: direct construction (the service has no @IService deps) + a stubbed
- * global fetch.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/hub/`.
- */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { HubConnectionService } from '#/hub/hubConnectionService';

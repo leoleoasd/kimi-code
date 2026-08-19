@@ -1,10 +1,3 @@
-/**
- * Scenario: NotifyUser and the hub-aware sibling tools (ListHubSessions /
- * SendHubMessage) are on the builtin contribution table, allowed by every
- * builtin profile's tool allowlist (the production activation gate), AND
- * active in a real assembled agent's runtime registry.
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/notifyUser/`.
- */
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { getAgentProfileContributions } from '#/app/agentProfileCatalog/contribution';

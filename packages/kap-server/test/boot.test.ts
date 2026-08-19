@@ -21,13 +21,12 @@ import {
   InMemoryStorageService,
   IOAuthToolkit,
   ISessionIndexMirror,
-  ISessionLifecycleService,
+  ISessionManager,
   ITelemetryService,
-  IWorkspaceLifecycleService,
   logSeed,
   noopTelemetryService,
   resolveLoggingConfig,
-  type DomainEvent,
+  Event2,
   type Scope,
 } from '@moonshot-ai/agent-core-v2';
 
@@ -250,11 +249,6 @@ describe('server-v2 boot', () => {
   });
 });
 
-/**
- * `startServer({ core })` — the injection seam for hosts that already own a
- * bootstrapped App scope (the TUI's `/remote connect`): the server must serve
- * THAT live engine and leave its teardown to the host.
- */
 describe('server-v2 injected core', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;
@@ -266,8 +260,6 @@ describe('server-v2 injected core', () => {
       server = undefined;
     }
     if (scope !== undefined) {
-      // The host (this test) owns the scope: run the same engine teardown the
-      // owned-core server close() would have.
       try {
         await scope.accessor.get(ISessionIndexMirror).drain();
         scope.dispose();
@@ -276,7 +268,6 @@ describe('server-v2 injected core', () => {
         await drainQueryStoreDisposals();
         await drainSessionMetadataWrites();
       } catch {
-        // best-effort teardown; the home removal below must still run
       }
       scope = undefined;
     }
@@ -307,7 +298,6 @@ describe('server-v2 injected core', () => {
     const base = await bootInjectedServer();
     expect(server?.core).toBe(scope);
 
-    // (a) A session created over server REST is live through the injected scope.
     const created = await fetch(`${base}/api/v1/sessions`, {
       method: 'POST',
       headers: authHeaders(server as RunningServer, { 'content-type': 'application/json' }),
@@ -319,7 +309,6 @@ describe('server-v2 injected core', () => {
     const live = getLiveSessionById((scope as Scope).accessor, sessionId);
     expect(live).toBeDefined();
 
-    // (b) Events published on the injected scope reach a /api/v1/ws subscriber.
     const token = (server as RunningServer).authTokenService.getToken();
     const ws = new WebSocket(`ws://127.0.0.1:${(server as RunningServer).port}/api/v1/ws`, [
       `kimi-code.bearer.${token}`,
@@ -366,12 +355,10 @@ describe('server-v2 injected core', () => {
     );
     await nextFrame((f) => f['type'] === 'ack' && f['id'] === 'h1');
 
-    // The session created over REST has no agents yet — materialize main so
-    // there is an event bus to publish on.
     const main = await live!.accessor.get(IAgentLifecycleService).create({ agentId: 'main' });
     main.accessor
       .get(IEventBus)
-      .publish({ type: 'turn.started', turnId: 1 } as unknown as DomainEvent);
+      .publish({ type: 'turn.started', turnId: 1 } as unknown as Event2<any>);
     const event = await nextFrame((f) => f['type'] === 'turn.started');
     expect(event['session_id']).toBe(sessionId);
 
@@ -387,19 +374,13 @@ describe('server-v2 injected core', () => {
     await (server as RunningServer).close();
     server = undefined;
 
-    // Server-owned state went away: the instance registration is released and
-    // the port no longer serves.
     expect(await listLiveServerInstances(home as string)).toEqual([]);
     await expect(fetch(`${base}/api/v1/healthz`)).rejects.toThrow();
 
-    // The injected scope is NOT disposed (the double-dispose regression
-    // guard): the host can still resolve services and create sessions through
-    // it directly.
     expect(() => (scope as Scope).accessor.get(IBootstrapService)).not.toThrow();
-    const handler = await (scope as Scope).accessor
-      .get(IWorkspaceLifecycleService)
-      .handlerFor({ root: home as string });
-    const created = await handler.accessor.get(ISessionLifecycleService).create({ workDir: home as string });
+    const created = await (scope as Scope).accessor
+      .get(ISessionManager)
+      .create({ workDir: home as string });
     expect(getLiveSessionById((scope as Scope).accessor, created.id)).toBeDefined();
   });
 });

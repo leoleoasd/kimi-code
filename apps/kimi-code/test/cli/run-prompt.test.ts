@@ -30,7 +30,9 @@ const mocks = vi.hoisted(() => {
     setModel: vi.fn(),
     setPermission: vi.fn(),
     setApprovalHandler: vi.fn(),
+    setApprovalCancelHandler: vi.fn(),
     setQuestionHandler: vi.fn(),
+    setQuestionCancelHandler: vi.fn(),
     getStatus: vi.fn(
       async (): Promise<{ readonly permission: string; readonly model?: string }> => ({
         permission: 'manual',

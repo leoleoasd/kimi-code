@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
 
 import {
-  type DomainEvent,
+  Event2,
   IAgentContextMemoryService,
   IAgentGoalService,
   IAgentLifecycleService,
@@ -1124,14 +1124,12 @@ describe('server-v2 /api/v1 prompts', () => {
     const lifecycle = session.accessor.get(IAgentLifecycleService);
     const child = await lifecycle.fork('main');
 
-    // Route to the child — its queue, not main's, carries the prompt.
     const submitted = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'queue me on the child' }],
       agent_id: child.id,
     });
     expect(submitted.body.code).toBe(0);
 
-    // The DEFAULT list (no query) is main's queue: never the child's prompt.
     const mainListed = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
       'GET',
       `/api/v1/sessions/${id}/prompts`,
@@ -1142,7 +1140,6 @@ describe('server-v2 /api/v1 prompts', () => {
       submitted.body.data.prompt_id,
     );
 
-    // `?agent_id=` reads the child's queue, mirroring the engine snapshot.
     const listed = await call<{ active: PromptItemWire | null; queued: PromptItemWire[] }>(
       'GET',
       `/api/v1/sessions/${id}/prompts?agent_id=${encodeURIComponent(child.id)}`,
@@ -1181,10 +1178,6 @@ describe('server-v2 /api/v1 prompts', () => {
     const prompt = lifecycle.get('main')!.accessor.get(IAgentPromptService);
     const steerSpy = vi.spyOn(prompt, 'steer');
 
-    // steer: true — the route must hand the fresh prompt id to prompt.steer.
-    // The stub-model turn settles instantly, so there is nothing to steer
-    // into: the engine throws PROMPT_NOT_FOUND and the route must swallow it
-    // (idle/degraded steer replies like a normal submission).
     const steered = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'steer me in' }],
       steer: true,
@@ -1194,7 +1187,6 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(steerSpy).toHaveBeenCalledTimes(1);
     expect(steerSpy).toHaveBeenCalledWith([steered.body.data.prompt_id]);
 
-    // steer omitted — the plain queue path must not touch prompt.steer.
     const plain = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: 'wait your turn' }],
     });
@@ -1387,7 +1379,6 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(toolPolicy?.isToolActive('Read')).toBe(true);
   });
 
-  // ---------------------------------------------------------------- goal ---
 
   function mainAgentOf(sessionId: string) {
     const session = getLiveSessionById((server as RunningServer).core.accessor, sessionId);
@@ -1401,10 +1392,19 @@ describe('server-v2 /api/v1 prompts', () => {
     return mainAgentOf(sessionId).accessor.get(IAgentGoalService).getGoal().goal;
   }
 
+  type SubscribedEvent = Event2<any> & {
+    readonly snapshot?: { readonly objective?: string };
+    readonly change?: { readonly kind?: string; readonly status?: string };
+    readonly origin?: { readonly kind?: string; readonly name?: string };
+  };
+
   function subscribeAgentEvents(sessionId: string) {
     const eventBus = mainAgentOf(sessionId).accessor.get(IEventBus);
-    const events: DomainEvent[] = [];
-    return { events, unsubscribe: eventBus.subscribe((event) => events.push(event)) };
+    const events: SubscribedEvent[] = [];
+    return {
+      events,
+      unsubscribe: eventBus.subscribe((event) => events.push(event as SubscribedEvent)),
+    };
   }
 
   function hasUserText(sessionId: string, text: string): boolean {
@@ -1433,9 +1433,6 @@ describe('server-v2 /api/v1 prompts', () => {
     );
   }
 
-  // An active goal with no flying turn (the profile edge dispatches the
-  // objective without minting a prompt), so control submissions are not
-  // racing a stub-provider turn outcome.
   async function createActiveGoal(objective: string): Promise<string> {
     const id = await createSession(home as string);
     await createMainAgent(id);
@@ -1463,7 +1460,6 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(submitted.body.data.status).toBe('running');
       expect(submitted.body.data.content).toEqual([{ type: 'text', text: 'refactor everything' }]);
 
-      // The objective reached the engine: created before the reply was sent.
       expect(goalOf(id)?.objective).toBe('refactor everything');
       expect(
         events.some(
@@ -1472,8 +1468,6 @@ describe('server-v2 /api/v1 prompts', () => {
         ),
       ).toBe(true);
 
-      // The submission itself is the goal's first turn: its text lands in the
-      // main agent's context like a plain prompt's would.
       await waitFor(
         () => hasUserText(id, 'refactor everything'),
         'objective text in context memory',
@@ -1511,7 +1505,6 @@ describe('server-v2 /api/v1 prompts', () => {
     });
     expect(second.body.code).toBe(40913);
     expect(second.body.msg).toContain('already exists');
-    // The conflict left the original goal untouched.
     expect(goalOf(id)?.objective).toBe('keep this one');
   });
 
@@ -1559,15 +1552,12 @@ describe('server-v2 /api/v1 prompts', () => {
         goal_control: 'pause',
       });
       expect(paused.body.code).toBe(0);
-      // The receipt stays contract-shaped but honest: 'blocked' — the control
-      // launched no turn for the placeholder content.
       expect(promptSubmitResultSchema.safeParse(paused.body.data).success).toBe(true);
       expect(paused.body.data.status).toBe('blocked');
       expect(paused.body.data.prompt_id).toMatch(/^msg_/);
       expect(paused.body.data.user_message_id).toBe(paused.body.data.prompt_id);
       expect(paused.body.data.content).toEqual([{ type: 'text', text: '/goal pause' }]);
 
-      // The control reached the engine.
       expect(goalOf(id)?.status).toBe('paused');
       expect(
         events.some(
@@ -1578,8 +1568,6 @@ describe('server-v2 /api/v1 prompts', () => {
         ),
       ).toBe(true);
 
-      // Nothing was minted as a prompt, and the placeholder never became a
-      // user message.
       const list = await listPrompts(id);
       expect(list.body.data.active).toBeNull();
       expect(list.body.data.queued).toEqual([]);
@@ -1592,7 +1580,6 @@ describe('server-v2 /api/v1 prompts', () => {
   it('dispatches goal_control resume and continues the paused goal', async () => {
     const id = await createActiveGoal('long project');
 
-    // Pause via the REST control first.
     const paused = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
       content: [{ type: 'text', text: '/goal pause' }],
       goal_control: 'pause',
@@ -1610,7 +1597,6 @@ describe('server-v2 /api/v1 prompts', () => {
       expect(promptSubmitResultSchema.safeParse(resumed.body.data).success).toBe(true);
       expect(resumed.body.data.status).toBe('blocked');
 
-      // Resume flipped the goal back to active before the reply was sent.
       expect(
         events.some(
           (event) =>
@@ -1619,14 +1605,12 @@ describe('server-v2 /api/v1 prompts', () => {
             event.change.status === 'active',
         ),
       ).toBe(true);
-      // ...and asked the engine to continue it (a goal-driven turn, not a
-      // minted prompt).
       await waitFor(
         () =>
           events.some(
             (event) =>
               event.type === 'turn.started' &&
-              event.origin.kind === 'system_trigger' &&
+              event.origin?.kind === 'system_trigger' &&
               event.origin.name === 'goal_continuation',
           ),
         'goal continuation turn',

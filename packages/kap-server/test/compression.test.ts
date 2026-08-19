@@ -1,8 +1,3 @@
-/**
- * Response compression (src/middleware/compression.ts): content negotiation
- * with q-values, skip rules (already-encoded / etag / subthreshold / binary),
- * and the encoded round-trip through a real fastify instance.
- */
 
 import Fastify, { type FastifyInstance } from 'fastify';
 import zlib from 'node:zlib';

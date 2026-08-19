@@ -1386,8 +1386,6 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     const agent = session!.accessor.get(IAgentLifecycleService).get('main')!;
     const blobs = agent.accessor.get(IAgentBlobService);
 
-    // Drive the engine's own offload (the >4KiB data-uri → blobref rewrite)
-    // so the seeding path matches what persistence does to large media.
     const payload = Buffer.from('blob-payload-'.repeat(600));
     const [part] = await blobs.offloadParts([
       { type: 'image_url', imageUrl: { url: `data:image/png;base64,${payload.toString('base64')}` } },
@@ -1405,30 +1403,24 @@ describe('server-v2 /api/v1/sessions/{sid}/transcript', () => {
     };
     const blobPath = () => `/api/v1/sessions/${id}/agents/main/blobs/${sha}`;
 
-    // Live session: raw bytes, octet-stream, content-length set.
     const res0 = await fetch(`${base}${blobPath()}`, { headers: authHeaders(server as RunningServer) } as never);
     expect(res0.status).toBe(200);
     expect(res0.headers.get('content-type')).toContain('application/octet-stream');
     expect(Buffer.from(await res0.arrayBuffer()).equals(payload)).toBe(true);
 
-    // Missing hash: real HTTP 404 + the 40407 envelope body.
     const missing = await fetchBytes(`/api/v1/sessions/${id}/agents/main/blobs/${'f'.repeat(64)}`);
     expect(missing.status).toBe(404);
     expect((JSON.parse(missing.body.toString('utf-8')) as Envelope<null>).code).toBe(40407);
 
-    // Unknown session: 404 + the 40401 envelope (mirrors the transcript family).
     const noSession = await fetchBytes(`/api/v1/sessions/nope/agents/main/blobs/${sha}`);
     expect(noSession.status).toBe(404);
     expect((JSON.parse(noSession.body.toString('utf-8')) as Envelope<null>).code).toBe(40401);
 
-    // Hash shape / hostile agent id are rejected by route validation.
     const badShape = await getJson<null>(`/api/v1/sessions/${id}/agents/main/blobs/not-a-hash`);
     expect(badShape.body.code).toBe(40001);
     const hostile = await getJson<null>(`/api/v1/sessions/${id}/agents/a%2Fb/blobs/${sha}`);
     expect(hostile.body.code).toBe(40001);
 
-    // Cold session: reboot on the same home — the read comes straight from
-    // the store, no live transcripts involved.
     await server!.close();
     server = undefined;
     await boot();

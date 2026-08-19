@@ -718,6 +718,65 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turn.prompt).toBe('/gen-docs ');
     expect(turn.attachmentIds).toEqual(['att_1']);
   });
+
+  it('keeps a kimi-file ref as a nameless attachment and inline tags as user text', () => {
+    const snapshot = snapshotOf(
+      { type: 'text', text: 'open <image path="/tmp/other.png"></image> please' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file_3' },
+      } as HistoryContentPart,
+    );
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_3' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+    expect(turn.prompt).toBe('open <image path="/tmp/other.png"></image> please');
+  });
+
+  it('keeps a legacy tag+ref pair as prompt text plus the ref-derived attachment', () => {
+    const snapshot = snapshotOf(
+      { type: 'text', text: '<image path="/cache/shot.png"></image>' },
+      {
+        type: 'image_url',
+        imageUrl: { url: 'kimi-file://file_5?path=%2Fcache%2Fshot.png' },
+      } as HistoryContentPart,
+    );
+
+    expect(snapshot.attachments).toEqual([
+      {
+        attachmentId: 'att_1',
+        mediaType: 'image/*',
+        source: { kind: 'session_media', fileId: 'file_5' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('<image path="/cache/shot.png"></image>');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('keeps standalone <media path> tags as prompt text', () => {
+    const snapshot = snapshotOf(
+      { type: 'text', text: '<image path="/cache/shot.png">' },
+      { type: 'text', text: '<image path="/cache/shot.png" content_type="image/png"></image>' },
+      { type: 'text', text: '<video path="/cache/clip.mp4">' },
+    );
+
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe(
+      '<image path="/cache/shot.png"><image path="/cache/shot.png" content_type="image/png"></image><video path="/cache/clip.mp4">',
+    );
+    expect(turn.attachmentIds).toBeUndefined();
+    expect(snapshot.attachments).toEqual([]);
   });
 
   it('keeps cold tool calls running until a result is persisted', () => {

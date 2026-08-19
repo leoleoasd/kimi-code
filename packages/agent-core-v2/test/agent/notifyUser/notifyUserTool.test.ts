@@ -1,9 +1,3 @@
-/**
- * Scenario: NotifyUser tool publishes `event.user.notify` on the global bus
- * with the session/agent identity of the calling agent.
- * Wiring: the tool class directly with stub services (no harness).
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/notifyUser/`.
- */
 import { describe, expect, it } from 'vitest';
 
 import type { IEventService } from '#/app/event/event';

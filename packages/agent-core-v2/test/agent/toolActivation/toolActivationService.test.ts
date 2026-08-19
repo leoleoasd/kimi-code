@@ -427,7 +427,6 @@ describe('AgentToolActivationService', () => {
     expect(registry.resolve('Beta')).toBeInstanceOf(BetaTool);
     expect(profileData.activeToolNames).toEqual(['Alpha', 'Beta']);
 
-    // The top-up is once per process: a mid-session removal is not fought.
     profileData.activeToolNames = ['Alpha'];
     await activation.activate();
     expect(profileData.activeToolNames).toEqual(['Alpha']);

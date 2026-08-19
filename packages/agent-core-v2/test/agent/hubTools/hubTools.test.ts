@@ -1,12 +1,3 @@
-/**
- * Scenario: the hub-gated tools — ListHubSessions renders the roster for the
- * model; SendHubMessage locates the target session's owner agent, wraps the
- * message in a provenance header, and delivers it through the hub. Both error
- * cleanly when the process is not connected to a hub.
- * Wiring: the tool classes directly with stub services (same pattern as the
- * NotifyUser tool test — no harness).
- * Run: `pnpm --filter @moonshot-ai/agent-core-v2 exec vitest run test/agent/hubTools/`.
- */
 import { describe, expect, it } from 'vitest';
 
 import type { HubConnection, HubRemoteAgent, IHubConnectionService } from '#/hub/hubConnection';
@@ -159,7 +150,6 @@ describe('SendHubMessageTool', () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.agentId).toBe('a2');
     expect(sent[0]!.sessionId).toBe('ses-ci');
-    // Mid-turn delivery rides the server's steer mode, never the prompt FIFO.
     expect(sent[0]!.steer).toBe(true);
     expect(sent[0]!.text).toContain('[kimi-hub message from dev-box (session ses-mine)]');
     expect(sent[0]!.text).toContain('continue with whatever you were working on');

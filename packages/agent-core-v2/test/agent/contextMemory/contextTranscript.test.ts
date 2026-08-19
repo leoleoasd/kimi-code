@@ -100,8 +100,6 @@ describe('reduceContextTranscript', () => {
     expect(promptIndices).toHaveLength(2);
     expect(result.turnOrdinals[promptIndices[0]!]).toBe(0);
     expect(result.turnOrdinals[promptIndices[1]!]).toBe(1);
-    // Steps, replies, and unpinned origins (a task notification folded INTO
-    // the open turn) carry no ordinal.
     expect(result.turnOrdinals.filter((o) => o === undefined)).toHaveLength(result.entries.length - 2);
     const taskIdx = texts(result).indexOf('note');
     expect(result.turnOrdinals[taskIdx!]).toBeUndefined();

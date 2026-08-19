@@ -1608,11 +1608,6 @@ describe('server-v2 /api/v1/sessions (minidb read model)', () => {
   });
 });
 
-/**
- * The host-injected slash-command bridge: the route shuttles the raw composer
- * line + session id to the bridge and envelopes the returned lines; a server
- * without a bridge answers 40421 and an empty catalog.
- */
 describe('server-v2 /api/v1/sessions :command', () => {
   let server: RunningServer | undefined;
   let home: string | undefined;

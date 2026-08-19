@@ -712,7 +712,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
-        [emit] agent.status.updated        { "permission": "yolo" }
+        [emit] agent.status.updated        { "time": "<time>", "permission": "yolo" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "planMode": true }
         [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }
@@ -793,7 +793,7 @@ describe('Plan service', () => {
 
       expect(await ctx.untilTurnEnd()).toMatchInlineSnapshot(`
         [wire] permission.set_mode         { "mode": "yolo", "time": "<time>" }
-        [emit] agent.status.updated        { "permission": "yolo" }
+        [emit] agent.status.updated        { "time": "<time>", "permission": "yolo" }
         [wire] plan_mode.enter             { "id": "test-plan", "time": "<time>" }
         [emit] agent.status.updated        { "time": "<time>", "planMode": true }
         [wire] prompt.accepted             { "promptId": "<msg-1>", "time": "<time>" }

@@ -34,20 +34,21 @@ interface FakeConnection {
 /**
  * One duck-typed accessor object every engine-service probe lands on. The
  * surfaces the connect path reaches: `IEventService.subscribe` (notify
- * bridge), `IWorkspaceLifecycleService.handlers.list()` (both bridges' live
- * session lookup), `IHubConnectionService.configure` (the gated hub tools).
+ * bridge), `ISessionManager.get` (the turn-notify bridge's live session
+ * lookup — returns undefined here, cold sessions contribute no taps),
+ * `IHubConnectionService.configure` (the gated hub tools).
  * Matching by member shape - rather than decorator identity - survives the
  * inner describe's `vi.resetModules()` (fresh module instances re-create
  * every decorator's identity).
  */
 function makeEngineStub(): {
   subscribe: () => { dispose: () => void };
-  handlers: { list: () => unknown[] };
+  get: () => undefined;
   configure: ReturnType<typeof vi.fn>;
 } {
   return {
     subscribe: () => ({ dispose: () => undefined }),
-    handlers: { list: () => [] },
+    get: () => undefined,
     configure: vi.fn(),
   };
 }

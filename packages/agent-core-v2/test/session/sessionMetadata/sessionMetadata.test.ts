@@ -6,10 +6,12 @@ import { ServiceCollection } from '#/_base/di/serviceCollection';
 import { TestInstantiationService } from '#/_base/di/test';
 import { Emitter } from '#/_base/event';
 import { ILogService } from '#/_base/log/log';
-import { type DomainEvent, IEventService } from '#/app/event/event';
+import { IEventService } from '#/app/event/event';
+import type { Event2 } from '#/app/event/event2';
 import { ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMetadata } from '#/session/sessionMetadata/sessionMetadata';
+import type { SessionMetaUpdated } from '#/session/sessionMetadata/sessionMetaEvents';
 import { SessionMetadata } from '#/session/sessionMetadata/sessionMetadataService';
 import { ISessionStateService } from '#/session/state/sessionState';
 import { SessionStateService } from '#/session/state/sessionStateService';
@@ -25,16 +27,16 @@ const META_SCOPE = 'sessions/wd_test/s1/session-meta';
 
 class FakeEventService implements IEventService {
   declare readonly _serviceBrand: undefined;
-  private readonly emitter = new Emitter<DomainEvent>();
+  private readonly emitter = new Emitter<Event2<any>>();
   readonly onDidPublish = this.emitter.event;
-  readonly published: DomainEvent[] = [];
+  readonly published: Event2<any>[] = [];
 
-  publish(event: DomainEvent): void {
+  publish(event: Event2<any>): void {
     this.published.push(event);
     this.emitter.fire(event);
   }
 
-  subscribe(handler: (event: DomainEvent) => void): IDisposable {
+  subscribe(handler: (event: Event2<any>) => void): IDisposable {
     return this.emitter.event(handler);
   }
 }
@@ -124,7 +126,9 @@ describe('SessionMetadata', () => {
   it('setTitle rebroadcasts session.meta.updated like the prompt/generated title paths', async () => {
     const meta = ix.get(ISessionMetadata);
     await meta.setTitle('user title');
-    const metaEvents = events.published.filter((e) => e.type === 'session.meta.updated');
+    const metaEvents = events.published.filter(
+      (e): e is SessionMetaUpdated => e.type === 'session.meta.updated',
+    );
     expect(metaEvents).toHaveLength(1);
     expect(metaEvents[0]!.payload).toEqual({
       agentId: 'main',

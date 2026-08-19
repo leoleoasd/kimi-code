@@ -45,7 +45,9 @@ describe('setModeAndBroadcast', () => {
     ctx = createTestAgent(telemetryServices(recordingTelemetry(records)));
     const published: { permission?: string }[] = [];
     ctx.get(IEventBus).subscribe((event) => {
-      if (event.type === 'agent.status.updated' && 'permission' in event) published.push(event);
+      if (event.type === 'agent.status.updated' && 'permission' in event) {
+        published.push(event as unknown as { permission?: string });
+      }
     });
 
     await ctx.rpc.setPermission({ mode: 'yolo' });
