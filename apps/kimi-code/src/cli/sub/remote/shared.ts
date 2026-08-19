@@ -167,28 +167,29 @@ export function wireNotifyBridge(
   const disposals: IDisposable[] = [];
   disposals.push(
     core.accessor.get(IEventService).subscribe((event) => {
+      const payload = (event as unknown as { payload?: unknown }).payload;
       if (
         event.type !== 'event.user.notify' ||
-        typeof event.payload !== 'object' ||
-        event.payload === null
+        typeof payload !== 'object' ||
+        payload === null
       ) {
         return;
       }
-      const payload = event.payload as Record<string, unknown>;
+      const record = payload as Record<string, unknown>;
       if (
-        typeof payload['notificationId'] !== 'string' ||
-        typeof payload['sessionId'] !== 'string' ||
-        typeof payload['title'] !== 'string' ||
-        typeof payload['body'] !== 'string'
+        typeof record['notificationId'] !== 'string' ||
+        typeof record['sessionId'] !== 'string' ||
+        typeof record['title'] !== 'string' ||
+        typeof record['body'] !== 'string'
       ) {
         return;
       }
       tunnel.notify({
-        notificationId: payload['notificationId'],
-        sessionId: payload['sessionId'],
-        agentId: typeof payload['agentId'] === 'string' ? payload['agentId'] : undefined,
-        title: payload['title'],
-        body: payload['body'],
+        notificationId: record['notificationId'],
+        sessionId: record['sessionId'],
+        agentId: typeof record['agentId'] === 'string' ? record['agentId'] : undefined,
+        title: record['title'],
+        body: record['body'],
       });
     }),
   );
@@ -229,10 +230,12 @@ function wireSessionTurnNotify(
   };
   const subscribeAgent = (handle: { id: string; accessor: { get(t: typeof IEventBus): IEventBus } }): IDisposable =>
     handle.accessor.get(IEventBus).subscribe((event) => {
-      if (event.type !== 'turn.ended' || event.reason !== 'completed') return;
+      if (event.type !== 'turn.ended') return;
+      const ended = event as unknown as { reason?: string; turnId: number };
+      if (ended.reason !== 'completed') return;
       withSessionTitle(handle.id, (subject) => {
         tunnel.notify({
-          notificationId: `idle/${sessionId}/${handle.id}/t${event.turnId}`,
+          notificationId: `idle/${sessionId}/${handle.id}/t${ended.turnId}`,
           sessionId,
           agentId: handle.id,
           title: `${subject} finished`,
