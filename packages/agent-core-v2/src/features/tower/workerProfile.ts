@@ -40,6 +40,9 @@ const TOWER_WORKER_TOOLS = [
   'WebSearch',
   'FetchURL',
   'Write',
+  'NotifyUser',
+  'ListHubSessions',
+  'SendHubMessage',
   'mcp__*',
 ] as const;
 
