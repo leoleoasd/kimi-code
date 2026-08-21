@@ -42,7 +42,9 @@ export function ThinkingFrame({
       <button
         type="button"
         className="w-full cursor-pointer text-left text-[10px] text-neutral-600 select-none hover:text-neutral-400 disabled:cursor-default disabled:hover:text-neutral-600"
-        onClick={() => setExpanded((value) => !value)}
+        onClick={() => {
+          setExpanded((value) => !value);
+        }}
         disabled={!canExpand}
       >
         {label}

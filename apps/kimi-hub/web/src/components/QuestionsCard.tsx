@@ -1,8 +1,12 @@
 /**
  * Pending questions of the open session — polled every 2s while the session
- * is busy OR still has pending items, quiet when idle. Single-select submits
- * on click; multi-select toggles then submits; each item can also be skipped
- * (`{ kind: 'skipped' }`) and the whole card dismissed.
+ * is busy OR still has pending items, quiet when idle.
+ *
+ * Selection NEVER submits on click: options/multi-toggles/Skip only stage an
+ * answer, and one bottom "Submit answers" button posts the whole request once
+ * every question is staged. The wire contract resolves a request as a unit —
+ * a partial answers map (the old click-to-submit single-select) would resolve
+ * all sibling questions with no answer, silently swallowing them.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -98,10 +102,31 @@ function QuestionRequestView({
   onAnswer: (answers: Record<string, QuestionAnswer>) => void;
   onDismiss: () => void;
 }) {
+  /** Staged single/skip answers keyed by question id — posted only on submit. */
+  const [staged, setStaged] = useState<Readonly<Record<string, QuestionAnswer>>>({});
   /** Multi-select toggles in flight, keyed by question id → option ids. */
   const [multi, setMulti] = useState<Readonly<Record<string, readonly string[]>>>({});
 
-  const toggle = (questionId: string, optionId: string) => {
+  const stageSingle = (questionId: string, optionId: string) => {
+    setStaged((prev) => {
+      const next = { ...prev };
+      const cur = next[questionId];
+      if (cur?.kind === 'single' && cur.option_id === optionId) delete next[questionId];
+      else next[questionId] = { kind: 'single', option_id: optionId };
+      return next;
+    });
+  };
+
+  const stageSkip = (questionId: string) => {
+    setStaged((prev) => {
+      const next = { ...prev };
+      if (next[questionId]?.kind === 'skipped') delete next[questionId];
+      else next[questionId] = { kind: 'skipped' };
+      return next;
+    });
+  };
+
+  const toggleMulti = (questionId: string, optionId: string) => {
     setMulti((prev) => {
       const current = prev[questionId] ?? [];
       return {
@@ -111,11 +136,34 @@ function QuestionRequestView({
           : [...current, optionId],
       };
     });
+    // Selecting an option cancels a staged skip for the same question.
+    setStaged((prev) => {
+      if (prev[questionId]?.kind !== 'skipped') return prev;
+      const next = { ...prev };
+      delete next[questionId];
+      return next;
+    });
+  };
+
+  const isAnswered = (q: QuestionRequest['questions'][number]): boolean =>
+    staged[q.id] !== undefined || (q.multiSelect === true && (multi[q.id] ?? []).length > 0);
+  const allAnswered = request.questions.every(isAnswered);
+
+  const submit = () => {
+    const answers: Record<string, QuestionAnswer> = { ...staged };
+    for (const q of request.questions) {
+      if (answers[q.id] === undefined && q.multiSelect === true) {
+        answers[q.id] = { kind: 'multi', option_ids: multi[q.id] ?? [] };
+      }
+    }
+    onAnswer(answers);
   };
 
   return (
     <div className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2">
-      {request.questions.map((q) => (
+      {request.questions.map((q) => {
+        const stagedAnswer = staged[q.id];
+        return (
         <div key={q.id} className="mb-1.5">
           {q.header !== undefined ? (
             <div className="text-[10px] text-neutral-500 uppercase">{q.header}</div>
@@ -137,7 +185,7 @@ function QuestionRequestView({
                   title={opt.description}
                   disabled={disabled}
                   onClick={() => {
-                    toggle(q.id, opt.id);
+                    toggleMulti(q.id, opt.id);
                   }}
                 >
                   {opt.label}
@@ -145,50 +193,53 @@ function QuestionRequestView({
               ) : (
                 <button
                   key={opt.id}
-                  className="min-h-[40px] rounded border border-neutral-700 px-2.5 py-1 text-[11px] text-neutral-300 transition-colors hover:bg-neutral-800 disabled:opacity-40"
+                  className={`min-h-[40px] rounded border px-2.5 py-1 text-[11px] transition-colors disabled:opacity-40 ${
+                    stagedAnswer?.kind === 'single' && stagedAnswer.option_id === opt.id
+                      ? 'border-sky-600 bg-sky-900/50 text-sky-200'
+                      : 'border-neutral-700 text-neutral-300 hover:bg-neutral-800'
+                  }`}
                   title={opt.description}
                   disabled={disabled}
                   onClick={() => {
-                    onAnswer({ [q.id]: { kind: 'single', option_id: opt.id } });
+                    stageSingle(q.id, opt.id);
                   }}
                 >
                   {opt.label}
                 </button>
               ),
             )}
-            {q.multiSelect ? (
-              <ActionButton
-                className="w-full sm:w-auto"
-                disabled={disabled || (multi[q.id] ?? []).length === 0}
-                onClick={() => {
-                  onAnswer({ [q.id]: { kind: 'multi', option_ids: multi[q.id] ?? [] } });
-                }}
-              >
-                Answer
-              </ActionButton>
-            ) : null}
             <ActionButton
               className="w-full sm:w-auto"
               disabled={disabled}
-              title="Leave this question unanswered"
+              title={
+                staged[q.id]?.kind === 'skipped'
+                  ? 'Staged as skipped — click to unstage'
+                  : 'Stage this question as skipped, then submit'
+              }
               onClick={() => {
-                onAnswer({ [q.id]: { kind: 'skipped' } });
+                stageSkip(q.id);
               }}
             >
-              Skip
+              {staged[q.id]?.kind === 'skipped' ? 'Skipped ✓' : 'Skip'}
             </ActionButton>
           </div>
         </div>
-      ))}
-      <div className="mt-1 flex items-center justify-between">
+        );
+      })}
+      <div className="mt-1 flex items-center justify-between gap-2">
         <span className="text-[10px] text-neutral-600">{request.createdAt}</span>
-        <button
-          className="text-[10px] text-neutral-600 underline hover:text-neutral-400 disabled:opacity-40"
-          disabled={disabled}
-          onClick={onDismiss}
-        >
-          dismiss
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            className="text-[10px] text-neutral-600 underline hover:text-neutral-400 disabled:opacity-40"
+            disabled={disabled}
+            onClick={onDismiss}
+          >
+            dismiss
+          </button>
+          <ActionButton disabled={disabled || !allAnswered} onClick={submit}>
+            Submit answers
+          </ActionButton>
+        </div>
       </div>
     </div>
   );

@@ -1162,6 +1162,35 @@ function FrameView({
   }
 }
 
+function readAgentPromptInput(
+  input: unknown,
+): { description?: string; prompt: string } | undefined {
+  let value = input;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      // Mid-stream the args arrive as unparsed text — keep the raw view.
+      return undefined;
+    }
+  }
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record['prompt'] !== 'string') return undefined;
+  return {
+    description: typeof record['description'] === 'string' ? record['description'] : undefined,
+    prompt: record['prompt'],
+  };
+}
+
+function isAgentCallDisplay(display: unknown): boolean {
+  return (
+    display !== null &&
+    typeof display === 'object' &&
+    (display as Record<string, unknown>)['kind'] === 'agent_call'
+  );
+}
+
 function ToolFrameView({
   frame,
   planByToolCallId,
@@ -1181,19 +1210,39 @@ function ToolFrameView({
     frame.state === 'running' && frame.progress?.customKind === 'subagent_stream'
       ? readSubagentStreamProgress(frame.progress)
       : undefined;
-  return (
-    <details className="mb-2 max-w-full rounded border border-neutral-800 bg-neutral-900/50 px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%]">
-      <summary className="flex cursor-pointer items-center gap-2 select-none">
-        <Badge tone={tone}>{frame.state}</Badge>
-        <span className="text-neutral-300">{frame.name}</span>
-        {frame.view !== undefined && frame.view !== frame.name ? (
-          <span className="text-neutral-600">({frame.view})</span>
-        ) : null}
-        {frame.progress?.percent !== undefined && frame.state === 'running' ? (
-          <span className="text-neutral-600">{Math.round(frame.progress.percent)}%</span>
-        ) : null}
-      </summary>
-      {frame.input !== undefined ? (
+  const agentInput = frame.name === 'Agent' ? readAgentPromptInput(frame.input) : undefined;
+  // The engine's agent_call display payload echoes agent name + prompt, which
+  // the prompt card above already shows — skip it for the Agent tool.
+  const hideDisplay = frame.name === 'Agent' && isAgentCallDisplay(frame.display);
+  const frameClass =
+    'mb-2 max-w-full rounded border border-neutral-800 bg-neutral-900/50 px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%]';
+  const summaryRow = (
+    <>
+      <Badge tone={tone}>{frame.state}</Badge>
+      <span className="text-neutral-300">{frame.name}</span>
+      {frame.view !== undefined && frame.view !== frame.name ? (
+        <span className="text-neutral-600">({frame.view})</span>
+      ) : null}
+      {frame.progress?.percent !== undefined && frame.state === 'running' ? (
+        <span className="text-neutral-600">{Math.round(frame.progress.percent)}%</span>
+      ) : null}
+    </>
+  );
+  const body = (
+    <>
+      {agentInput !== undefined ? (
+        <>
+          <div className="mt-1.5 mb-0.5 text-[10px] text-neutral-600">prompt</div>
+          {agentInput.description !== undefined && agentInput.description !== '' ? (
+            <div className="mb-1 font-sans text-[12px] text-neutral-300">
+              {agentInput.description}
+            </div>
+          ) : null}
+          <div className="max-h-96 overflow-auto font-sans">
+            <Markdown text={agentInput.prompt} />
+          </div>
+        </>
+      ) : frame.input !== undefined ? (
         <>
           <div className="mt-1.5 mb-0.5 text-[10px] text-neutral-600">args</div>
           {typeof frame.input === 'string' ? (
@@ -1205,16 +1254,7 @@ function ToolFrameView({
           )}
         </>
       ) : null}
-      {subagentStream !== undefined ? (
-        <ThinkingFrame
-          text={subagentStream.text}
-          streaming
-          label={`${subagentStream.subagentName ?? 'subagent'} ${
-            subagentStream.channel === 'thinking' ? 'thinking' : 'speaking'
-          }`}
-        />
-      ) : null}
-      {frame.display !== undefined ? <JsonView data={frame.display} /> : null}
+      {frame.display !== undefined && !hideDisplay ? <JsonView data={frame.display} /> : null}
       {frame.output !== undefined ? (
         <>
           <div className="mt-1.5 mb-0.5 text-[10px] text-neutral-600">result</div>
@@ -1236,6 +1276,39 @@ function ToolFrameView({
           {frame.error}
         </pre>
       ) : null}
+    </>
+  );
+  // A running Agent with a live subagent stream renders as an OPEN container:
+  // the summary row and the thinking box nest visibly inside the frame without
+  // any click; args/result tuck behind a small "details" toggle. A controlled
+  // <details open={...}> would fight the user's manual toggle on every delta
+  // render, so the running layout is a plain div instead.
+  if (subagentStream !== undefined) {
+    return (
+      <div className={frameClass}>
+        <div className="flex items-center gap-2 select-none">{summaryRow}</div>
+        <div className="mt-2">
+          <ThinkingFrame
+            text={subagentStream.text}
+            streaming
+            label={`${subagentStream.subagentName ?? 'subagent'} ${
+              subagentStream.channel === 'thinking' ? 'thinking' : 'speaking'
+            }`}
+          />
+        </div>
+        <details>
+          <summary className="cursor-pointer text-[10px] text-neutral-600 select-none hover:text-neutral-400">
+            details
+          </summary>
+          {body}
+        </details>
+      </div>
+    );
+  }
+  return (
+    <details className={frameClass}>
+      <summary className="flex cursor-pointer items-center gap-2 select-none">{summaryRow}</summary>
+      {body}
     </details>
   );
 }
