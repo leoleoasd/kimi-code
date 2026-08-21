@@ -25,6 +25,7 @@ import {
 import { createKimiCodeHostIdentity } from '#/cli/version';
 
 import { NO_ACTIVE_SESSION_MESSAGE } from '../constant/kimi-tui';
+import type { TuiConfig } from '../config';
 import { formatErrorMessage } from '../utils/event-payload';
 import type { SlashCommandHost } from './dispatch';
 import { createTuiCommandBridge } from './remote-bridge';
@@ -113,6 +114,22 @@ export function notifyRemoteSessionChanged(sid: string): void {
 
 let connection: RemoteConnection | undefined;
 let exitHookInstalled = false;
+let autoConnectAttempted = false;
+
+/**
+ * tui.toml `[remote]` hub_url auto-connect, fired from the session-switch
+ * funnel (`KimiTUI.syncRuntimeState`) so the connect never races an absent
+ * session. One-shot per process: a refusal, a manual `/remote disconnect`, or
+ * a successful connect all leave it quiet for the rest of the process — only
+ * explicit `/remote connect` reconnects after that.
+ */
+export function maybeAutoConnectRemote(host: SlashCommandHost, config: TuiConfig): void {
+  if (autoConnectAttempted || connection !== undefined) return;
+  const hubUrl = config.remote?.hubUrl;
+  if (!hubUrl || host.session === undefined) return;
+  autoConnectAttempted = true;
+  void connectRemote(host, hubUrl, config.remote?.token ?? undefined, config.remote?.name ?? undefined);
+}
 
 export async function handleRemoteCommand(host: SlashCommandHost, args: string): Promise<void> {
   const parsed = parseRemoteCommand(args);

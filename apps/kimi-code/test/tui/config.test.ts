@@ -67,6 +67,7 @@ auto_install = false
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
+      remote: { hubUrl: null, token: null, name: null },
     });
   });
 
@@ -113,6 +114,7 @@ command = "   "
       notifications: { enabled: true, condition: 'unfocused' },
       upgrade: { autoInstall: true },
       statusLine: { items: null, command: null },
+      remote: { hubUrl: null, token: null, name: null },
     });
   });
 
@@ -160,6 +162,7 @@ command = "   "
       notifications: { enabled: false, condition: 'always' },
       upgrade: { autoInstall: false },
       statusLine: { items: null, command: null },
+      remote: { hubUrl: null, token: null, name: null },
     });
   });
 
@@ -268,5 +271,63 @@ describe('TUI config status_line round-trip', () => {
     expect(text).toContain('# [status_line]');
     expect(text).toContain('# items =');
     expect(text).toContain('# command =');
+  });
+});
+
+describe('TUI config remote', () => {
+  it('defaults to nulls when the section is omitted', () => {
+    const config = parseTuiConfig(`theme = "dark"`);
+
+    expect(config.remote).toEqual({ hubUrl: null, token: null, name: null });
+  });
+
+  it('parses hub_url, token, and name', () => {
+    const config = parseTuiConfig(`
+[remote]
+hub_url = "http://127.0.0.1:58630"
+token = "shared-secret"
+name = "my-box"
+`);
+
+    expect(config.remote).toEqual({
+      hubUrl: 'http://127.0.0.1:58630',
+      token: 'shared-secret',
+      name: 'my-box',
+    });
+  });
+
+  it('normalizes empty and whitespace-only values to null', () => {
+    const config = parseTuiConfig(`
+[remote]
+hub_url = "   "
+token = ""
+name = "  "
+`);
+
+    expect(config.remote).toEqual({ hubUrl: null, token: null, name: null });
+  });
+
+  it('preserves an active remote section across save and reload', async () => {
+    await saveTuiConfig(
+      {
+        ...DEFAULT_TUI_CONFIG,
+        remote: { hubUrl: 'https://hub.example.com', token: 'shared-secret', name: 'my-box' },
+      },
+      filePath,
+    );
+
+    expect((await loadTuiConfig(filePath)).remote).toEqual({
+      hubUrl: 'https://hub.example.com',
+      token: 'shared-secret',
+      name: 'my-box',
+    });
+  });
+
+  it('keeps the remote section commented out when unset', async () => {
+    await saveTuiConfig(DEFAULT_TUI_CONFIG, filePath);
+
+    const text = readFileSync(filePath, 'utf-8');
+    expect(text).toContain('# [remote]');
+    expect(text).toContain('# hub_url =');
   });
 });

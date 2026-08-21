@@ -46,9 +46,25 @@ export const StatusLineConfigSchema = z.object({
 });
 export type StatusLineConfig = z.infer<typeof StatusLineConfigSchema>;
 
+export const RemoteConfigSchema = z.object({
+  /** Hub URL for an automatic `/remote connect` once a session exists; null disables. */
+  hubUrl: z.string().nullable(),
+  /** Shared-secret token for hubs that require one; null connects tokenless. */
+  token: z.string().nullable(),
+  /** Agent name shown on the hub; null uses the machine hostname. */
+  name: z.string().nullable(),
+});
+export type RemoteConfig = z.infer<typeof RemoteConfigSchema>;
+
 export const DEFAULT_STATUS_LINE_CONFIG: StatusLineConfig = {
   items: null,
   command: null,
+};
+
+export const DEFAULT_REMOTE_CONFIG: RemoteConfig = {
+  hubUrl: null,
+  token: null,
+  name: null,
 };
 
 export const TuiConfigFileSchema = z.object({
@@ -73,6 +89,13 @@ export const TuiConfigFileSchema = z.object({
     })
     .optional(),
   status_line: StatusLineFileConfigSchema.optional(),
+  remote: z
+    .object({
+      hub_url: z.string().optional(),
+      token: z.string().optional(),
+      name: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const TuiConfigSchema = z.object({
@@ -90,6 +113,9 @@ export const TuiConfigSchema = z.object({
   /** Present in every normalized config; optional only so hand-built test
    * fixtures from before this field existed still typecheck. */
   statusLine: StatusLineConfigSchema.optional(),
+  /** Present in every normalized config; optional only so hand-built test
+   * fixtures from before this field existed still typecheck. */
+  remote: RemoteConfigSchema.optional(),
 });
 
 export type TuiConfigFileShape = z.infer<typeof TuiConfigFileSchema>;
@@ -115,6 +141,7 @@ export const DEFAULT_TUI_CONFIG: TuiConfig = TuiConfigSchema.parse({
   notifications: DEFAULT_NOTIFICATIONS_CONFIG,
   upgrade: DEFAULT_UPGRADE_PREFERENCES,
   statusLine: DEFAULT_STATUS_LINE_CONFIG,
+  remote: DEFAULT_REMOTE_CONFIG,
 });
 
 /**
@@ -182,6 +209,10 @@ export function normalizeTuiConfig(
 ): TuiConfig {
   const command = config.editor?.command?.trim();
   const statusLineCommand = config.status_line?.command?.trim();
+  const trimToNull = (value: string | undefined): string | null => {
+    const trimmed = value?.trim();
+    return trimmed === undefined || trimmed.length === 0 ? null : trimmed;
+  };
   const knownItems = new Set<string>(STATUS_LINE_ITEMS);
   const statusLineItems =
     config.status_line?.items
@@ -214,6 +245,11 @@ export function normalizeTuiConfig(
           ? null
           : statusLineCommand,
     },
+    remote: {
+      hubUrl: trimToNull(config.remote?.hub_url),
+      token: trimToNull(config.remote?.token),
+      name: trimToNull(config.remote?.name),
+    },
   });
 }
 
@@ -240,6 +276,28 @@ export function renderTuiConfig(config: TuiConfig): string {
 # It receives a JSON snapshot (model, cwd, git, usage, mode) on stdin.
 # command = "~/.kimi-code/statusline.sh"
 `;
+  // [remote] round-trips the same way as [status_line]: live values when set,
+  // a commented-out guide when no hub_url is configured.
+  const remoteLines: string[] = [];
+  const hubUrl = config.remote?.hubUrl;
+  if (hubUrl) {
+    remoteLines.push(`hub_url = "${escapeTomlBasicString(hubUrl)}"`);
+    if (config.remote?.token) {
+      remoteLines.push(`token = "${escapeTomlBasicString(config.remote.token)}"`);
+    }
+    if (config.remote?.name) {
+      remoteLines.push(`name = "${escapeTomlBasicString(config.remote.name)}"`);
+    }
+  }
+  const remoteSection =
+    remoteLines.length > 0
+      ? `[remote]\n${remoteLines.join('\n')}\n`
+      : `# [remote]
+# Auto-run \`/remote connect\` on startup once a session exists.
+# hub_url = "http://127.0.0.1:58630"
+# token = "shared-secret"   # only for hubs that require --token
+# name = "my-box"           # agent name on the hub (default: hostname)
+`;
   return `# ~/.kimi-code/tui.toml
 # Client preferences for kimi-code.
 # Agent/runtime settings stay in ~/.kimi-code/config.toml.
@@ -259,7 +317,8 @@ notification_condition = "${config.notifications.condition}" # "unfocused" | "al
 [upgrade]
 auto_install = ${String(config.upgrade.autoInstall)} # true | false
 
-${statusSection}`;
+${statusSection}
+${remoteSection}`;
 }
 
 function escapeTomlBasicString(value: string): string {

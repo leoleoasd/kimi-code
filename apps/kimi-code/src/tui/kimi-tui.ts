@@ -57,7 +57,7 @@ import {
   type SkillListSession,
 } from './commands';
 import * as slashCommands from './commands/dispatch';
-import { notifyRemoteSessionChanged } from './commands/remote';
+import { maybeAutoConnectRemote, notifyRemoteSessionChanged } from './commands/remote';
 import { CacheHintController } from './controllers/cache-hint-controller';
 import { BannerComponent } from './components/chrome/banner';
 import { DeviceCodeBoxComponent } from './components/chrome/device-code-box';
@@ -340,6 +340,8 @@ export class KimiTUI {
   private backgroundRefreshPromise: Promise<void> | undefined;
   private readonly migrationPlan: MigrationPlan | null;
   private readonly migrateOnly: boolean;
+  /** Startup-normalized client preferences (tui.toml), incl. the `[remote]` auto-connect. */
+  private readonly tuiConfig: TuiConfig;
   /** Whether the harness runs on the agent-core-v2 engine (lazy session creation). */
   readonly engineV2: boolean;
   private startupNotice: string | undefined;
@@ -431,6 +433,7 @@ export class KimiTUI {
     this.options = tuiOptions;
     this.migrationPlan = startupInput.migrationPlan ?? null;
     this.migrateOnly = startupInput.migrateOnly ?? false;
+    this.tuiConfig = startupInput.tuiConfig;
     this.engineV2 = startupInput.engineV2 ?? false;
     this.startupNotice = startupInput.startupNotice;
     this.state = createTUIState(tuiOptions);
@@ -2338,6 +2341,8 @@ export class KimiTUI {
     // `/remote connect` bridge's union scope (a no-op when never bridged and
     // on repeats).
     notifyRemoteSessionChanged(session.id);
+    // tui.toml [remote] hub_url: auto-connect once a session exists (one-shot).
+    maybeAutoConnectRemote(this, this.tuiConfig);
   }
 
   // Apply --auto/--yolo/--plan startup flags to a resumed session. The resumed
