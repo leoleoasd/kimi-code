@@ -4886,7 +4886,14 @@ describe('v1↔v2 event & interaction parity', () => {
       ]);
       expect(v2Response).toEqual(v1Response);
       expect(v1Response).toEqual({ decision: 'approved', scope: 'session' });
-      expect(observed.v2).toEqual(observed.v1);
+      // Pinned intentional difference (beaa7bd0c): the v2 session wiring
+      // enriches the request with the kernel interaction id (panels key on it
+      // to unwind on external resolution); v1's kernel has no interaction id
+      // and emits without it.
+      const { interactionId: v2ApprovalInteractionId, ...v2ApprovalRest } =
+        observed.v2 as ApprovalRequest;
+      expect(v2ApprovalInteractionId).toMatch(/^approval_/);
+      expect(v2ApprovalRest).toEqual(observed.v1);
       expect(v2Approvals.listPending()).toEqual([]);
 
       // No handler: both cancel with the same decision and feedback.
@@ -4970,7 +4977,13 @@ describe('v1↔v2 event & interaction parity', () => {
       ]);
       expect(v2Result).toEqual(v1Result);
       expect(v1Result).toEqual({ answers: { 'Pick one': 'a' }, method: 'enter' });
-      expect(observed.v2).toEqual(observed.v1);
+      // Pinned intentional difference (beaa7bd0c), same as the approval path:
+      // the v2 session wiring enriches the request with the kernel interaction
+      // id; v1's kernel has no interaction id and emits without it.
+      const { interactionId: v2QuestionInteractionId, ...v2QuestionRest } =
+        observed.v2 as QuestionRequest;
+      expect(v2QuestionInteractionId).toMatch(/^question_/);
+      expect(v2QuestionRest).toEqual(observed.v1);
       expect(v2Questions.listPending()).toEqual([]);
 
       // No handler: both answer null (the dismissed outcome on both engines).
