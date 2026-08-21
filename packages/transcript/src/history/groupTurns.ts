@@ -45,6 +45,7 @@ export interface HistoryMessage {
   readonly toolCallId?: string;
   readonly isError?: boolean;
   readonly origin?: { readonly kind: string };
+  readonly midTurnInject?: boolean;
 }
 
 interface TurnDraft {
@@ -75,8 +76,12 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 /**
  * Fold persisted wire messages into a snapshot. When `turnOrdinals` carries at
  * least one engine hint (set only on `turn.prompt` messages), the fold is
- * anchored to the engine's numbering and every hintless message (shell I/O
- * blocks, steered input, cron/hook output) becomes a "gap turn": its ordinal is
+ * anchored to the engine's numbering. A hintless user message the reducer
+ * flagged `midTurnInject` (queued input steered into a RUNNING engine turn) is
+ * folded into the open turn as a trailing user frame, at its chronological
+ * step position; a task notification is folded the same way. Every remaining
+ * hintless message (shell I/O blocks, cron/hook output, input steered while
+ * idle) becomes a "gap turn": its ordinal is
  * the next engine turn's ordinal so the ordinal-ordered insert keeps it ahead
  * of that turn, and its `g<lastEngineOrdinal>.<seq>` id parses numerically so
  * `compareTurnIds` still sorts it strictly between the surrounding `t<N>` ids.
@@ -220,7 +225,7 @@ export function groupMessagesIntoSnapshot(
     return turn;
   };
 
-  const foldTaskNotificationIntoTurn = (message: HistoryMessage): void => {
+  const foldUserFrameIntoTurn = (message: HistoryMessage): void => {
     const current = ensureTurn();
     let step = current.steps.at(-1);
     if (step === undefined) {
@@ -254,8 +259,11 @@ export function groupMessagesIntoSnapshot(
     const engineOrdinal = turnOrdinals?.[messageIndex];
 
     if (message.role === 'user') {
-      if (originKind === 'task' && engineOrdinal === undefined) {
-        foldTaskNotificationIntoTurn(message);
+      if (
+        engineOrdinal === undefined &&
+        (originKind === 'task' || message.midTurnInject === true)
+      ) {
+        foldUserFrameIntoTurn(message);
         continue;
       }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {

@@ -1389,7 +1389,11 @@ export class AgentTranscriptProjector {
    * the merged content and the steer timestamp; the absorbed prompts leave
    * the queue — the engine marks them 'steered' and later settles them with
    * the active prompt's outcome, so the transcript settles them as
-   * 'completed' (their content was delivered, not aborted).
+   * 'completed' (their content was delivered, not aborted). The injected
+   * content also lands on the timeline: while the turn it was steered into is
+   * open, its text is appended to the current step as a user frame (the cold
+   * rebuild reinjects the same message at the same position via the
+   * reducer's mid-turn-inject flag).
    */
   private onPromptSteered(event: PromptSteeredEvent): TranscriptOperation[] {
     const ops: TranscriptOperation[] = [];
@@ -1414,6 +1418,27 @@ export class AgentTranscriptProjector {
         steeredAt: event.steeredAt,
       }));
       ops.push({ op: 'prompt.upsert', prompt: steered });
+    }
+    const step =
+      this.currentStep !== undefined && this.currentStep.turnId === this.currentTurn?.turnId
+        ? this.currentStep
+        : undefined;
+    if (step !== undefined && this.currentTurn !== undefined) {
+      const text = event.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
+      if (text.length > 0) {
+        this.frameOrdinal += 1;
+        ops.push({
+          op: 'frame.upsert',
+          turnId: step.turnId,
+          stepId: step.stepId,
+          frame: {
+            kind: 'text',
+            frameId: `${step.stepId}.f${this.frameOrdinal}`,
+            role: 'user',
+            text,
+          },
+        });
+      }
     }
     return ops;
   }

@@ -38,6 +38,7 @@ interface MutableMessage {
   isError?: boolean;
   note?: string;
   origin?: ContextMessage['origin'];
+  midTurnInject?: boolean;
 }
 
 interface MutableEntry {
@@ -59,6 +60,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   let openEntry: MutableEntry | undefined;
   const pendingTurnOrdinals: number[] = [];
   let turnOrdinalCounter = 0;
+  let openTurnOrdinal: number | undefined;
 
   const push = (...entries: MutableEntry[]): void => {
     transcript.push(...entries);
@@ -93,6 +95,13 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
     pushMessage: (message, time) => {
       const entry = toMutableEntry(message, time);
       entry.turnOrdinal = pendingTurnOrdinals.shift();
+      if (
+        entry.turnOrdinal === undefined &&
+        openTurnOrdinal !== undefined &&
+        entry.message.role === 'user'
+      ) {
+        entry.message.midTurnInject = true;
+      }
       push(entry);
     },
   });
@@ -134,8 +143,13 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
         break;
       }
       case 'turn.prompt':
+        openTurnOrdinal = turnOrdinalCounter;
         pendingTurnOrdinals.push(turnOrdinalCounter);
         turnOrdinalCounter += 1;
+        break;
+      case 'turn.ended':
+      case 'turn.cancel':
+        openTurnOrdinal = undefined;
         break;
       case 'context.append_loop_event': {
         fold.loopEvent(record['event'] as LoopRecordedEvent, record.time);
@@ -165,6 +179,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       case 'context.clear':
         clearFloor = transcript.length;
         foldedLength = 0;
+        openTurnOrdinal = undefined;
         resetOpenState();
         break;
       default:

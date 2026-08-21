@@ -504,6 +504,37 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(compareTurnIds('g3.000010', 'g4.000001') < 0).toBe(true);
   });
 
+  it('folds input flagged midTurnInject into the open engine turn at its step position', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'on it' }], toolCalls: [] },
+        {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: 'hub: also do X' }],
+          origin: { kind: 'user' },
+          midTurnInject: true,
+        },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'did X' }], toolCalls: [] },
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'next' }], origin: { kind: 'user' } },
+      ],
+      [0, undefined, undefined, undefined, 1],
+    );
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't1']);
+    const first = turns[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    const injectedFrame = first.steps
+      .flatMap((s) => s.frames)
+      .find((f) => f.kind === 'text' && f.role === 'user');
+    if (injectedFrame?.kind !== 'text') throw new Error('expected folded steered frame');
+    expect(injectedFrame.text).toBe('hub: also do X');
+    const replies = first.steps
+      .flatMap((s) => s.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'assistant');
+    expect(replies.map((f) => (f.kind === 'text' ? f.text : ''))).toEqual(['on it', 'did X']);
+  });
+
   it('places hintless user input (steered content) in its own gap turn with its prompt', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [

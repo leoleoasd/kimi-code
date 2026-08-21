@@ -1737,6 +1737,45 @@ describe('AgentTranscriptProjector', () => {
     ]);
   });
 
+  it('appends steered content to the open turn as a user frame at the current step', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'work' }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(ev({ type: 'assistant.delta', turnId: 1, delta: 'on it' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 1, step: 1 }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 2 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: 'meanwhile do X' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+
+    const turn = turnOps('t1', tx.getItems());
+    const step2 = turn.steps.find((s) => s.stepId === 't1.2');
+    expect(step2).toBeDefined();
+    const injected = step2?.frames.find((f) => f.kind === 'text' && f.role === 'user');
+    expect(injected).toMatchObject({ kind: 'text', role: 'user', text: 'meanwhile do X' });
+
+    feed(ev({ type: 'turn.ended', turnId: 1, reason: 'completed' }));
+    const opsAfterClose = projector.map(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p3'],
+        content: [{ type: 'text', text: 'too late' }],
+        steeredAt: '2026-01-01T00:00:03.000Z',
+      }),
+    );
+    expect(opsAfterClose.filter((op) => op.op === 'frame.upsert')).toEqual([]);
+  });
+
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
     const service = new TranscriptService({
       homeDir: '/nonexistent-home',

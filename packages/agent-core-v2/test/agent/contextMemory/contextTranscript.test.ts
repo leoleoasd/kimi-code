@@ -105,6 +105,24 @@ describe('reduceContextTranscript', () => {
     expect(result.turnOrdinals[taskIdx!]).toBeUndefined();
   });
 
+  it('flags a user message appended while a turn is open as a mid-turn injection', () => {
+    const result = reduceContextTranscript([
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u1')),
+      ...assistantStep('s1', 'a1'),
+      appendMessage(userMessage('steered in')),
+      { type: 'turn.ended' } as unknown as WireRecord,
+      appendMessage(userMessage('between turns')),
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u2')),
+    ]);
+    expect(result.turnOrdinals).toEqual([0, undefined, undefined, undefined, 1]);
+    const injected = result.entries[2]! as { midTurnInject?: boolean };
+    expect(injected.midTurnInject).toBe(true);
+    const betweenTurns = result.entries[3]! as { midTurnInject?: boolean };
+    expect(betweenTurns.midTurnInject).toBeUndefined();
+  });
+
   it('queues prompt ordinals FIFO when prompts arrive before their copies persist', () => {
     const result = reduceContextTranscript([
       { type: 'turn.prompt' } as unknown as WireRecord,
