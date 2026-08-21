@@ -244,6 +244,7 @@ export class SessionEventWiring {
           this.sink.requestApproval({
             turnId: payload.turnId,
             toolCallId: payload.toolCallId ?? interaction.id,
+            interactionId: interaction.id,
             toolName: payload.toolName,
             action: payload.action,
             display: payload.display,
@@ -288,6 +289,7 @@ export class SessionEventWiring {
           this.sink.requestQuestion({
             turnId: payload.turnId,
             toolCallId: payload.toolCallId,
+            interactionId: interaction.id,
             questions: payload.questions,
             sessionId: this.session.id,
             agentId,

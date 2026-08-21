@@ -17,6 +17,13 @@ export interface ApprovalResponse {
 export interface ApprovalRequest {
   readonly turnId?: number | undefined;
   readonly toolCallId: string;
+  /**
+   * The kernel interaction this prompt stands for (v2 session wiring only).
+   * Panels key on it so an externally-resolved interaction (REST answer,
+   * dismiss, turn cancel) can unwind the matching UI via
+   * `setApprovalCancelHandler`; absent on v1 emissions.
+   */
+  readonly interactionId?: string | undefined;
   readonly toolName: string;
   readonly action: string;
   readonly display: ToolInputDisplay;
@@ -55,6 +62,12 @@ export type QuestionResult = null | QuestionAnswers | QuestionResponse;
 export interface QuestionRequest {
   readonly turnId?: number;
   readonly toolCallId?: string;
+  /**
+   * The kernel interaction this prompt stands for (v2 session wiring only) —
+   * see {@link ApprovalRequest.interactionId}; resolved externally →
+   * `setQuestionCancelHandler` fires with this id.
+   */
+  readonly interactionId?: string;
   readonly questions: readonly QuestionItem[];
 }
 

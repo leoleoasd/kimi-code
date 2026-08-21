@@ -20,6 +20,7 @@ export function createQuestionAskHandler(controller: QuestionController): Questi
 
 export function adaptQuestionRequest(event: QuestionRequest): QuestionPanelData {
   const id =
+    event.interactionId ??
     event.toolCallId ??
     (event.turnId === undefined ? 'question' : `question-${String(event.turnId)}`);
   return {

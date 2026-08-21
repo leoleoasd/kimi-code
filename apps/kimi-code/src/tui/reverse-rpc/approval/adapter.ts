@@ -19,7 +19,7 @@ const PLAN_REJECT_CHOICES: ApprovalPanelChoice[] = [
 export function adaptApprovalRequest(event: ApprovalRequest): ApprovalPanelData {
   const resolved = resolveDisplay(event.toolName, event.display, event.action);
   return {
-    id: event.toolCallId,
+    id: event.interactionId ?? event.toolCallId,
     tool_call_id: event.toolCallId,
     tool_name: event.toolName,
     action: event.action,

@@ -201,17 +201,23 @@ function makeSessionWithInteractions(): { session: ISessionScopeHandle; services
 function openEndedSink(): {
   sink: SessionEventSink;
   questioned: string[];
+  questionedIds: string[];
   approved: string[];
+  approvedIds: string[];
   cancelledQuestions: string[];
   cancelledApprovals: string[];
 } {
   const questioned: string[] = [];
+  const questionedIds: string[] = [];
   const approved: string[] = [];
+  const approvedIds: string[] = [];
   const cancelledQuestions: string[] = [];
   const cancelledApprovals: string[] = [];
   return {
     questioned,
+    questionedIds,
     approved,
+    approvedIds,
     cancelledQuestions,
     cancelledApprovals,
     sink: {
@@ -219,10 +225,12 @@ function openEndedSink(): {
       // The client never answers on its own — simulates an open panel.
       requestApproval: (request) => {
         approved.push(request.toolCallId);
+        approvedIds.push(request.interactionId ?? '');
         return new Promise(() => {});
       },
       requestQuestion: (request) => {
         questioned.push(request.toolCallId ?? '');
+        questionedIds.push(request.interactionId ?? '');
         return new Promise(() => {});
       },
       toolCall: () => Promise.resolve({ output: 'not supported', isError: true }),
@@ -270,6 +278,7 @@ describe('SessionEventWiring external interaction resolution', () => {
       services.kernel.park(questionInteraction('tc-q1'));
       await flush();
       expect(recorder.questioned).toEqual(['tc-q1']);
+      expect(recorder.questionedIds).toEqual(['tc-q1']);
 
       // The answer arrives through ANOTHER surface (e.g. kap-server's REST
       // question route): the pending promise settles, the client panel must
@@ -314,6 +323,7 @@ describe('SessionEventWiring external interaction resolution', () => {
       services.kernel.park(approvalInteraction('tc-a1'));
       await flush();
       expect(recorder.approved).toEqual(['tc-a1']);
+      expect(recorder.approvedIds).toEqual(['tc-a1']);
 
       services.kernel.respond('tc-a1', { decision: 'approved' });
       await flush();
