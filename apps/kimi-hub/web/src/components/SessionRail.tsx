@@ -22,9 +22,7 @@ import { useConnection } from '#/connection';
 import { agentBaseUrl, type HubAgentInfo } from '#/hub/api';
 import {
   createSession,
-  fetchSession,
   fetchSessions,
-  sessionInfoQueryKey,
 } from '#/sessions/api';
 import { SessionList } from './SessionList';
 import { ErrorLine, relTime } from './ui';
@@ -211,28 +209,21 @@ function ScopedSessionEntry({
   const baseUrl = agentBaseUrl(hubOrigin, entry.agent.agentId);
   const shortId = `${entry.sessionId.slice(0, 8)}…`;
 
-  // Lazy title lookup — once per (connection, session); the shortened id
-  // fills in while it loads and if it fails. The key is shared with the open
-  // chat's header, so a `session.meta.updated` WS frame (rename) flips this
-  // row via the App-level invalidation — no extra polling here.
-  const info = useQuery({
-    queryKey: sessionInfoQueryKey(baseUrl, entry.sessionId),
-    queryFn: () => fetchSession({ baseUrl, token, sessionId: entry.sessionId }),
-    enabled: entry.online,
-  });
-
-  // Status dot for EVERY online row: the per-agent session list carries each
-  // session's `activity.status`, and the query key is shared with the legacy
-  // drill-in — one poll loop per agent covers all its rows. Offline rows stay
-  // muted regardless.
+  // Title + status dot for EVERY online row come from the per-agent session
+  // list — the query key is shared with the legacy drill-in, one 5s poll loop
+  // per agent covers all its rows. A TUI rename flips the row on the next
+  // poll tick; when the same agent's chat is open, the
+  // `session.meta.updated` WS frame flips the open chat's header instantly.
+  // Offline rows stay muted regardless.
   const sessions = useQuery({
     queryKey: ['sessions', baseUrl],
     queryFn: () => fetchSessions({ baseUrl, token }),
     enabled: entry.online,
     refetchInterval: 5000,
   });
-  const activity = sessions.data?.find((s) => s.id === entry.sessionId)?.activity.status;
-  const label = info.data?.title ?? info.data?.lastPrompt ?? shortId;
+  const summary = sessions.data?.find((s) => s.id === entry.sessionId);
+  const activity = summary?.activity.status;
+  const label = summary?.meta.title ?? summary?.meta.lastPrompt ?? shortId;
   const working =
     activity === 'running' || activity === 'approval' || activity === 'question';
   const dot = !entry.online
