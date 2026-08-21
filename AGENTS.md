@@ -81,7 +81,7 @@ Run from the repo root (the `Makefile` mirrors the upstream subset as `make <tar
 - `pnpm lint` / `pnpm lint:fix` — `oxlint --type-aware` (with `--fix`).
 - `pnpm sherif` — monorepo dependency-consistency check.
 - `pnpm dev:cli` — the CLI in dev mode; `pnpm dev:server` / `pnpm dev:kap-server` — the server; `pnpm dev:hub` — the kimi-hub (fork); `pnpm vis` — the session visualizer; `pnpm dev:docs` — the docs site.
-- `pnpm install:local` (fork) — rebuild the `kimi` + `kimi-hub` SEA binaries and atomically install them into `~/.kimi-code/`'s bin dir (`scripts/install-dev.mjs`); running binaries keep their old inode.
+- `pnpm install:local` (fork) — rebuild the `kimi` + `kimi-hub` SEA binaries and atomically install them into `~/.kimi-code/`'s bin dir (`scripts/install-dev.mjs`); running binaries keep their old inode. **Owner rule (2026-08-20): after every code change, run `pnpm install:local` so the locally running `kimi` / `kimi-hub` binaries carry it — never leave a finished change uninstalled.** Processes already running keep their old build until restarted; restart the hub or the TUIs only when the owner asks (or when the change is exactly what they are waiting to see), not automatically.
 - `pnpm changeset` — add a release changeset (see Release Process below).
 - `pnpm publish` — the upstream release gate (typecheck → lint → sherif → test → build → `lint:pkg` → `changeset publish`). The npm publish leg needs MoonshotAI's OIDC identity and does not work from the fork; distribution here goes through the Fork Release workflow instead.
 
