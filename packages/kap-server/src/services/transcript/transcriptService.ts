@@ -1,4 +1,5 @@
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 
 import {
@@ -42,6 +43,7 @@ const AGENTS_DIR = 'agents';
 const MAIN_AGENT_ID = 'main';
 const WIRE_FILE = 'wire.jsonl';
 const STATE_FILE = 'state.json';
+const DATA_URL_INLINE_LIMIT = 64 * 1024;
 
 export interface TranscriptServiceDeps {
   readonly homeDir: string;
@@ -516,7 +518,63 @@ export class TranscriptService {
     }
     const reduced = reduceContextTranscript(records);
     const base = groupMessagesIntoSnapshot(reduced.entries, reduced.turnOrdinals);
-    return foldWireRecordFacts(records, base);
+    return this.dehydrateDataUrls(summary.workspaceId, sessionId, agentId, foldWireRecordFacts(records, base));
+  }
+
+  /**
+   * Legacy sessions persisted pasted media as raw `data:` URLs on prompt
+   * parts; the cold fold inlines them into the snapshot's attachment entities,
+   * so every page read would re-ship megabytes of base64. Swap the heavyweight
+   * ones (`> DATA_URL_INLINE_LIMIT`) for a `blobref:`: the bytes land in the
+   * sha-keyed agent blob store (idempotent) and clients fetch them lazily via
+   * `/blobs/{sha256}`. Missing store or any write failure keeps the inline URL.
+   */
+  private async dehydrateDataUrls(
+    workspaceId: string,
+    sessionId: string,
+    agentId: string,
+    snapshot: AgentTranscriptSnapshot,
+  ): Promise<AgentTranscriptSnapshot> {
+    const needsSwap = snapshot.attachments.some(
+      (attachment) =>
+        attachment.source?.kind === 'url' &&
+        attachment.source.url.startsWith('data:') &&
+        attachment.source.url.length > DATA_URL_INLINE_LIMIT,
+    );
+    if (!needsSwap) return snapshot;
+    const blobStore = this.deps.core.accessor.get(IBlobStore);
+    if (blobStore === undefined) return snapshot;
+    const scope = `${SESSIONS_ROOT}/${workspaceId}/${sessionId}/${AGENTS_DIR}/${agentId}/blobs`;
+    const attachments = await Promise.all(
+      snapshot.attachments.map(async (attachment) => {
+        const source = attachment.source;
+        if (
+          source?.kind !== 'url' ||
+          !source.url.startsWith('data:') ||
+          source.url.length <= DATA_URL_INLINE_LIMIT
+        ) {
+          return attachment;
+        }
+        const match = /^data:([^;,]+);base64,(.*)$/s.exec(source.url);
+        if (match === null) return attachment;
+        try {
+          const bytes = Buffer.from(match[2]!, 'base64');
+          const sha256 = createHash('sha256').update(bytes).digest('hex');
+          await blobStore.put(scope, sha256, bytes);
+          return {
+            ...attachment,
+            source: { kind: 'blob' as const, ref: `blobref:${match[1]};${sha256}` },
+          };
+        } catch (error) {
+          this.deps.logger?.warn(
+            { sessionId, err: error instanceof Error ? error.message : error },
+            'transcript: attachment dehydration failed, keeping inline data: URL',
+          );
+          return attachment;
+        }
+      }),
+    );
+    return { ...snapshot, attachments };
   }
 
   /**

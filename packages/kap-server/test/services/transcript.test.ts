@@ -6,6 +6,7 @@ import {
   IAgentLifecycleService,
   IAgentLoopService,
   IAgentTaskService,
+  IBlobStore,
   IEventBus,
   ISessionIndex,
   ISessionInteractionService,
@@ -1893,6 +1894,67 @@ describe('AgentTranscriptProjector', () => {
         expect.objectContaining({ kind: 'taskref', refId: 'ref-task_1', taskId: 'task_1' }),
       ]);
       service.dropSession('s1');
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  it('readColdSnapshot dehydrates heavyweight data: URL attachments into the blob store', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'transcript-cold-blobs-'));
+    try {
+      const wireDir = join(home, 'sessions', 'ws', 's1', 'agents', 'main');
+      await mkdir(wireDir, { recursive: true });
+      const big = 'A'.repeat(120 * 1024);
+      const small = 'cGluZw==';
+      await writeFile(
+        join(wireDir, 'wire.jsonl'),
+        `${JSON.stringify({
+          type: 'context.append_message',
+          message: {
+            role: 'user',
+            content: [
+              { type: 'image_url', imageUrl: { url: `data:image/png;base64,${big}` } },
+              { type: 'image_url', imageUrl: { url: `data:image/png;base64,${small}` } },
+              { type: 'text', text: 'shot' },
+            ],
+            toolCalls: [],
+            origin: { kind: 'user' },
+          },
+          time: 1000,
+        })}\n`,
+      );
+      const puts: Array<{ scope: string; key: string; bytes: number }> = [];
+      const service = new TranscriptService({
+        homeDir: home,
+        core: {
+          accessor: {
+            get: (token: unknown) => {
+              if (token === ISessionManager) return { get: () => undefined, list: () => [] };
+              if (token === IWorkspaceInstanceManager) {
+              return { list: () => [], onDidChange: () => ({ dispose: () => undefined }) };
+            }
+              if (token === ISessionIndex) return { get: async () => ({ workspaceId: 'ws' }) };
+              if (token === IBlobStore) {
+                return {
+                  put: async (scope: string, key: string, data: Uint8Array) => {
+                    puts.push({ scope, key, bytes: data.length });
+                  },
+                  get: async () => undefined,
+                };
+              }
+              return undefined;
+            },
+          },
+        } as unknown as Scope,
+      });
+      const snapshot = await service.readColdSnapshot('s1', 'main');
+      expect(puts).toHaveLength(1);
+      expect(puts[0]!.scope).toBe('sessions/ws/s1/agents/main/blobs');
+      const swapped = snapshot!.attachments.find((a) => a.source?.kind === 'blob');
+      expect((swapped?.source as { ref?: unknown } | undefined)?.ref).toMatch(/^blobref:image\/png;[0-9a-f]{64}$/);
+      expect(swapped?.mediaType).toBe('image/png');
+      const inline = snapshot!.attachments.find((a) => a.source?.kind === 'url');
+      expect((inline?.source as { url?: unknown } | undefined)?.url).toBe(`data:image/png;base64,${small}`);
     } finally {
       await rm(home, { recursive: true, force: true });
     }
