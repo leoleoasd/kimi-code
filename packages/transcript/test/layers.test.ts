@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { filterOpsForGrade, isAppendOnly, redactSnapshotForGrade } from '#/granularity/filterOps';
 import { detachGrades, gradeFor, needsResetOnTransition } from '#/granularity/grade';
 import { paginateTurns } from '#/pagination/paginate';
+import { compareTurnIds } from '#/model/ids';
 import { ViewRegistry } from '#/view/registry';
 import { groupMessagesIntoSnapshot, type HistoryContentPart } from '#/history/groupTurns';
 import { foldWireRecordFacts, type HistoryWireRecord } from '#/history/foldFacts';
@@ -453,6 +454,77 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
     const turns = snapshot.items.filter((i) => i.kind === 'turn');
     expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't1']);
+  });
+
+  it('keeps hintless shell blocks as gap turns without eating engine turns or stealing their frames', () => {
+    const shell = (text: string) => ({
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text }],
+      toolCalls: [],
+      origin: { kind: 'shell_command' },
+    });
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        shell('<bash-input>ls</bash-input>'),
+        shell('<bash-stdout>x</bash-stdout>'),
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'first' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'r1' }], toolCalls: [] },
+        shell('<bash-input>pwd</bash-input>'),
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'r2' }], toolCalls: [] },
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'second' }], origin: { kind: 'user' } },
+      ],
+      [undefined, undefined, 0, undefined, undefined, undefined, 1],
+    );
+    const gaps = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(gaps.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual([
+      'g-1.000001',
+      'g-1.000002',
+      't0',
+      'g0.000003',
+      't1',
+    ]);
+    expect(gaps.map((t) => (t.kind === 'turn' ? t.ordinal : -1))).toEqual([0, 0, 0, 1, 1]);
+    const prePromptShell = gaps[0];
+    if (prePromptShell?.kind !== 'turn') throw new Error('expected turn');
+    expect(prePromptShell.prompt).toBe('<bash-input>ls</bash-input>');
+    expect(prePromptShell.origin).toMatchObject({ kind: 'user', payload: { kind: 'shell_command' } });
+    const engine = gaps[2];
+    if (engine?.kind !== 'turn') throw new Error('expected turn');
+    const replies = engine.steps
+      .flatMap((s) => s.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'assistant');
+    expect(replies.map((f) => (f.kind === 'text' ? f.text : ''))).toEqual(['r1', 'r2']);
+  });
+
+  it('sorts gap turn ids strictly between the surrounding engine turn ids', () => {
+    expect(compareTurnIds('g-1.000001', 't0') < 0).toBe(true);
+    expect(compareTurnIds('t0', 'g0.000003') < 0).toBe(true);
+    expect(compareTurnIds('g0.000003', 't1') < 0).toBe(true);
+    expect(compareTurnIds('g0.000003', 'g0.000004') < 0).toBe(true);
+    expect(compareTurnIds('g3.000010', 'g4.000001') < 0).toBe(true);
+  });
+
+  it('places hintless user input (steered content) in its own gap turn with its prompt', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'on it' }], toolCalls: [] },
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'also do X' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'done both' }], toolCalls: [] },
+      ],
+      [0, undefined, undefined, undefined],
+    );
+    const steers = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(steers.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 'g0.000001']);
+    const steered = steers[1];
+    if (steered?.kind !== 'turn') throw new Error('expected turn');
+    expect(steered.prompt).toBe('also do X');
+    const engine = steers[0];
+    if (engine?.kind !== 'turn') throw new Error('expected turn');
+    const replies = engine.steps
+      .flatMap((s) => s.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'assistant');
+    expect(replies.map((f) => (f.kind === 'text' ? f.text : ''))).toEqual(['on it', 'done both']);
   });
 
   it('groups flat messages into turns with folded tool results', () => {
@@ -950,6 +1022,38 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(folded.items.map(idLabel)).toEqual(['t0', 'm1', 'ref-tk1', 't1', 'm2', 't2', 'm3']);
     const markers = folded.items.filter((i) => i.kind === 'marker').map((i) => (i.kind === 'marker' ? i.marker : ''));
     expect(markers).toEqual(['interruption', 'swarm.enter', 'goal']);
+  });
+
+  it('keeps turn.ended facts and ordinal anchors on engine turns, off gap turns', () => {
+    const base = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'go' }], toolCalls: [], origin: { kind: 'user' } },
+        {
+          role: 'user',
+          content: [{ type: 'text', text: '<bash-input>ls</bash-input>' }],
+          toolCalls: [],
+          origin: { kind: 'shell_command' },
+        },
+        { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [], origin: { kind: 'user' } },
+      ],
+      [0, undefined, 1],
+    );
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', time: 1000 },
+        { type: 'task.started', info: { taskId: 'tk9', kind: 'process', status: 'running', startedAt: 1500 }, time: 1500 },
+        { type: 'turn.prompt', time: 2000 },
+        { type: 'turn.ended', turnId: 1, reason: 'failed', time: 3000 },
+      ],
+      base,
+    );
+    expect(folded.items.map(idLabel)).toEqual(['t0', 'ref-tk9', 'g0.000001', 't1']);
+    const gap = folded.items.find((i) => i.kind === 'turn' && i.turnId === 'g0.000001');
+    const engine = folded.items.find((i) => i.kind === 'turn' && i.turnId === 't1');
+    if (gap?.kind !== 'turn' || engine?.kind !== 'turn') throw new Error('expected turns');
+    expect(gap.state).toBe('completed');
+    expect(gap.endedAt).toBeUndefined();
+    expect(engine.state).toBe('failed');
   });
 
   const baseWithMarker = (): AgentTranscriptSnapshot =>

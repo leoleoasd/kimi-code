@@ -72,6 +72,21 @@ const MARKER_USER_ORIGINS: Readonly<Record<string, string>> = {
 
 const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
 
+/**
+ * Fold persisted wire messages into a snapshot. When `turnOrdinals` carries at
+ * least one engine hint (set only on `turn.prompt` messages), the fold is
+ * anchored to the engine's numbering and every hintless message (shell I/O
+ * blocks, steered input, cron/hook output) becomes a "gap turn": its ordinal is
+ * the next engine turn's ordinal so the ordinal-ordered insert keeps it ahead
+ * of that turn, and its `g<lastEngineOrdinal>.<seq>` id parses numerically so
+ * `compareTurnIds` still sorts it strictly between the surrounding `t<N>` ids.
+ * Gap turns never mint `t${nextOrdinal}` ids (those collide with engine turns
+ * arriving later and upsert over them) and never move the open-turn pointer,
+ * so assistant messages following a shell block keep folding into the engine
+ * turn it interrupted. Consumers foldFacts and the like pin engine facts and
+ * ordinal anchors on `t<ordinal>` ids only. Without hints the legacy
+ * sequential numbering is kept.
+ */
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   turnOrdinals?: readonly (number | undefined)[],
@@ -81,6 +96,23 @@ export function groupMessagesIntoSnapshot(
   let turn: TurnDraft | undefined;
   let nextOrdinal = 0;
   let markerCount = 0;
+  const hasOrdinalHints = turnOrdinals?.some((ordinal) => ordinal !== undefined) ?? false;
+  let lastEngineOrdinal = -1;
+  let gapCount = 0;
+
+  const gapTurn = (origin: TurnOrigin, prompt?: string, attachmentIds?: string[]): TurnDraft => {
+    gapCount += 1;
+    const draft: TurnDraft = {
+      turnId: `g${lastEngineOrdinal}.${String(gapCount).padStart(6, '0')}`,
+      ordinal: lastEngineOrdinal + 1,
+      origin,
+      prompt,
+      attachmentIds,
+      steps: [],
+    };
+    items.push(draftToTurnItem(draft));
+    return draft;
+  };
 
   const foldTurnOpeningInput = (
     message: HistoryMessage,
@@ -159,6 +191,10 @@ export function groupMessagesIntoSnapshot(
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
     if (!turn) {
+      if (hasOrdinalHints) {
+        turn = gapTurn(origin);
+        return turn;
+      }
       const ordinal = nextOrdinal;
       nextOrdinal += 1;
       turn = { turnId: `t${ordinal}`, ordinal, origin, steps: [] };
@@ -173,8 +209,12 @@ export function groupMessagesIntoSnapshot(
     attachmentIds?: string[],
     engineOrdinal?: number,
   ): TurnDraft => {
+    if (hasOrdinalHints && engineOrdinal === undefined) {
+      return gapTurn(origin, prompt, attachmentIds);
+    }
     const ordinal = engineOrdinal ?? nextOrdinal;
     nextOrdinal = Math.max(ordinal + 1, nextOrdinal);
+    if (engineOrdinal !== undefined) lastEngineOrdinal = engineOrdinal;
     turn = { turnId: `t${ordinal}`, ordinal, origin, prompt, attachmentIds, steps: [] };
     items.push(draftToTurnItem(turn));
     return turn;

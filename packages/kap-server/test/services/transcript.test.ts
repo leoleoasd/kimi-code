@@ -24,6 +24,7 @@ import {
 import {
   AgentTranscript,
   TranscriptStore,
+  groupMessagesIntoSnapshot,
   type AgentTranscriptSnapshot,
   type AppendOp,
   type FrameUpsertOp,
@@ -408,6 +409,39 @@ describe('AgentTranscriptProjector', () => {
         return item.refId;
       }),
     ).toEqual(['t0', 'm1', 't1', 'r1', 't2']);
+  });
+
+  it('cold-fold of shell blocks around engine turns loses no records and keeps order', () => {
+    const shell = (text: string) => ({
+      role: 'user' as const,
+      content: [{ type: 'text' as const, text }],
+      toolCalls: [],
+      origin: { kind: 'shell_command' },
+    });
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        shell('<bash-input>a</bash-input>'),
+        shell('<bash-stdout>1</bash-stdout>'),
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'one' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'r1' }], toolCalls: [] },
+        shell('<bash-input>b</bash-input>'),
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'r2' }], toolCalls: [] },
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'two' }], origin: { kind: 'user' } },
+      ],
+      [undefined, undefined, 0, undefined, undefined, undefined, 1],
+    );
+    const tx = new AgentTranscript('main');
+    tx.apply(snapshotToOps(snapshot));
+    expect(
+      tx.getItems().map((item) => (item.kind === 'turn' ? item.turnId : '?')),
+    ).toEqual(['g-1.000001', 'g-1.000002', 't0', 'g0.000003', 't1']);
+    const first = turnOps('t0', tx.getItems());
+    expect(
+      first.steps
+        .flatMap((s) => s.frames)
+        .filter((f) => f.kind === 'text' && f.role === 'assistant')
+        .map((f) => (f.kind === 'text' ? f.text : '')),
+    ).toEqual(['r1', 'r2']);
   });
 
   it('snapshotToOps flattens attachment entities so backfilled attachmentIds never dangle', () => {

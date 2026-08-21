@@ -1,3 +1,4 @@
+import { turnId } from '../model/ids';
 import type { TranscriptInteraction } from '../model/interaction';
 import type { TranscriptItem, TranscriptMarker, TranscriptTaskRef } from '../model/item';
 import type { GoalMeta, GoalStatus, TranscriptMeta } from '../model/meta';
@@ -174,6 +175,7 @@ function placeAnchored(
       idx += 1;
     }
     out.push(item);
+    if (!isEngineTurn(item)) continue;
     while (idx < appended.length && appended[idx]!.after === item.ordinal) {
       out.push(appended[idx]!.item);
       idx += 1;
@@ -184,6 +186,10 @@ function placeAnchored(
     idx += 1;
   }
   return out;
+}
+
+function isEngineTurn(item: TranscriptItem & { readonly kind: 'turn' }): boolean {
+  return item.turnId === turnId(item.ordinal);
 }
 
 function readTodoItems(raw: unknown): TodoItem[] {
@@ -471,6 +477,7 @@ export function foldWireRecordFacts(
     endedByOrdinal.size > 0
       ? base.items.map((item) => {
           if (item.kind !== 'turn') return item;
+          if (!isEngineTurn(item)) return item;
           const record = endedByOrdinal.get(item.ordinal);
           if (record === undefined) return item;
           const payload = record as TurnEndedPayload;

@@ -805,6 +805,9 @@ export function rollbackCountsForItems(items: readonly TranscriptItem[]): Readon
     const item = items[i];
     if (item === undefined || item.kind !== 'turn') continue;
     if (item.origin.kind !== 'user' || item.state === 'queued') continue;
+    // Shell blocks fold into user-kind turns but are not engine undo anchors
+    // (matches the engine's `isUndoAnchor`).
+    if ((item.origin.payload as { kind?: unknown } | undefined)?.kind === 'shell_command') continue;
     count += 1;
     counts.set(item.turnId, count);
   }
