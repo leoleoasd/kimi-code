@@ -69,6 +69,12 @@ import { Composer, planComposerKey } from './Composer';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
+import {
+  parseShellInput,
+  parseShellOutput,
+  shellCommandInfo,
+  type ShellCommandOrigin,
+} from './shellCommand';
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
@@ -992,6 +998,102 @@ function StreamCaret() {
   );
 }
 
+function RollbackControl({
+  rollbackCount,
+  onRollback,
+}: {
+  rollbackCount?: number;
+  onRollback?: () => void;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  if (rollbackCount === undefined || onRollback === undefined) return null;
+  return confirming ? (
+    <span className="mt-1 flex shrink-0 items-center gap-1">
+      <button
+        className="rounded border border-red-900/70 bg-red-950/60 px-2 py-1 text-[11px] text-red-300"
+        onClick={() => {
+          setConfirming(false);
+          onRollback();
+        }}
+      >
+        Roll back {String(rollbackCount)} prompt{rollbackCount === 1 ? '' : 's'}?
+      </button>
+      <button
+        className="rounded px-1.5 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800"
+        aria-label="cancel rollback"
+        onClick={() => {
+          setConfirming(false);
+        }}
+      >
+        ✕
+      </button>
+    </span>
+  ) : (
+    <button
+      className="mt-1 shrink-0 rounded px-1.5 py-1 text-[12px] text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
+      title="roll back to before this message"
+      aria-label="roll back to before this message"
+      onClick={() => {
+        setConfirming(true);
+      }}
+    >
+      ↩
+    </button>
+  );
+}
+
+/**
+ * `!` shell-command records render as a terminal card (mirrors the TUI's
+ * `$ cmd` echo + raw output panel) instead of the user bubble — the recorded
+ * prompt text still carries the `<bash-input>`/`<bash-stdout`/`<bash-stderr>`
+ * XML wrapper, which would otherwise show verbatim in the bubble.
+ */
+function ShellCommandView({
+  prompt,
+  shell,
+  rollbackCount,
+  onRollback,
+}: {
+  prompt: string;
+  shell: ShellCommandOrigin;
+  rollbackCount?: number;
+  onRollback?: () => void;
+}) {
+  const rollback = (
+    <RollbackControl rollbackCount={rollbackCount} onRollback={onRollback} />
+  );
+  if (shell.phase === 'input') {
+    return (
+      <div className="mb-2 flex items-start gap-1.5">
+        {rollback}
+        <div className="max-w-full overflow-x-auto rounded border border-neutral-800 bg-neutral-900/70 px-3 py-1.5 font-mono text-[12px] whitespace-pre-wrap break-all sm:max-w-[92%]">
+          <span className="select-none text-emerald-400">$ </span>
+          <span className="text-neutral-200">{parseShellInput(prompt)}</span>
+        </div>
+      </div>
+    );
+  }
+  const { stdout, stderr } = parseShellOutput(prompt);
+  const hasOutput = stdout.length > 0 || stderr.length > 0;
+  return (
+    <div className="mb-2 flex items-start gap-1.5">
+      {rollback}
+      <div className="max-w-full overflow-x-auto rounded bg-black/40 px-3 py-1.5 font-mono text-[12px] whitespace-pre-wrap break-all sm:max-w-[92%]">
+        {hasOutput ? (
+          <>
+            {stdout.length > 0 ? <div className="text-neutral-300">{stdout}</div> : null}
+            {stderr.length > 0 ? (
+              <div className={shell.isError ? 'text-red-400' : 'text-neutral-500'}>{stderr}</div>
+            ) : null}
+          </>
+        ) : (
+          <span className="text-neutral-600">(no output)</span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function TurnView({
   turn,
   attachments,
@@ -1015,7 +1117,7 @@ function TurnView({
   agentId: string;
 }) {
   const isUser = turn.origin.kind === 'user';
-  const [confirming, setConfirming] = useState(false);
+  const shell = shellCommandInfo(turn.origin.payload);
   const mediaItems = (turn.attachmentIds ?? [])
     .map((id) => attachments.get(id))
     .filter((a): a is TranscriptAttachment => a !== undefined);
@@ -1029,45 +1131,34 @@ function TurnView({
   const hasPrompt = turn.prompt !== undefined && turn.prompt !== '';
   return (
     <div className="mb-3">
-      {/* Prompt: users get their own bubble; other origins a muted header. */}
-      {hasPrompt || (isUser && mediaItems.length > 0) ? (
+      {/* Prompt: shell commands get a terminal card, users a bubble, other
+          origins a muted header. */}
+      {shell !== undefined && hasPrompt ? (
+        <ShellCommandView
+          prompt={turn.prompt}
+          shell={shell}
+          rollbackCount={rollbackCount}
+          onRollback={
+            onRollback !== undefined
+              ? () => {
+                  onRollback(turn.turnId);
+                }
+              : undefined
+          }
+        />
+      ) : hasPrompt || (isUser && mediaItems.length > 0) ? (
         isUser ? (
           <div className="mb-2 flex items-start justify-end gap-1.5">
-            {rollbackCount !== undefined && onRollback !== undefined ? (
-              confirming ? (
-                <span className="mt-1 flex shrink-0 items-center gap-1">
-                  <button
-                    className="rounded border border-red-900/70 bg-red-950/60 px-2 py-1 text-[11px] text-red-300"
-                    onClick={() => {
-                      setConfirming(false);
+            <RollbackControl
+              rollbackCount={rollbackCount}
+              onRollback={
+                onRollback !== undefined
+                  ? () => {
                       onRollback(turn.turnId);
-                    }}
-                  >
-                    Roll back {String(rollbackCount)} prompt{rollbackCount === 1 ? '' : 's'}?
-                  </button>
-                  <button
-                    className="rounded px-1.5 py-1 text-[11px] text-neutral-500 hover:bg-neutral-800"
-                    aria-label="cancel rollback"
-                    onClick={() => {
-                      setConfirming(false);
-                    }}
-                  >
-                    ✕
-                  </button>
-                </span>
-              ) : (
-                <button
-                  className="mt-1 shrink-0 rounded px-1.5 py-1 text-[12px] text-neutral-600 hover:bg-neutral-800 hover:text-neutral-300"
-                  title="roll back to before this message"
-                  aria-label="roll back to before this message"
-                  onClick={() => {
-                    setConfirming(true);
-                  }}
-                >
-                  ↩
-                </button>
-              )
-            ) : null}
+                    }
+                  : undefined
+              }
+            />
             <div className="max-w-[85%] rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] whitespace-pre-wrap text-neutral-100 sm:max-w-[80%]">
               {hasPrompt ? turn.prompt : null}
               {mediaItems.length > 0 ? (
