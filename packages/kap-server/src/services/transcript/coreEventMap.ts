@@ -75,6 +75,8 @@ import type {
   TurnState,
 } from '@moonshot-ai/transcript';
 
+import { classifyUserText } from '@moonshot-ai/transcript';
+
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
 import { projectPromptContentParts } from '../messages/messageProjection';
 
@@ -397,13 +399,37 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
+    const classification =
+      event.prompt !== undefined && event.prompt !== ''
+        ? classifyUserText(event.prompt)
+        : undefined;
+    let origin = mapTurnOrigin(event.origin);
+    let prompt: string | undefined;
+    if (classification?.kind === 'internal') {
+      prompt = undefined;
+    } else if (classification?.kind === 'hub') {
+      prompt = classification.text;
+      if (origin.kind === 'user') {
+        origin = {
+          kind: 'user',
+          payload: {
+            ...(typeof origin.payload === 'object' && origin.payload !== null
+              ? (origin.payload as Record<string, unknown>)
+              : {}),
+            hubFrom: classification.from,
+          },
+        };
+      }
+    } else if (classification !== undefined) {
+      prompt = classification.text;
+    }
     this.currentTurn = {
       kind: 'turn',
       turnId,
       ordinal: n,
       state: 'running',
-      origin: mapTurnOrigin(event.origin),
-      prompt: event.prompt,
+      origin,
+      prompt,
       attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       startedAt: nowIso(),
     };
@@ -1425,7 +1451,8 @@ export class AgentTranscriptProjector {
         : undefined;
     if (step !== undefined && this.currentTurn !== undefined) {
       const text = event.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
-      if (text.length > 0) {
+      const classification = classifyUserText(text);
+      if (classification.kind !== 'internal') {
         this.frameOrdinal += 1;
         ops.push({
           op: 'frame.upsert',
@@ -1435,7 +1462,8 @@ export class AgentTranscriptProjector {
             kind: 'text',
             frameId: `${step.stepId}.f${this.frameOrdinal}`,
             role: 'user',
-            text,
+            text: classification.text,
+            ...(classification.kind === 'hub' ? { hubFrom: classification.from } : {}),
           },
         });
       }

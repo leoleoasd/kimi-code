@@ -4,6 +4,7 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
+import { classifyUserText } from './userText';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -226,6 +227,8 @@ export function groupMessagesIntoSnapshot(
   };
 
   const foldUserFrameIntoTurn = (message: HistoryMessage): void => {
+    const classification = classifyUserText(textOf(message));
+    if (classification.kind === 'internal') return;
     const current = ensureTurn();
     let step = current.steps.at(-1);
     if (step === undefined) {
@@ -241,8 +244,9 @@ export function groupMessagesIntoSnapshot(
       kind: 'text',
       frameId: `${step.stepId}.f${step.frames.length + 1}`,
       role: 'user',
-      text: textOf(message),
+      text: classification.text,
       ...(typeof payload?.taskId === 'string' ? { taskId: payload.taskId } : {}),
+      ...(classification.kind === 'hub' ? { hubFrom: classification.from } : {}),
     });
     syncTurnItem(items, current);
   };
@@ -259,13 +263,6 @@ export function groupMessagesIntoSnapshot(
     const engineOrdinal = turnOrdinals?.[messageIndex];
 
     if (message.role === 'user') {
-      if (
-        engineOrdinal === undefined &&
-        (originKind === 'task' || message.midTurnInject === true)
-      ) {
-        foldUserFrameIntoTurn(message);
-        continue;
-      }
       if (originKind !== undefined && HIDDEN_USER_ORIGINS.has(originKind)) {
         if (opensOwnTurn(message)) {
           startTurn(mapOrigin(message), undefined, undefined, engineOrdinal);
@@ -296,8 +293,28 @@ export function groupMessagesIntoSnapshot(
         startTurn(mapOrigin(message), opening.text, opening.attachmentIds, engineOrdinal);
         continue;
       }
+      if (
+        engineOrdinal === undefined &&
+        (originKind === 'task' || message.midTurnInject === true)
+      ) {
+        foldUserFrameIntoTurn(message);
+        continue;
+      }
       const opening = foldTurnOpeningInput(message);
-      startTurn(mapOrigin(message), opening.text, opening.attachmentIds, engineOrdinal);
+      const classification = classifyUserText(opening.text);
+      if (classification.kind === 'internal') {
+        if (opening.attachmentIds !== undefined) {
+          startTurn(mapOrigin(message), undefined, opening.attachmentIds, engineOrdinal);
+        }
+        continue;
+      }
+      const baseOrigin = mapOrigin(message);
+      startTurn(
+        classification.kind === 'hub' ? hubTurnOrigin(baseOrigin, classification.from) : baseOrigin,
+        classification.text,
+        opening.attachmentIds,
+        engineOrdinal,
+      );
       continue;
     }
 
@@ -372,11 +389,19 @@ function classifyMediaUrl(
   return undefined;
 }
 
+function hubTurnOrigin(base: TurnOrigin, from: string): TurnOrigin {
+  if (base.kind !== 'user') return base;
+  const payload =
+    typeof base.payload === 'object' && base.payload !== null
+      ? { ...(base.payload as Record<string, unknown>), hubFrom: from }
+      : { hubFrom: from };
+  return { kind: 'user', payload };
+}
+
 function opensOwnTurn(message: HistoryMessage): boolean {
   const origin = message.origin as { kind?: unknown; name?: unknown } | undefined;
   return (
-    origin?.kind === 'system_trigger' &&
-    typeof origin.name === 'string' &&
+    typeof origin?.name === 'string' &&
     TURN_OPENING_SYSTEM_TRIGGERS.has(origin.name)
   );
 }

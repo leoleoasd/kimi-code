@@ -19,6 +19,7 @@ export * from './view/registry';
 export * from './pagination/paginate';
 export * from './history/groupTurns';
 export * from './history/foldFacts';
+export * from './history/userText';
 export * from './contract/schema';
 export * from './contract/events';
 export * from './contract/mediaRef';

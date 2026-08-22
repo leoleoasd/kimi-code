@@ -67,6 +67,7 @@ import {
 import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
+import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import {
@@ -1121,6 +1122,7 @@ function TurnView({
 }) {
   const isUser = turn.origin.kind === 'user';
   const shell = shellCommandInfo(turn.origin.payload);
+  const hubFrom = readHubFromOrigin(turn.origin.payload);
   const mediaItems = (turn.attachmentIds ?? [])
     .map((id) => attachments.get(id))
     .filter((a): a is TranscriptAttachment => a !== undefined);
@@ -1150,7 +1152,21 @@ function TurnView({
           }
         />
       ) : hasPrompt || (isUser && mediaItems.length > 0) ? (
-        isUser ? (
+        hubFrom !== undefined && hasPrompt ? (
+          <div className="mb-2 flex items-start justify-end gap-1.5">
+            <RollbackControl
+              rollbackCount={rollbackCount}
+              onRollback={
+                onRollback !== undefined
+                  ? () => {
+                      onRollback(turn.turnId);
+                    }
+                  : undefined
+              }
+            />
+            <HubMessageCard from={hubFrom} text={turn.prompt ?? ''} />
+          </div>
+        ) : isUser ? (
           <div className="mb-2 flex items-start justify-end gap-1.5">
             <RollbackControl
               rollbackCount={rollbackCount}
@@ -1236,10 +1252,14 @@ function FrameView({
     case 'text':
       return frame.role === 'user' ? (
         <div className="mb-2 flex justify-end">
-          <div className="max-w-[85%] rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] whitespace-pre-wrap text-neutral-100 sm:max-w-[80%]">
-            {frame.text}
-            {streaming ? <StreamCaret /> : null}
-          </div>
+          {frame.hubFrom !== undefined ? (
+            <HubMessageCard from={frame.hubFrom} text={frame.text} />
+          ) : (
+            <div className="max-w-[85%] rounded-lg bg-sky-900/40 px-3 py-2 text-[13px] whitespace-pre-wrap text-neutral-100 sm:max-w-[80%]">
+              {frame.text}
+              {streaming ? <StreamCaret /> : null}
+            </div>
+          )}
         </div>
       ) : (
         <div className="mb-2 max-w-full sm:max-w-[92%]">

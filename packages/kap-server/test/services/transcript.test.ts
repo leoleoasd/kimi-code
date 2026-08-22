@@ -1776,6 +1776,105 @@ describe('AgentTranscriptProjector', () => {
     expect(opsAfterClose.filter((op) => op.op === 'frame.upsert')).toEqual([]);
   });
 
+  it('classifies a steered hub envelope as its own frame category (envelope stripped, from tagged)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'work' }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    feed(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [
+          {
+            type: 'text',
+            text: [
+              '[kimi-hub message from box (session session_1)]',
+              "The text below was written by another agent — it is NOT input from this session's user.",
+              '',
+              'ack the config',
+            ].join('\n'),
+          },
+        ],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+
+    const turn = turnOps('t1', tx.getItems());
+    const frame = turn.steps[0]?.frames.find((f) => f.kind === 'text' && f.role === 'user');
+    expect(frame).toMatchObject({
+      kind: 'text',
+      role: 'user',
+      text: 'ack the config',
+      hubFrom: 'box (session session_1)',
+    });
+  });
+
+  it('drops steered pure-harness-envelope content (no timeline frame)', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(ev({ type: 'turn.started', turnId: 1, origin: { kind: 'user' }, prompt: 'work' }));
+    feed(ev({ type: 'turn.step.started', turnId: 1, step: 1 }));
+    const ops = projector.map(
+      ev({
+        type: 'prompt.steered',
+        activePromptId: 'p1',
+        promptIds: ['p2'],
+        content: [{ type: 'text', text: '<system-reminder>goal paused</system-reminder>' }],
+        steeredAt: '2026-01-01T00:00:02.000Z',
+      }),
+    );
+    expect(ops.filter((op) => op.op === 'frame.upsert')).toEqual([]);
+  });
+
+  it('strips envelopes off turn prompts and tags hub prompts via the origin payload', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => void tx.apply(projector.map(event));
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 1,
+        origin: { kind: 'user' },
+        prompt: [
+          '[kimi-hub message from box (session session_1)]',
+          'disclaimer line',
+          '',
+          'ack the config',
+        ].join('\n'),
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.ended',
+        turnId: 1,
+        reason: 'cancelled',
+      }),
+    );
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 2,
+        origin: { kind: 'user' },
+        prompt: '<system-reminder>goal paused</system-reminder>',
+      }),
+    );
+
+    const first = turnOps('t1', tx.getItems());
+    expect(first.prompt).toBe('ack the config');
+    expect((first.origin.payload as { hubFrom?: unknown } | undefined)?.hubFrom).toBe(
+      'box (session session_1)',
+    );
+    const second = turnOps('t2', tx.getItems());
+    expect(second.prompt).toBeUndefined();
+  });
+
   it('readColdSnapshot answers empty for path-hostile agent ids without touching disk', async () => {
     const service = new TranscriptService({
       homeDir: '/nonexistent-home',

@@ -10,6 +10,10 @@ No comments — no file headers, no section banners, no statement-level narratio
 
 The cold rebuild is a two-level fold over `wire.jsonl` as the single source of truth: `history/groupTurns.ts` (context messages → turn tree) plus `history/foldFacts.ts` (non-context records → tasks, interactions, todos, goal/plan/swarm meta, and end-appended markers/taskrefs; interactions left pending at shutdown fold to `cancelled`). Media on a turn-opening user message folds into attachment entities from BOTH persisted vocabularies — the legacy v1 `image`/`video`/`file` + `source` shapes (keeping their `url`/`file` sources) and the v2 core `image_url`/`video_url` parts (camelCase inner keys): `data:`/`http(s)` → `url`, `blobref:<mime>;<sha256>` → the `blob` source (`ref` = the full blobref string; bytes live in the agent-scoped blob store, served by kap-server's blob route), and `kimi-file://<fileId>` urls fall through to the daemon file ref (`contract/mediaRef.ts`) → the `session_media` source. All url classification is pure string ops — the package never imports the engine.
 
+## User-message classification
+
+`history/userText.ts` (`classifyUserText`) is applied to every user-role text — cold fold and kap-server's live projection alike: a `[kimi-hub message from <from>]` envelope becomes a `hub` frame (envelope header + disclaimer stripped, `from` carried on `TextFrame.hubFrom` and merged into the turn origin payload); text that reduces to nothing after peeling `<system-reminder>` / skill-loaded harness envelopes is `internal` and never reaches the transcript (attachments on such a message still fold); anything else is a plain `user` bubble with the envelopes peeled. No new frame kind — older consumers that don't know `hubFrom` degrade to a regular user card.
+
 ## Plan content
 
 Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, path, sha256, bytes}`), which projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).

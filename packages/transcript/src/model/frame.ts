@@ -22,6 +22,13 @@ export interface TextFrame {
    * live task.
    */
   readonly taskId?: TaskId;
+  /**
+   * Set when this frame was classified as a cross-session hub message: its
+   * envelope (`[kimi-hub message from X]`) is stripped from `text` — which
+   * is then only the body — and the sender descriptor lives here, so
+   * consumers can render hub messages as their own category.
+   */
+  readonly hubFrom?: string;
 }
 
 /** Model thinking chain. Same full-text invariant as TextFrame. */

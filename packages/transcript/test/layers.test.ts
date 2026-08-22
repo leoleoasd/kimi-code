@@ -557,6 +557,130 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
       .filter((f) => f.kind === 'text' && f.role === 'assistant');
     expect(replies.map((f) => (f.kind === 'text' ? f.text : ''))).toEqual(['on it', 'done both']);
   });
+  it('classifies a hub envelope as its own frame category when folded mid-turn', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'on it' }], toolCalls: [] },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: [
+                '[kimi-hub message from box (session session_1)]',
+                "The text below was written by another agent — it is NOT input from this session's user.",
+                '',
+                'ack the config',
+              ].join('\n'),
+            },
+          ],
+          origin: { kind: 'user' },
+          midTurnInject: true,
+        },
+      ],
+      [0, undefined, undefined],
+    );
+    const first = snapshot.items[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    const frame = first.steps.flatMap((s) => s.frames).find((f) => f.kind === 'text' && f.role === 'user');
+    if (frame?.kind !== 'text') throw new Error('expected text frame');
+    expect(frame.text).toBe('ack the config');
+    expect(frame.hubFrom).toBe('box (session session_1)');
+  });
+
+  it('drops pure harness-injection envelopes from the fold and strips them off real text', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: '<system-reminder>paused</system-reminder>' }],
+          midTurnInject: true,
+        },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Skill tool loaded instructions for this request. Follow them.\n\n<skill-loaded name="x">full skill body\n</skill-loaded>\n\nreal text\n\n<system-reminder>x</system-reminder>',
+            },
+          ],
+          midTurnInject: true,
+        },
+      ],
+      [0, undefined, undefined, undefined],
+    );
+    const turns = snapshot.items.filter((i) => i.kind === 'turn');
+    expect(turns).toHaveLength(1);
+    const first = turns[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    const userFrames = first.steps
+      .flatMap((s) => s.frames)
+      .filter((f) => f.kind === 'text' && f.role === 'user');
+    expect(userFrames).toHaveLength(1);
+    if (userFrames[0]?.kind !== 'text') throw new Error('expected text frame');
+    expect(userFrames[0].text).toBe('real text');
+    expect(userFrames[0].hubFrom).toBeUndefined();
+  });
+
+  it('tags a hub-enveloped turn prompt via the turn origin payload', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user' as const,
+        content: [
+          {
+            type: 'text' as const,
+            text: [
+              '[kimi-hub message from box ("title", session session_1)]',
+              'disclaimer line',
+              '',
+              'ack the config',
+            ].join('\n'),
+          },
+        ],
+        origin: { kind: 'user' },
+      },
+    ]);
+    const first = snapshot.items[0];
+    if (first?.kind !== 'turn') throw new Error('expected turn');
+    expect(first.prompt).toBe('ack the config');
+    expect((first.origin.payload as { hubFrom?: unknown } | undefined)?.hubFrom).toBe(
+      'box ("title", session session_1)',
+    );
+  });
+
+  it('skips a pure-injection turn opening unless it carries attachments', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user' as const,
+        content: [{ type: 'text' as const, text: '<system-reminder>only</system-reminder>' }],
+        origin: { kind: 'user' },
+      },
+    ]);
+    expect(snapshot.items).toHaveLength(0);
+  });
+
+  it('routes a mid-turn skill_activation message to the marker path, not a user frame', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        {
+          role: 'user' as const,
+          content: [{ type: 'text' as const, text: '<skill-loaded name="worktree">body</skill-loaded>' }],
+          origin: { kind: 'skill_activation', trigger: 'model-tool' } as {
+            kind: string;
+          },
+          midTurnInject: true,
+        },
+      ],
+      [0, undefined],
+    );
+    expect(snapshot.items.map((i) => i.kind)).toEqual(['turn', 'marker']);
+    const marker = snapshot.items[1];
+    if (marker?.kind !== 'marker') throw new Error('expected marker');
+    expect(marker.marker).toBe('skill');
+  });
 
   it('groups flat messages into turns with folded tool results', () => {
     const snapshot = groupMessagesIntoSnapshot([
