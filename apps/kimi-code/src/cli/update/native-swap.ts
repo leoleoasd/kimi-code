@@ -25,6 +25,8 @@ import { gt } from 'semver';
 
 import { log } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_BUILD_INFO } from '#/cli/build-info';
+
 import {
   KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME,
   KIMI_CODE_UPDATE_REEXEC_ENV,
@@ -477,6 +479,11 @@ export async function maybeRelaunchWithStagedNativeUpdate(
   deps: NativeSwapDeps,
 ): Promise<boolean> {
   if (!deps.isNative) return false;
+  // A fork-channel build never applies staged payloads: fork updates ship
+  // through the fork's own install path (install.sh / install:local), and the
+  // fork-gated preflight never stages — any stage found here was left by a
+  // pre-guard binary and must not stomp the fork exe with an upstream build.
+  if (KIMI_BUILD_INFO.channel === 'fork') return false;
   const swapInProgress = await sweepStaleNativeUpdateArtifacts(deps.exePath);
   if (isTruthy(deps.env[KIMI_CODE_UPDATE_REEXEC_ENV])) {
     // Read-once guard: drop it so this session's children (and any nested

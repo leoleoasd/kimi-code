@@ -1,6 +1,7 @@
 import { log, type Logger } from '@moonshot-ai/kimi-code-sdk';
 import { track as trackTelemetry, type TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 
+import { KIMI_BUILD_INFO } from '#/cli/build-info';
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import { selectUpdateTarget } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
@@ -53,6 +54,16 @@ export async function handleUpgrade(
   overrides: Partial<UpgradeDeps> = {},
 ): Promise<number> {
   const deps = createDefaultUpgradeDeps(overrides);
+
+  // Fork-channel builds ship through the fork's own install path — the
+  // upstream release channel must never replace them with an upstream build.
+  if (KIMI_BUILD_INFO.channel === 'fork') {
+    deps.stdout.write(
+      'This is a fork-channel build; the upstream update channel does not apply.\n' +
+        'Update it with the fork installer (install.sh) or pnpm install:local.\n',
+    );
+    return 0;
+  }
 
   let cache: UpdateCache;
   try {

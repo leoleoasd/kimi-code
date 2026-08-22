@@ -22,6 +22,17 @@ const fsMocks = vi.hoisted(() => ({
   linkError: null as string | null,
 }));
 
+const buildInfoState = vi.hoisted(() => ({ channel: undefined as string | undefined }));
+
+vi.mock('#/cli/build-info', () => ({
+  // Live getter: one test temporarily poses as a fork build.
+  KIMI_BUILD_INFO: {
+    get channel() {
+      return buildInfoState.channel;
+    },
+  },
+}));
+
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>();
   return {
@@ -221,6 +232,24 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     const relaunched = await maybeRelaunchWithStagedNativeUpdate(makeDeps(exePath, { spawnImpl }));
     expect(relaunched).toBe(false);
     expect(calls).toHaveLength(0);
+  });
+
+  it('never applies a staged payload on a fork-channel build', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    buildInfoState.channel = 'fork';
+    try {
+      const { calls, spawnImpl } = createSpawnMock({});
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl }),
+      );
+      expect(relaunched).toBe(false);
+      expect(calls).toHaveLength(0);
+      expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
+      // The stage is left untouched: fork builds neither apply nor curate it.
+      await expect(stat(getNativeStagedStateFile(exePath))).resolves.toBeDefined();
+    } finally {
+      buildInfoState.channel = undefined;
+    }
   });
 
   it('discards a staged update that is not newer than the running version', async () => {
