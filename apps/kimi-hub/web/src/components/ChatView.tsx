@@ -669,6 +669,13 @@ export function ChatView({
           </span>
         ) : null}
         {status.isError ? <Badge tone="red">status: {shortError(status.error)}</Badge> : null}
+        <ActionButton
+          title="reload the session and apply config.toml + tui.toml — same as the TUI's /reload (picks up mcp.json and plugin changes); idle-only"
+          disabled={running}
+          onClick={() => runCommand({ kind: 'remote', input: '/reload' }).catch(setViewError)}
+        >
+          Reload
+        </ActionButton>
         {running ? (
           <ActionButton danger onClick={() => abortTurn().catch(setViewError)}>
             Abort
