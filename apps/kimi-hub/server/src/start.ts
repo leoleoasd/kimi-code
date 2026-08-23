@@ -64,6 +64,17 @@ export async function startHub(opts: StartHubOptions = {}): Promise<RunningHub> 
     disableRequestLogging: true,
     bodyLimit: PROXY_BODY_LIMIT,
   });
+  // API responses are real-time state (roster, sessions, transcripts) and MUST
+  // never be heuristically cached — iOS Safari will otherwise serve a stale
+  // roster for hours and only a hard refresh recovers. Fingerprinted /assets
+  // stay cacheable. Callback-style onSend: async variants race (see compress).
+  app.addHook('onSend', (req, reply, payload, next) => {
+    const url = req.raw.url ?? '';
+    if (url.startsWith('/hub/') || url.startsWith('/agents/') || url.startsWith('/internal/')) {
+      void reply.header('cache-control', 'no-store');
+    }
+    next();
+  });
   // `--dangerous-bypass-auth` lifts the token requirement on BOTH ends of the
   // wire: the HTTP auth hook + browser-facing WS checks below, and the
   // registry's hello handshake (trustAnyToken skips the bearer subprotocol and

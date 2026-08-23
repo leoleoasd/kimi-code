@@ -64,6 +64,7 @@ export async function getJson(
   const query = endpoint.query?.toString() ?? '';
   const res = await doFetch(`${endpoint.baseUrl}${endpoint.path}${query === '' ? '' : `?${query}`}`, {
     headers: authHeaders(endpoint.token),
+    cache: 'no-store',
   });
   checkHttpOk(res);
   const body: unknown = await res.json();

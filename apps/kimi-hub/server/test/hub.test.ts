@@ -871,6 +871,7 @@ describe('unscoped agent (regression)', () => {
     const res = await fetch(`${ctx.hub.origin}/hub/api/agents`, {
       headers: { authorization: `Bearer ${HUB_TOKEN}` },
     });
+    expect(res.headers.get('cache-control')).toBe('no-store');
     const body = (await res.json()) as { data: { agents: Array<Record<string, unknown>> } };
     expect(body.data.agents).toHaveLength(1);
     expect(body.data.agents[0]!['scope']).toBeUndefined();
