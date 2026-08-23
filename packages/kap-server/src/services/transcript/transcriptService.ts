@@ -517,7 +517,11 @@ export class TranscriptService {
       throw error;
     }
     const reduced = reduceContextTranscript(records);
-    const base = groupMessagesIntoSnapshot(reduced.entries, reduced.turnOrdinals);
+    const base = groupMessagesIntoSnapshot(
+      reduced.entries,
+      reduced.turnOrdinals,
+      reduced.stepOrdinals,
+    );
     return this.dehydrateDataUrls(summary.workspaceId, sessionId, agentId, foldWireRecordFacts(records, base));
   }
 

@@ -105,6 +105,22 @@ describe('reduceContextTranscript', () => {
     expect(result.turnOrdinals[taskIdx!]).toBeUndefined();
   });
 
+  it('pins the engine step ordinal (from step.begin records) onto the assistant entry, surviving dropped failed attempts', () => {
+    const result = reduceContextTranscript([
+      { type: 'turn.prompt' } as unknown as WireRecord,
+      appendMessage(userMessage('u1')),
+      loopEvent({ type: 'step.begin', uuid: 's1', turnId: '0', step: 1 }),
+      loopEvent({ type: 'content.part', stepUuid: 's1', turnId: '0', step: 1, part: { type: 'text', text: 'a1' } }),
+      loopEvent({ type: 'step.end', uuid: 's1', turnId: '0', step: 1 }),
+      loopEvent({ type: 'step.begin', uuid: 's2', turnId: '0', step: 2 }),
+      loopEvent({ type: 'step.begin', uuid: 's3', turnId: '0', step: 3 }),
+      loopEvent({ type: 'content.part', stepUuid: 's3', turnId: '0', step: 3, part: { type: 'text', text: 'a3' } }),
+      loopEvent({ type: 'step.end', uuid: 's3', turnId: '0', step: 3 }),
+    ]);
+    expect(texts(result)).toEqual(['u1', 'a1', 'a3']);
+    expect(result.stepOrdinals).toEqual([undefined, 1, 3]);
+  });
+
   it('flags a user message appended while a turn is open as a mid-turn injection', () => {
     const result = reduceContextTranscript([
       { type: 'turn.prompt' } as unknown as WireRecord,

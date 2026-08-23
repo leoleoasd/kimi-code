@@ -65,7 +65,12 @@ export type LoopRecordedEvent =
     };
 
 export interface LoopEventFoldSink {
-  openAssistant(time: number | undefined): void;
+  /**
+   * Open an assistant entry for a `step.begin`; `step` is the engine's step
+   * ordinal on the record (absent in legacy wires), retrievable by sinks that
+   * pin step ids to the engine's numbering (the transcript cold fold).
+   */
+  openAssistant(time: number | undefined, step?: number): void;
   appendOpenContent(part: ContentPart): void;
   appendOpenToolCall(call: ToolCall): void;
   dropOpenAssistant(): void;
@@ -145,7 +150,7 @@ function createLoopEventFoldWithState(
       switch (event.type) {
         case 'step.begin': {
           settleOpen(time);
-          sink.openAssistant(time);
+          sink.openAssistant(time, event.step);
           openStepUuid = event.uuid;
           openHasToolCalls = false;
           openVacuous = true;

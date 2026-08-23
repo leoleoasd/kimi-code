@@ -21,6 +21,15 @@ export interface ContextTranscript {
    * engine's numbering instead of re-deriving them.
    */
   readonly turnOrdinals: readonly (number | undefined)[];
+  /**
+   * Engine step ordinals aligned 1:1 with `entries`: set on an assistant entry
+   * opened by a `step.begin` loop event (the step's engine ordinal, kept even
+   * when a contentless failed attempt makes it skip ahead of the message
+   * sequence), `undefined` for every other entry. History consumers (the
+   * transcript cold fold) use it to pin step ids to the engine's numbering
+   * instead of re-deriving them.
+   */
+  readonly stepOrdinals: readonly (number | undefined)[];
   readonly foldedLength: number;
 }
 
@@ -45,6 +54,7 @@ interface MutableEntry {
   message: MutableMessage;
   time?: number;
   turnOrdinal?: number;
+  stepOrdinal?: number;
 }
 
 export function reduceContextTranscript(records: Iterable<WireRecord>): ContextTranscript {
@@ -68,8 +78,8 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
   };
 
   const fold = createLoopEventFold({
-    openAssistant: (time) => {
-      openEntry = { message: { role: 'assistant', content: [], toolCalls: [] }, time };
+    openAssistant: (time, step) => {
+      openEntry = { message: { role: 'assistant', content: [], toolCalls: [] }, time, stepOrdinal: step };
       push(openEntry);
     },
     appendOpenContent: (part) => {
@@ -193,6 +203,7 @@ export function createContextTranscriptReducer(): ContextTranscriptReducer {
       entries: transcript.map((e) => e.message),
       times: transcript.map((e) => e.time),
       turnOrdinals: transcript.map((e) => e.turnOrdinal),
+      stepOrdinals: transcript.map((e) => e.stepOrdinal),
       foldedLength,
     }),
   };

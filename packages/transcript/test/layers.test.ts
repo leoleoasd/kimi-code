@@ -456,6 +456,46 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(turns.map((t) => (t.kind === 'turn' ? t.turnId : ''))).toEqual(['t0', 't1']);
   });
 
+  it('pins step ids to the engine step ordinals, keeping the hole from a dropped failed attempt', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'q' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's3' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's4' }], toolCalls: [] },
+      ],
+      [0, undefined, undefined, undefined],
+      [undefined, 1, 3, 4],
+    );
+    const turn = snapshot.items.find((i) => i.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((s) => [s.stepId, s.ordinal])).toEqual([
+      ['t0.1', 1],
+      ['t0.3', 3],
+      ['t0.4', 4],
+    ]);
+  });
+
+  it('rejects a non-advancing step hint in favor of the sequential successor (unique ordered ids)', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'q' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'sX' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'sY' }], toolCalls: [] },
+      ],
+      [0, undefined, undefined, undefined],
+      [undefined, 1, 1, 0],
+    );
+    const turn = snapshot.items.find((i) => i.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((s) => [s.stepId, s.ordinal])).toEqual([
+      ['t0.1', 1],
+      ['t0.2', 2],
+      ['t0.3', 3],
+    ]);
+  });
+
   it('keeps hintless shell blocks as gap turns without eating engine turns or stealing their frames', () => {
     const shell = (text: string) => ({
       role: 'user' as const,

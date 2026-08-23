@@ -17,6 +17,7 @@ import {
   LifecycleScope,
   SessionInteractionService,
   StateRegistry,
+  reduceContextTranscript,
   type Event2,
   type ISessionScopeHandle,
   type ISessionStateService,
@@ -2661,6 +2662,105 @@ describe('bindSessionTranscript', () => {
       (op) => op.op === 'turn.upsert',
     );
     expect(fallback).toMatchObject({ turn: { attachmentIds: ['att_1'] } });
+  });
+
+  it('post-turn heal of a turn with a dropped failed attempt neither shifts nor duplicates step frames', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const feed = (event: ProjectorBusEvent): void => {
+      tx.apply(projector.map(event));
+    };
+    feed(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' } }));
+    feed(ev({ type: 'turn.step.started', turnId: 0, step: 1, stepId: 'u1' }));
+    feed(ev({ type: 'thinking.delta', turnId: 0, delta: 's1-think' }));
+    feed(ev({ type: 'assistant.delta', turnId: 0, delta: 's1-text' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 0, step: 1, stepId: 'u1' }));
+    feed(ev({ type: 'turn.step.started', turnId: 0, step: 2, stepId: 'u2' }));
+    feed(ev({ type: 'thinking.delta', turnId: 0, delta: 'partial-th' }));
+    feed(
+      ev({
+        type: 'turn.step.retrying',
+        turnId: 0,
+        step: 2,
+        failedAttempt: 1,
+        nextAttempt: 2,
+        maxAttempts: 3,
+        delayMs: 100,
+        errorName: 'ProviderError',
+        errorMessage: '502',
+      }),
+    );
+    feed(ev({ type: 'turn.step.started', turnId: 0, step: 3, stepId: 'u3' }));
+    feed(ev({ type: 'thinking.delta', turnId: 0, delta: 's3-think-full' }));
+    feed(ev({ type: 'tool.call.started', turnId: 0, toolCallId: 'call_1', name: 'Read', args: '{}' }));
+    feed(ev({ type: 'tool.result', turnId: 0, toolCallId: 'call_1', output: 'read-out' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 0, step: 3, stepId: 'u3' }));
+    feed(ev({ type: 'turn.step.started', turnId: 0, step: 4, stepId: 'u4' }));
+    feed(ev({ type: 'thinking.delta', turnId: 0, delta: 's4-th' }));
+    feed(ev({ type: 'assistant.delta', turnId: 0, delta: 's4-text' }));
+    feed(ev({ type: 'turn.step.completed', turnId: 0, step: 4, stepId: 'u4' }));
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    const loopEvent = (event: Record<string, unknown>, time: number): Record<string, unknown> => ({
+      type: 'context.append_loop_event',
+      event,
+      time,
+    });
+    const records = [
+      { type: 'turn.prompt', input: [{ type: 'text', text: 'q' }], origin: { kind: 'user' }, time: 1 },
+      {
+        type: 'context.append_message',
+        message: { role: 'user', content: [{ type: 'text', text: 'q' }], toolCalls: [], origin: { kind: 'user' } },
+        time: 2,
+      },
+      loopEvent({ type: 'step.begin', uuid: 'u1', turnId: '0', step: 1 }, 3),
+      loopEvent({ type: 'content.part', uuid: 'p1', turnId: '0', step: 1, stepUuid: 'u1', part: { type: 'think', think: 's1-think' } }, 4),
+      loopEvent({ type: 'content.part', uuid: 'p2', turnId: '0', step: 1, stepUuid: 'u1', part: { type: 'text', text: 's1-text' } }, 5),
+      loopEvent({ type: 'step.end', uuid: 'u1', turnId: '0', step: 1, finishReason: 'end_turn' }, 6),
+      loopEvent({ type: 'step.begin', uuid: 'u2', turnId: '0', step: 2 }, 7),
+      loopEvent({ type: 'step.begin', uuid: 'u3', turnId: '0', step: 3 }, 8),
+      loopEvent({ type: 'content.part', uuid: 'p3', turnId: '0', step: 3, stepUuid: 'u3', part: { type: 'think', think: 's3-think-full' } }, 9),
+      loopEvent({ type: 'tool.call', uuid: 'c1', turnId: '0', step: 3, stepUuid: 'u3', toolCallId: 'call_1', name: 'Read', args: {} }, 10),
+      loopEvent({ type: 'tool.result', parentUuid: 'c1', toolCallId: 'call_1', result: { output: 'read-out' } }, 11),
+      loopEvent({ type: 'step.end', uuid: 'u3', turnId: '0', step: 3, finishReason: 'tool_use' }, 12),
+      loopEvent({ type: 'step.begin', uuid: 'u4', turnId: '0', step: 4 }, 13),
+      loopEvent({ type: 'content.part', uuid: 'p4', turnId: '0', step: 4, stepUuid: 'u4', part: { type: 'think', think: 's4-th' } }, 14),
+      loopEvent({ type: 'content.part', uuid: 'p5', turnId: '0', step: 4, stepUuid: 'u4', part: { type: 'text', text: 's4-text' } }, 15),
+      loopEvent({ type: 'step.end', uuid: 'u4', turnId: '0', step: 4, finishReason: 'end_turn' }, 16),
+      { type: 'turn.ended', turnId: 0, reason: 'completed', time: 17 },
+    ];
+    const reduced = reduceContextTranscript(records as never);
+    const snapshot = groupMessagesIntoSnapshot(
+      reduced.entries,
+      reduced.turnOrdinals,
+      reduced.stepOrdinals,
+    );
+    const snapshotTurn = snapshot.items.find(
+      (item): item is TranscriptTurn => item.kind === 'turn',
+    );
+    expect(snapshotTurn?.steps.map((step) => step.stepId)).toEqual(['t0.1', 't0.3', 't0.4']);
+
+    const healOps = healTurnOps(snapshotTurn!, tx.getTurn('t0'));
+    tx.apply(healOps);
+    expect(healOps.filter((op) => op.op === 'frame.upsert' || op.op === 'step.upsert')).toEqual([]);
+
+    const turn = tx.getTurn('t0')!;
+    expect(turn.steps.map((step) => step.stepId)).toEqual(['t0.1', 't0.2', 't0.3', 't0.4']);
+    const frames = (stepId: string): string[] =>
+      turn.steps
+        .find((step) => step.stepId === stepId)!
+        .frames.map((frame) =>
+          frame.kind === 'tool'
+            ? `tool:${frame.name}:${frame.state}:${String(frame.output)}`
+            : frame.kind === 'notice'
+              ? `notice:${frame.message}`
+              : `${frame.kind}:${frame.text}`,
+        );
+    expect(frames('t0.1')).toEqual(['thinking:s1-think', 'text:s1-text']);
+    expect(frames('t0.2')).toEqual(['thinking:partial-th']);
+    expect(turn.steps.find((step) => step.stepId === 't0.2')!.state).toBe('running');
+    expect(frames('t0.3')).toEqual(['thinking:s3-think-full', 'tool:Read:done:read-out']);
+    expect(frames('t0.4')).toEqual(['thinking:s4-th', 'text:s4-text']);
   });
 
   it('terminal turn.upsert inherits the backfilled header when the projector missed turn.started', () => {

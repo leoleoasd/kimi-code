@@ -92,10 +92,19 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
  * turn it interrupted. Consumers foldFacts and the like pin engine facts and
  * ordinal anchors on `t<ordinal>` ids only. Without hints the legacy
  * sequential numbering is kept.
+ *
+ * `stepOrdinals` (aligned 1:1 with `messages`, set on assistant messages) pins
+ * step ids to the engine's same-turn step numbering — the live projector's
+ * numbering — so a contentless failed attempt (dropped from the message
+ * sequence) leaves a HOLE (`…2` missing) instead of shifting every later step
+ * down by one. A hint that does not advance past the turn's last step ordinal
+ * is rejected in favor of the sequential successor, keeping ids unique and
+ * ordered on degenerate input (legacy wires carry no hints).
  */
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
   turnOrdinals?: readonly (number | undefined)[],
+  stepOrdinals?: readonly (number | undefined)[],
 ): AgentTranscriptSnapshot {
   const items: TranscriptItem[] = [];
   const attachments: TranscriptAttachment[] = [];
@@ -320,7 +329,10 @@ export function groupMessagesIntoSnapshot(
 
     if (message.role === 'assistant') {
       const current = ensureTurn();
-      const stepOrdinal = current.steps.length + 1;
+      const hinted = stepOrdinals?.[messageIndex];
+      const lastStepOrdinal = current.steps.at(-1)?.ordinal ?? 0;
+      const stepOrdinal =
+        hinted !== undefined && hinted > lastStepOrdinal ? hinted : lastStepOrdinal + 1;
       const step: StepDraft = {
         stepId: `${current.turnId}.${stepOrdinal}`,
         ordinal: stepOrdinal,
