@@ -21,11 +21,14 @@
  * one-shot snap lands on the estimated bottom), with any upward scroll
  * killing the retries.
  * Older history loads lazily in the other direction: the initial paint is
- * one page of turns and an IntersectionObserver sentinel 3000px above the
- * top lines prefetches earlier pages (only while the tail is unpinned, so
- * opening a session stays one page), restoring the viewport by its distance
- * from the bottom so prepends never yank what you're reading; a fetch
- * failure parks a retry button until cleared.
+ * one page of turns and scrolling the viewport within reach of the top
+ * (`OLDER_TRIGGER_PX`) pages the previous page in — driven by REAL scroll
+ * travel only (each page consumed must be re-earned by leaving the trigger
+ * zone and coming back, so touch momentum can never chain-load history),
+ * firing only while the tail is unpinned, so opening a session stays one
+ * page. The viewport is restored by its distance from the bottom so
+ * prepends never yank what you're reading; a fetch failure parks a retry
+ * button until cleared.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -98,6 +101,15 @@ function readSubagentStreamProgress(progress: {
     subagentName: typeof data?.subagentName === 'string' ? data.subagentName : undefined,
   };
 }
+
+/**
+ * How close (in px of scrollTop) the viewport must get to the conversation's
+ * top before older history pages in — about 1.5 phone screens. Deliberately
+ * NOT "as tall as several pages": the trigger is scroll-driven and latched
+ * (see onScroll), so a small zone is what stops the phone momentum cascade,
+ * while a page's own height still clears the zone after each restore.
+ */
+const OLDER_TRIGGER_PX = 1200;
 
 export function ChatView({
   baseUrl,
@@ -381,6 +393,14 @@ export function ChatView({
    *   landing within 4px of the tail re-arms it — and NOTHING else does. No
    *   down-drift meters, no zones: a small nudge downward from anywhere must
    *   never glue the view back (only really reaching the bottom may).
+   *
+   * The same handler also triggers older-history paging: input DRIVES it.
+   * Crossing into the top `OLDER_TRIGGER_PX` zone while unpinned consumes a
+   * one-shot latch and pages history in; the latch re-arms only once the
+   * viewport leaves the zone again. Each page therefore costs its own real
+   * scroll travel — a touch flick advances at most the pages its momentum
+   * actually crosses before decaying, and nothing (observer lifecycles,
+   * content reflow, restore jumps) can chain-load the history by itself.
    */
   const onScroll = () => {
     const el = scrollRef.current;
@@ -394,26 +414,35 @@ export function ChatView({
       } else if (el.scrollHeight - y - el.clientHeight <= 4) {
         pinnedRef.current = true;
       }
+      if (!pinnedRef.current && state.hasMoreOlder) {
+        if (y >= OLDER_TRIGGER_PX) {
+          olderArmedRef.current = true;
+        } else if (olderArmedRef.current) {
+          olderArmedRef.current = false;
+          void loadOlder();
+        }
+      }
     }
     syncJumpPill();
   };
 
-  // Infinite top-loading: a top sentinel (IntersectionObserver, 3000px early
-  // margin — several phone screens, so a page is usually in hand BEFORE the
-  // user scrolls into it) pages the previous 10 turns in as the user scrolls
-  // up. Prefetching is gated on `!pinnedRef`: at the bottom (entry / "↓
-  // latest") history stays unfetched — the whole point of the small initial
-  // page is fast entry. The invariant preserved across a prepend is the
-  // distance-from-bottom of the viewport — captured AT APPLY TIME (the fetch
-  // takes hundreds of ms on a phone, all of it user-scroll time; recording
-  // the anchor at fetch time restored to a stale spot and teleported the
-  // viewport), restored in the layout effect keyed on `items`.
+  // Older-history paging: `loadOlder` fetches the previous page before the
+  // oldest loaded turn and prepends it. The invariant preserved across a
+  // prepend is the distance-from-bottom of the viewport — captured AT APPLY
+  // TIME (the fetch takes hundreds of ms on a phone, all of it user-scroll
+  // time; recording the anchor at fetch time restored to a stale spot and
+  // teleported the viewport), restored in the layout effect keyed on
+  // `items`. The restore normally lands the viewport back OUTSIDE the
+  // trigger zone above, which is what lets continuous upward scrolling page
+  // steadily; a pathological tiny page can land inside it — the consumed
+  // latch then simply holds fire until the user exits the zone once.
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
   const loadingOlderRef = useRef(false);
   /** Pre-pend anchor: `distanceFromBottom` recorded right before the page merges. */
   const olderAnchorRef = useRef<{ distanceFromBottom: number } | null>(null);
-  const olderSentinelRef = useRef<HTMLDivElement>(null);
+  /** One-shot latch for the top trigger zone: starts armed (first approach loads). */
+  const olderArmedRef = useRef(true);
 
   const loadOlder = useCallback(async () => {
     if (store === null || loadingOlderRef.current || !state.hasMoreOlder) return;
@@ -460,26 +489,6 @@ export function ChatView({
     if (el === null) return;
     el.scrollTop = el.scrollHeight - anchor.distanceFromBottom;
   }, [items]);
-
-  useEffect(() => {
-    const sentinel = olderSentinelRef.current;
-    const root = scrollRef.current;
-    if (sentinel === null || root === null) return;
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!entries.some((entry) => entry.isIntersecting)) return;
-        // Only fetch ahead while the user is actually browsing history — at
-        // the pinned tail (entry / "↓ latest") loading older pages would
-        // just re-inflate the transcript we deliberately entered small.
-        if (!pinnedRef.current) void loadOlder();
-      },
-      { root, rootMargin: '3000px 0px 0px 0px' },
-    );
-    observer.observe(sentinel);
-    return () => {
-      observer.disconnect();
-    };
-  }, [loadOlder, loaded, state.hasMoreOlder]);
 
   // Composer slash commands — `/…` lines forward to the agent's command
   // bridge (the connected TUI's OWN dispatch; sessions/commands.ts keeps no
@@ -707,7 +716,7 @@ export function ChatView({
               </div>
             ) : null}
             {state.hasMoreOlder ? (
-              <div className="mb-3 flex justify-center py-1" ref={olderSentinelRef}>
+              <div className="mb-3 flex justify-center py-1">
                 {olderError !== null ? (
                   <ActionButton
                     onClick={() => {
