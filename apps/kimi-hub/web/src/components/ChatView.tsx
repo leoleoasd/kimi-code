@@ -21,14 +21,17 @@
  * one-shot snap lands on the estimated bottom), with any upward scroll
  * killing the retries.
  * Older history loads lazily in the other direction: the initial paint is
- * one page of turns and scrolling the viewport within reach of the top
- * (`OLDER_TRIGGER_PX`) pages the previous page in — driven by REAL scroll
- * travel only (each page consumed must be re-earned by leaving the trigger
- * zone and coming back, so touch momentum can never chain-load history),
- * firing only while the tail is unpinned, so opening a session stays one
- * page. The viewport is restored by its distance from the bottom so
- * prepends never yank what you're reading; a fetch failure parks a retry
- * button until cleared.
+ * one page of turns, and once the viewport has SAT STILL within reach of
+ * the top (`OLDER_TRIGGER_PX`) for a settle window (`OLDER_SETTLE_MS`) the
+ * previous page loads. Two rules make it momentum-proof on touch devices:
+ * a page may only START from stillness, never mid-glide — so the prepend
+ * and its viewport restore never fight the fling engine over scrollTop
+ * (the "jerk to the top" was exactly that fight) — and each page consumed
+ * must be re-earned by leaving the trigger zone and settling there again,
+ * so one flick can never chain-load the history. Loads fire only while
+ * the tail is unpinned, so opening a session stays one page. The prepend
+ * restores the viewport by its distance from the bottom; a fetch failure
+ * parks a retry button until cleared.
  */
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -106,10 +109,21 @@ function readSubagentStreamProgress(progress: {
  * How close (in px of scrollTop) the viewport must get to the conversation's
  * top before older history pages in — about 1.5 phone screens. Deliberately
  * NOT "as tall as several pages": the trigger is scroll-driven and latched
- * (see onScroll), so a small zone is what stops the phone momentum cascade,
- * while a page's own height still clears the zone after each restore.
+ * (see `maybeLoadOlder`), so a small zone is what stops the phone momentum
+ * cascade, while a page's own height still clears the zone after each
+ * restore.
  */
 const OLDER_TRIGGER_PX = 1200;
+
+/**
+ * How long the viewport must sit INSIDE the top zone without a single
+ * scroll event before a page may load. The anti-cascade rule: momentum
+ * scrolling delivers a steady stream of scroll events, so an active glide
+ * can never satisfy the window — a page starts only once touch flings have
+ * decayed to stillness, which also guarantees the prepend + anchor restore
+ * happen while no fling engine is around to override scrollTop.
+ */
+const OLDER_SETTLE_MS = 250;
 
 export function ChatView({
   baseUrl,
@@ -394,13 +408,8 @@ export function ChatView({
    *   down-drift meters, no zones: a small nudge downward from anywhere must
    *   never glue the view back (only really reaching the bottom may).
    *
-   * The same handler also triggers older-history paging: input DRIVES it.
-   * Crossing into the top `OLDER_TRIGGER_PX` zone while unpinned consumes a
-   * one-shot latch and pages history in; the latch re-arms only once the
-   * viewport leaves the zone again. Each page therefore costs its own real
-   * scroll travel — a touch flick advances at most the pages its momentum
-   * actually crosses before decaying, and nothing (observer lifecycles,
-   * content reflow, restore jumps) can chain-load the history by itself.
+   * Every scroll event also feeds `maybeLoadOlder`, the older-history
+   * trigger — its latch and settle window live below with the paging code.
    */
   const onScroll = () => {
     const el = scrollRef.current;
@@ -414,14 +423,7 @@ export function ChatView({
       } else if (el.scrollHeight - y - el.clientHeight <= 4) {
         pinnedRef.current = true;
       }
-      if (!pinnedRef.current && state.hasMoreOlder) {
-        if (y >= OLDER_TRIGGER_PX) {
-          olderArmedRef.current = true;
-        } else if (olderArmedRef.current) {
-          olderArmedRef.current = false;
-          void loadOlder();
-        }
-      }
+      maybeLoadOlder();
     }
     syncJumpPill();
   };
@@ -432,10 +434,19 @@ export function ChatView({
   // TIME (the fetch takes hundreds of ms on a phone, all of it user-scroll
   // time; recording the anchor at fetch time restored to a stale spot and
   // teleported the viewport), restored in the layout effect keyed on
-  // `items`. The restore normally lands the viewport back OUTSIDE the
-  // trigger zone above, which is what lets continuous upward scrolling page
-  // steadily; a pathological tiny page can land inside it — the consumed
-  // latch then simply holds fire until the user exits the zone once.
+  // `items`.
+  //
+  // Why loads may only start from STILLNESS (the settle window + latch in
+  // `maybeLoadOlder` below): on iOS a programmatic `scrollTop` write during
+  // an in-flight touch fling is DROPPED — the fling continues from the old
+  // offset, which after a prepend points far earlier in the document — and
+  // WebKit ignores scroll-anchoring adjustments while a user scroll is
+  // ongoing, so nothing compensates (WebKit #187449, flarum#4587,
+  // TanStack/virtual's deferred-flush: the write must wait out the fling).
+  // Firing only after `OLDER_SETTLE_MS` without scroll events guarantees
+  // the restore lands while no fling engine can override it; the latch
+  // (consumed per page, re-armed when the viewport leaves the zone) stops
+  // re-created callbacks from ever firing a page on their own.
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [olderError, setOlderError] = useState<unknown>(null);
   const loadingOlderRef = useRef(false);
@@ -443,6 +454,10 @@ export function ChatView({
   const olderAnchorRef = useRef<{ distanceFromBottom: number } | null>(null);
   /** One-shot latch for the top trigger zone: starts armed (first approach loads). */
   const olderArmedRef = useRef(true);
+  /** Pending settle-window timer; non-null while the viewport sits armed in the zone. */
+  const olderSettleRef = useRef<number | null>(null);
+  const hasMoreOlderRef = useRef(state.hasMoreOlder);
+  hasMoreOlderRef.current = state.hasMoreOlder;
 
   const loadOlder = useCallback(async () => {
     if (store === null || loadingOlderRef.current || !state.hasMoreOlder) return;
@@ -480,6 +495,53 @@ export function ChatView({
       setLoadingOlder(false);
     }
   }, [store, items, state.hasMoreOlder, baseUrl, token, sessionId, transcriptAgentId]);
+
+  const loadOlderLiveRef = useRef(loadOlder);
+  loadOlderLiveRef.current = loadOlder;
+
+  const cancelOlderSettle = useCallback(() => {
+    if (olderSettleRef.current !== null) {
+      window.clearTimeout(olderSettleRef.current);
+      olderSettleRef.current = null;
+    }
+  }, []);
+
+  /**
+   * Fed by every scroll event. In-zone (below OLDER_TRIGGER_PX) and armed,
+   * it (re)starts the settle window; a page loads only if NO scroll event
+   * arrives for OLDER_SETTLE_MS — an active wheel streak or touch fling
+   * keeps refreshing the window forever, so scrolling itself never fires.
+   * Above the zone it re-arms the latch and drops any pending window.
+   */
+  const maybeLoadOlder = useCallback((): void => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    if (pinnedRef.current || !hasMoreOlderRef.current) {
+      cancelOlderSettle();
+      return;
+    }
+    if (el.scrollTop >= OLDER_TRIGGER_PX) {
+      olderArmedRef.current = true;
+      cancelOlderSettle();
+      return;
+    }
+    if (!olderArmedRef.current) return;
+    cancelOlderSettle();
+    olderSettleRef.current = window.setTimeout(() => {
+      olderSettleRef.current = null;
+      const el2 = scrollRef.current;
+      if (el2 === null) return;
+      if (pinnedRef.current || !hasMoreOlderRef.current || !olderArmedRef.current) return;
+      if (el2.scrollTop >= OLDER_TRIGGER_PX) {
+        olderArmedRef.current = true;
+        return;
+      }
+      olderArmedRef.current = false;
+      void loadOlderLiveRef.current();
+    }, OLDER_SETTLE_MS);
+  }, [cancelOlderSettle]);
+
+  useEffect(() => cancelOlderSettle, [cancelOlderSettle]);
 
   useLayoutEffect(() => {
     const anchor = olderAnchorRef.current;
