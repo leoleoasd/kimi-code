@@ -57,6 +57,17 @@ describe('parseComposerCommand', () => {
       action: { kind: 'remote', input: '/model k3-b300' },
     });
   });
+
+  it('never treats a multi-line paste as a command — it goes through as a prompt', () => {
+    // The reported case: a pasted comment snippet whose first line begins with '//'.
+    const paste =
+      '// "host:port" where this rank serves afterglow.events.v1.EventStream\n' +
+      '// cache events are enabled; absent otherwise.';
+    expect(parseComposerCommand(paste)).toBeNull();
+    // Even inputs whose first line IS a known word: multi-line is not a command.
+    expect(parseComposerCommand('/copy\nkeep this line')).toBeNull();
+    expect(parseComposerCommand('/model\nk3-b300')).toBeNull();
+  });
 });
 
 /** Envelope-level fake fetch — mirrors files.test.ts: assert the request, reply the envelope. */

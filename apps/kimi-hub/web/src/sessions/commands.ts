@@ -18,6 +18,9 @@
  * the word while it's typed — so this notice is the fallback for a session
  * whose model catalog is unavailable. Everything else — including words this
  * build has never heard of — reaches the dispatch untouched.
+ *
+ * Routing boundary: only a single-line `/…` input is ever treated as a
+ * command. Multi-line pastes always go through as prompts.
  */
 
 import type { TranscriptItem } from '@moonshot-ai/transcript';
@@ -95,9 +98,14 @@ function defaultDownload(blob: Blob, filename: string): void {
  * Classify one composer input (`input` arrives already trimmed). `null` means
  * "not a command — send as a prompt". `/copy` and `/export-debug-zip` (bare)
  * stay browser-local; every other slash-prefixed line forwards to the agent.
+ * A multi-line input is never a command: slash commands are single-line by
+ * definition, and a pasted snippet whose first line begins with `/` (a `//`
+ * comment, a `/`-relative path list) must reach the agent as text, not be
+ * swallowed by the host's dispatch.
  */
 export function parseComposerCommand(input: string): ParsedComposerCommand | null {
   if (!input.startsWith('/')) return null;
+  if (input.includes('\n')) return null;
   if (input === '/copy') return { kind: 'action', action: { kind: 'copy' } };
   if (input === '/export-debug-zip') {
     return { kind: 'action', action: { kind: 'export-debug-zip' } };
