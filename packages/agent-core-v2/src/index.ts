@@ -352,6 +352,8 @@ export * from '#/agent/tools/notify-user/notify-user';
 import '#/agent/tools/notify-user/notifyUserTool';
 export * from '#/hub/hubConnection';
 import '#/hub/hubConnectionService';
+export * from '#/mcpCore/oauth/callbackRegistry';
+import '#/mcpCore/oauth/callbackRegistryService';
 export * from '#/agent/tools/list-hub-sessions/list-hub-sessions';
 import '#/agent/tools/list-hub-sessions/listHubSessionsTool';
 export * from '#/agent/tools/send-hub-message/send-hub-message';

@@ -21,6 +21,7 @@ import { registerFilesRoutes } from './files';
 import { registerFsRoutes } from './fs';
 import { registerGuiStoreRoutes } from './guiStore';
 import { registerMessagesRoutes } from './messages';
+import { registerMcpOAuthRoutes } from './mcpOAuth';
 import type { IGuiStoreService } from '../services/guiStore/guiStore';
 import { registerDebugRoutes } from '../transport/registerDebugRoutes';
 import { registerMetaRoute } from './meta';
@@ -162,6 +163,7 @@ export async function registerApiV1Routes(
         apiV1 as unknown as Parameters<typeof registerMessagesRoutes>[0],
         core,
       );
+      registerMcpOAuthRoutes(apiV1 as unknown as Parameters<typeof registerMcpOAuthRoutes>[0], core);
       registerSearchRoutes(apiV1 as unknown as Parameters<typeof registerSearchRoutes>[0], core);
       registerTasksRoutes(apiV1 as unknown as Parameters<typeof registerTasksRoutes>[0], core);
       registerApprovalsRoutes(

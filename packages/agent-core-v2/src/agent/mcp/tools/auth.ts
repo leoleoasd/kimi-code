@@ -31,7 +31,8 @@ This server requires an OAuth login that has not yet been completed. ` +
   2. **You must show that URL to the user verbatim** and ask them to open it
      in a browser, sign in, and approve the client.
   3. The tool blocks (up to 15 minutes) until the browser redirects back to
-     the local callback listener.
+     the local callback listener (or through the kimi hub this machine is
+     attached to, when the printed URL points at the hub).
   4. On success, the client reconnects the MCP server and the real tools
      replace this synthetic tool.
 
@@ -44,6 +45,7 @@ export interface CreateMcpAuthToolOptions {
   readonly oauthService: McpOAuthService;
   readonly reconnect: (signal?: AbortSignal) => Promise<void>;
   readonly timeoutMs?: number;
+  readonly externalRedirectUri?: () => string | undefined;
 }
 
 export function createMcpAuthTool(options: CreateMcpAuthToolOptions): ExecutableTool {
@@ -59,7 +61,9 @@ export function createMcpAuthTool(options: CreateMcpAuthToolOptions): Executable
 
     let flow: Awaited<ReturnType<McpOAuthService['beginAuthorization']>>;
     try {
-      flow = await oauthService.beginAuthorization(serverName, serverUrl);
+      flow = await oauthService.beginAuthorization(serverName, serverUrl, {
+        externalRedirectUri: options.externalRedirectUri?.(),
+      });
     } catch (error) {
       if (error instanceof AlreadyAuthorizedError) {
         onUpdate?.({ kind: 'status', text: `Already authorized; reconnecting ${serverName}…` });

@@ -7,6 +7,7 @@ import type { IBootstrapService } from '#/app/bootstrap/bootstrap';
 import type { IConfigService } from '#/app/config/config';
 import type { IGitService } from '#/app/git/git';
 import type { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import type { IMcpOAuthCallbackRegistry } from '#/mcpCore/oauth/callbackRegistry';
 import type { IPluginService } from '#/app/plugin/plugin';
 import type { ISessionManager } from '#/app/sessionManager/sessionManager';
 import type { IBuiltinSkillSource } from '#/app/skillCatalog/builtinSkillSource';
@@ -49,6 +50,7 @@ export interface ProgramDependencies {
   readonly identity: IAgentIdentity;
   readonly log: ILogService;
   readonly oauthStore: IMcpOAuthStore;
+  readonly mcpOAuthCallbackRegistry: IMcpOAuthCallbackRegistry;
   readonly plugins: IPluginService;
   readonly sessionManager: LiveRef<ISessionManager>;
   readonly agentProfiles: IAgentProfileRegistry;

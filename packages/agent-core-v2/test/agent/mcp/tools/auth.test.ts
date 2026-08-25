@@ -138,4 +138,38 @@ describe('createMcpAuthTool', () => {
     expect(final.isError).toBe(true);
     expect(final.output).toMatch(/reconnect failed/);
   });
+
+  it('forwards the resolved external redirect URI into beginAuthorization', async () => {
+    let captured: string | undefined;
+    const oauthService = {
+      beginAuthorization: async (
+        _serverName: string,
+        _serverUrl: string | URL,
+        options?: { externalRedirectUri?: string },
+      ) => {
+        captured = options?.externalRedirectUri;
+        return {
+          authorizationUrl: new URL('https://example.com/authorize?state=abc'),
+          complete: async () => undefined,
+          cancel: async () => undefined,
+        };
+      },
+    } as unknown as McpOAuthService;
+    const tool = createMcpAuthTool({
+      serverName: 'notion',
+      serverUrl: 'https://example.com/mcp',
+      oauthService,
+      reconnect: async () => undefined,
+      timeoutMs: 100,
+      externalRedirectUri: () => 'https://hub.example/agents/a1/api/v1/mcp/oauth/callback',
+    });
+    const result = executeTool(tool, {
+      turnId: 0,
+      toolCallId: 'tc',
+      args: {},
+      signal: new AbortController().signal,
+    });
+    await result;
+    expect(captured).toBe('https://hub.example/agents/a1/api/v1/mcp/oauth/callback');
+  });
 });

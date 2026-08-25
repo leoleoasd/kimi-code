@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { defineState } from '#/state/state';
 import type { Tool as KosongTool } from '#/kosong/contract/tool';
 
+import { IInstantiationService } from "#/_base/di/instantiation";
 import { type IDisposable } from "#/_base/di/lifecycle";
 import { Service } from "#/_base/di/service";
 import { ErrorCodes, makeErrorPayload } from "#/errors";
@@ -16,6 +17,7 @@ import { IAgentToolRegistryService } from '#/agent/toolRegistry/toolRegistry';
 import { IAgentLoopService } from '#/agent/loop/loop';
 import { createMcpAuthTool } from '#/agent/mcp/tools/auth';
 import { createMcpTool } from '#/agent/mcp/tools/mcp';
+import { IHubConnectionService, type HubConnection } from '#/hub/hubConnection';
 import { ISessionContext } from '#/session/sessionContext/sessionContext';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import type { McpServerEntry } from '#/mcpCore/connection-manager';
@@ -58,6 +60,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     @IEventDispatcher private readonly dispatcher: IEventDispatcher,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentStateService private readonly states: IAgentStateService,
+    @IInstantiationService private readonly instantiation: IInstantiationService,
   ) {
     super();
     this.states.contributeState(mcpDiscoveryKey);
@@ -218,6 +221,20 @@ export class AgentMcpService extends Service implements IAgentMcpService {
     );
   }
 
+  private hubOAuthRedirectUri(): string | undefined {
+    let connection: HubConnection | undefined;
+    try {
+      connection = this.instantiation.invokeFunction((accessor) =>
+        accessor.get(IHubConnectionService).connection(),
+      );
+    } catch {
+      return undefined;
+    }
+    const agentId = connection?.agentId?.();
+    if (connection === undefined || agentId === undefined || agentId === '') return undefined;
+    return `${connection.hubUrl.replace(/\/+$/, '')}/agents/${encodeURIComponent(agentId)}/api/v1/mcp/oauth/callback`;
+  }
+
   private registerNeedsAuthMcpServer(entry: McpServerEntry): void {
     this.unregisterMcpServer(entry.name);
     const oauthService = this.oauthService;
@@ -228,6 +245,7 @@ export class AgentMcpService extends Service implements IAgentMcpService {
       serverUrl,
       oauthService,
       reconnect: (signal) => this.reconnect(entry.name, signal),
+      externalRedirectUri: () => this.hubOAuthRedirectUri(),
     });
     const disposable = this._register(this.registry.register(tool, { source: 'mcp' }));
     this.mcpTools.set(tool.name, { disposable, serverName: entry.name });

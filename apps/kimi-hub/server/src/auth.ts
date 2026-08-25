@@ -17,6 +17,14 @@ import { errEnvelope, HUB_ERROR_CODES } from '#/envelope';
 /** Path prefixes that always require the hub bearer token. */
 const RESERVED_PREFIXES = ['/hub', '/agents', '/internal'] as const;
 
+/**
+ * The MCP OAuth browser callback: the provider 302s a top-level GET here
+ * (no bearer header possible), the hub proxies it down the tunnel, and the
+ * agent matches it to a pending flow by the high-entropy `state` param —
+ * the state itself is the capability, so this one path stays token-free.
+ */
+const MCP_OAUTH_CALLBACK_PATH = /^\/agents\/[^/]+\/api\/v1\/mcp\/oauth\/callback$/;
+
 export function isReservedPath(path: string): boolean {
   return RESERVED_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 }
@@ -44,7 +52,11 @@ export function createHubAuthHook(opts: {
     if (opts.disableAuth === true) {
       return;
     }
-    if (!isReservedPath(requestPath(req.raw.url))) {
+    const path = requestPath(req.raw.url);
+    if (req.method === 'GET' && MCP_OAUTH_CALLBACK_PATH.test(path)) {
+      return;
+    }
+    if (!isReservedPath(path)) {
       return;
     }
     if (hasValidBearer(req.headers.authorization, opts.token)) {

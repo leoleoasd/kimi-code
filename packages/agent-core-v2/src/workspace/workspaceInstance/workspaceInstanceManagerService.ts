@@ -12,6 +12,7 @@ import { IEventService } from '#/app/event/event';
 import { IFlagService } from '#/app/flag/flag';
 import { IGitService } from '#/app/git/git';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpOAuthCallbackRegistry } from '#/mcpCore/oauth/callbackRegistry';
 import { IPluginService } from '#/app/plugin/plugin';
 import { ISessionIndex, ISessionIndexMirror } from '#/app/sessionIndex/sessionIndex';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
@@ -65,6 +66,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
     @IModelCatalog private readonly modelCatalog: IModelCatalog,
     @IModelService private readonly models: IModelService,
     @IMcpOAuthStore private readonly oauthStore: IMcpOAuthStore,
+    @IMcpOAuthCallbackRegistry private readonly mcpOAuthCallbackRegistry: IMcpOAuthCallbackRegistry,
     @IPluginService private readonly plugins: IPluginService,
     @IProviderService private readonly modelProviders: IProviderService,
     @ref(ISessionManager) private readonly sessionManager: LiveRef<ISessionManager>,
@@ -192,6 +194,7 @@ export class WorkspaceInstanceManager implements IWorkspaceInstanceManager {
         identity: this.identity,
         log: this.log,
         oauthStore: this.oauthStore,
+        mcpOAuthCallbackRegistry: this.mcpOAuthCallbackRegistry,
         plugins: this.plugins,
         sessionManager: this.sessionManager,
         agentProfiles: this.agentProfiles,

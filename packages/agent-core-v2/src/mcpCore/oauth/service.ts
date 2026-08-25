@@ -3,6 +3,7 @@ import { auth, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client
 import { ErrorCodes, Error2, isError2 } from '#/errors';
 
 import { startCallbackServer, type CallbackServer } from './callback-server';
+import type { IMcpOAuthCallbackRegistry } from './callbackRegistry';
 import { McpOAuthClientProvider } from './provider';
 import { mcpOAuthStoreKey, type McpOAuthStore } from './store';
 
@@ -10,10 +11,12 @@ export interface McpOAuthServiceOptions {
   readonly store: McpOAuthStore;
   readonly clientLabel?: string;
   readonly resolveClientName?: () => string | undefined;
+  readonly callbackRegistry?: IMcpOAuthCallbackRegistry;
 }
 
 export interface BeginAuthorizationOptions {
   readonly clientLabel?: string;
+  readonly externalRedirectUri?: string;
 }
 
 export interface BeginAuthorizationResult {
@@ -26,12 +29,14 @@ export class McpOAuthService {
   private readonly store: McpOAuthStore;
   private readonly clientLabel: string | undefined;
   private readonly resolveClientName: (() => string | undefined) | undefined;
+  private readonly callbackRegistry: IMcpOAuthCallbackRegistry | undefined;
   private readonly providers = new Map<string, McpOAuthClientProvider>();
 
   constructor(options: McpOAuthServiceOptions) {
     this.store = options.store;
     this.clientLabel = options.clientLabel;
     this.resolveClientName = options.resolveClientName;
+    this.callbackRegistry = options.callbackRegistry;
   }
 
   getProvider(serverName: string, serverUrl: string | URL): McpOAuthClientProvider {
@@ -81,9 +86,10 @@ export class McpOAuthService {
       throw wrapAuthError('failed to start OAuth callback listener', error);
     }
 
-    provider.setRedirectUrl(new URL(callbackServer.redirectUri));
+    const redirectUri = options.externalRedirectUri ?? callbackServer.redirectUri;
+    provider.setRedirectUrl(new URL(redirectUri));
     await provider.ready;
-    await provider.invalidateStaleRegistration(callbackServer.redirectUri);
+    await provider.invalidateStaleRegistration(redirectUri);
 
     let authorizationUrl: URL | undefined;
     try {
@@ -106,10 +112,31 @@ export class McpOAuthService {
       throw wrapAuthError(`failed to start OAuth flow for "${serverName}"`, error);
     }
 
+    let unregisterCallback: (() => void) | undefined;
+    if (options.externalRedirectUri !== undefined && this.callbackRegistry !== undefined) {
+      const state = provider.expectedState();
+      if (state !== undefined) {
+        unregisterCallback = this.callbackRegistry.begin(state, {
+          serverName,
+          deliver: (result) => {
+            if (result.code !== undefined && result.code !== '') {
+              callbackServer.deliver({ code: result.code, state });
+              return;
+            }
+            callbackServer.deliverError(
+              new Error(`OAuth provider reported an error: ${result.error ?? 'unknown'}`),
+            );
+          },
+        });
+      }
+    }
+
     let settled = false;
     const cancel = async (): Promise<void> => {
       if (settled) return;
       settled = true;
+      unregisterCallback?.();
+      unregisterCallback = undefined;
       await callbackServer.close().catch(() => undefined);
       provider.resetFlow();
     };
@@ -146,6 +173,8 @@ export class McpOAuthService {
         throw wrapAuthError(`OAuth flow for "${serverName}" failed`, error);
       }
       settled = true;
+      unregisterCallback?.();
+      unregisterCallback = undefined;
       await callbackServer.close().catch(() => undefined);
       provider.resetFlow();
     };

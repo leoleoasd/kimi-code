@@ -405,6 +405,17 @@ describe('kimi-hub-server', () => {
     expect(withBadToken.status).toBe(401);
   });
 
+  it('(a) lets the MCP OAuth callback path through without a token', async () => {
+    // The OAuth provider's 302 is a top-level GET with no bearer; the state
+    // param is the capability. The fake agent has no such route, so its plain
+    // 404 proves the request passed the 40101 gate and crossed the tunnel.
+    const res = await fetch(
+      `${ctx.hub.origin}/agents/${ctx.agentId}/api/v1/mcp/oauth/callback?code=x&state=y`,
+    );
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('not found');
+  });
+
   it('(b) lists the connected agent with a valid token', async () => {
     const res = await fetch(`${ctx.hub.origin}/hub/api/agents`, {
       headers: { authorization: `Bearer ${HUB_TOKEN}` },
@@ -633,6 +644,13 @@ describe('session-scoped agent', () => {
       const res = await scopedFetch(ctx, path);
       expect(res.status).toBe(200);
     }
+    // The OAuth browser callback is state-keyed and session-less: allowed.
+    const oauthCallback = await scopedFetch(ctx, '/api/v1/mcp/oauth/callback?code=x&state=y');
+    expect(oauthCallback.status).toBe(404);
+    expect(await oauthCallback.text()).toBe('not found');
+    // …but not for other methods.
+    const oauthPost = await scopedFetch(ctx, '/api/v1/mcp/oauth/callback', { method: 'POST' });
+    expect(oauthPost.status).toBe(403);
     // …but the catalog write surfaces (/api/v1/providers*) stay gated.
     const providers = await scopedFetch(ctx, '/api/v1/providers');
     expect(providers.status).toBe(403);

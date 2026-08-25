@@ -12,6 +12,9 @@
  *     `GET /api/v1/models` (the configured catalog — alias/display names only,
  *     no credentials; the prompt surface already accepts any of these via its
  *     `model` field, so the hub UI's model picker needs the same list);
+ *   - `GET /api/v1/mcp/oauth/callback` (the OAuth browser redirect target —
+ *     state-keyed, no session affiliation; see auth.ts for the token-free
+ *     rationale);
  *   - `/api/v1/files[/{id}]` (upload/GET/DELETE): the prompt-attachment
  *     store — required for image sending from the hub UI; file ids are
  *     unguessable, and prompt bodies stay session-checked;
@@ -46,6 +49,7 @@ const ALWAYS_ALLOWED_GET_PATHS = new Set([
   '/api/v1/meta',
   '/api/v1/auth',
   '/api/v1/models',
+  '/api/v1/mcp/oauth/callback',
 ]);
 
 /** `/api/v1/files[/{id}]` — any method: up/download/delete prompt attachments. */

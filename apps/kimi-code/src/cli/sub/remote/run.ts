@@ -97,7 +97,7 @@ export async function runRemoteConnect(options: RemoteConnectOptions): Promise<n
       // as long as the connection publishes them.
       hubTools = wireHubTools(
         server.core,
-        { hubUrl, token: hubToken, agentName },
+        { hubUrl, token: hubToken, agentName, agentId: () => tunnel?.agentId() },
         [options.sessionId],
       );
     },

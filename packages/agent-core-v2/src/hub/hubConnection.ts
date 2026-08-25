@@ -5,6 +5,13 @@ export interface HubConnection {
   readonly hubUrl: string;
   readonly token: string;
   readonly agentName?: string;
+  /**
+   * Live read of the hub-assigned agent id (it changes on every tunnel
+   * reconnect, so it is a thunk, not a snapshot). `undefined` until the first
+   * `hello.ack`. Used to build machine-reachable callback URLs through the
+   * hub's `/agents/<agentId>` proxy.
+   */
+  readonly agentId?: () => string | undefined;
   readonly sessionIds: readonly string[];
 }
 

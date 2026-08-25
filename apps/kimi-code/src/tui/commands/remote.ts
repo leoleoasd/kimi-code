@@ -245,7 +245,7 @@ async function connectRemote(
     notifyBridge: wireNotifyBridge(engineScope, tunnel, session.id),
     hubTools: wireHubTools(
       engineScope,
-      { hubUrl, token: hubToken, agentName },
+      { hubUrl, token: hubToken, agentName, agentId: () => tunnel.agentId() },
       [...scopedSessionIds],
     ),
     tunnelState: { kind: 'connecting' },

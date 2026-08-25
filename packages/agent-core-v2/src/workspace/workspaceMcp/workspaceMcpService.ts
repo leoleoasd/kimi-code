@@ -4,6 +4,7 @@ import { ILogService } from '#/_base/log/log';
 
 import { McpConnectionManager, type McpConnectionView } from '#/mcpCore/connection-manager';
 import type { McpServerConfig } from '#/mcpCore/config-schema';
+import { IMcpOAuthCallbackRegistry } from '#/mcpCore/oauth/callbackRegistry';
 import { McpOAuthService } from '#/mcpCore/oauth/service';
 import { IAgentIdentity } from '#/app/agentIdentity/agentIdentity';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
@@ -44,6 +45,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     @IRuntimeResolver private readonly runtimeResolver: IRuntimeResolver,
     @IWorkspaceMcpConfigService private readonly mcpConfig: IWorkspaceMcpConfigService,
     @IMcpOAuthStore oauthStore: IMcpOAuthStore,
+    @IMcpOAuthCallbackRegistry mcpOAuthCallbackRegistry: IMcpOAuthCallbackRegistry,
     @ILogService private readonly log: ILogService,
     @ITelemetryService private readonly telemetry: ITelemetryService,
     @IAgentIdentity private readonly identity: IAgentIdentity,
@@ -56,6 +58,7 @@ export class WorkspaceMcpService extends Disposable implements IWorkspaceMcpServ
     this.oauthService = new McpOAuthService({
       store: oauthStore,
       resolveClientName: this.resolveClientName,
+      callbackRegistry: mcpOAuthCallbackRegistry,
     });
     this.manager = new McpConnectionManager({
       log: this.log,

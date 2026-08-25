@@ -8,6 +8,8 @@ export interface CallbackResult {
 
 export interface CallbackServer {
   readonly redirectUri: string;
+  deliver(result: CallbackResult): void;
+  deliverError(error: Error): void;
   waitForCode(opts: { signal?: AbortSignal; timeoutMs?: number }): Promise<CallbackResult>;
   close(): Promise<void>;
 }
@@ -26,15 +28,24 @@ const ERROR_HTML =
   '<p>The authorization server reported an error. Return to the application for details.</p>' +
   '</body></html>';
 
+type Outcome =
+  | { readonly kind: 'code'; readonly result: CallbackResult }
+  | { readonly kind: 'error'; readonly error: Error };
+
 export async function startCallbackServer(): Promise<CallbackServer> {
+  let outcome: Outcome | undefined;
   let resolveCode: ((value: CallbackResult) => void) | undefined;
   let rejectCode: ((reason: Error) => void) | undefined;
-  let settled = false;
 
-  const settle = (fn: () => void) => {
-    if (settled) return;
-    settled = true;
-    fn();
+  const succeed = (result: CallbackResult): void => {
+    if (outcome !== undefined) return;
+    outcome = { kind: 'code', result };
+    resolveCode?.(result);
+  };
+  const fail = (error: Error): void => {
+    if (outcome !== undefined) return;
+    outcome = { kind: 'error', error };
+    rejectCode?.(error);
   };
 
   const server: Server = createServer((req, res) => {
@@ -61,26 +72,18 @@ export async function startCallbackServer(): Promise<CallbackServer> {
     if (errorParam !== null) {
       const description = url.searchParams.get('error_description') ?? '';
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' }).end(ERROR_HTML);
-      settle(() => {
-        rejectCode?.(
-          new Error(`OAuth error: ${errorParam}${description ? ` — ${description}` : ''}`),
-        );
-      });
+      fail(new Error(`OAuth error: ${errorParam}${description ? ` — ${description}` : ''}`));
       return;
     }
     const code = url.searchParams.get('code');
     if (code === null || code.length === 0) {
       res.writeHead(400, { 'content-type': 'text/html; charset=utf-8' }).end(ERROR_HTML);
-      settle(() => {
-        rejectCode?.(new Error('OAuth callback missing authorization code'));
-      });
+      fail(new Error('OAuth callback missing authorization code'));
       return;
     }
     const state = url.searchParams.get('state') ?? undefined;
     res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(SUCCESS_HTML);
-    settle(() => {
-      resolveCode?.({ code, state });
-    });
+    succeed({ code, state });
   }
 
   await new Promise<void>((resolve, reject) => {
@@ -105,14 +108,17 @@ export async function startCallbackServer(): Promise<CallbackServer> {
   };
 
   const waitForCode: CallbackServer['waitForCode'] = ({ signal, timeoutMs } = {}) => {
+    if (outcome !== undefined) {
+      const settledOutcome = outcome;
+      void close();
+      return settledOutcome.kind === 'code'
+        ? Promise.resolve(settledOutcome.result)
+        : Promise.reject(settledOutcome.error);
+    }
     return new Promise<CallbackResult>((resolve, reject) => {
       let timer: NodeJS.Timeout | undefined;
       const onAbort = () => {
-        settle(() =>
-          rejectCode?.(
-            signal?.reason instanceof Error ? signal.reason : new Error('OAuth flow aborted'),
-          ),
-        );
+        fail(signal?.reason instanceof Error ? signal.reason : new Error('OAuth flow aborted'));
       };
       const cleanup = () => {
         if (timer !== undefined) clearTimeout(timer);
@@ -130,7 +136,7 @@ export async function startCallbackServer(): Promise<CallbackServer> {
       };
       if (timeoutMs !== undefined) {
         timer = setTimeout(() => {
-          settle(() => rejectCode?.(new Error('OAuth callback timed out')));
+          fail(new Error('OAuth callback timed out'));
         }, timeoutMs);
       }
       if (signal !== undefined) {
@@ -143,5 +149,15 @@ export async function startCallbackServer(): Promise<CallbackServer> {
     });
   };
 
-  return { redirectUri, waitForCode, close };
+  return {
+    redirectUri,
+    deliver: (result) => {
+      succeed(result);
+    },
+    deliverError: (error) => {
+      fail(error);
+    },
+    waitForCode,
+    close,
+  };
 }

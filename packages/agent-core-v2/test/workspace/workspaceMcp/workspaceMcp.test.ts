@@ -18,6 +18,8 @@ import { MergedMcpConnectionView } from '#/session/mcp/mergedConnectionView';
 import { ISessionMcpHandle } from '#/session/mcp/sessionMcpHandle';
 import { ISessionContext, makeSessionContext } from '#/session/sessionContext/sessionContext';
 import { IMcpOAuthStore } from '#/app/mcpConfig/oauthStore';
+import { IMcpOAuthCallbackRegistry } from '#/mcpCore/oauth/callbackRegistry';
+import { McpOAuthCallbackRegistryService } from '#/mcpCore/oauth/callbackRegistryService';
 import { ITelemetryService, noopTelemetryService } from '#/app/telemetry/telemetry';
 import { ISessionManager } from '#/app/sessionManager/sessionManager';
 import { IWorkspaceContext } from '#/workspace/workspaceContext/workspaceContext';
@@ -85,6 +87,7 @@ describe('WorkspaceMcpService', () => {
         reg.definePartialInstance(IWorkspaceContext, { cwd, workspaceId: 'test-workspace' });
         reg.defineInstance(IWorkspaceMcpConfigService, mcpConfigStub());
         reg.definePartialInstance(IMcpOAuthStore, createMemoryMcpOAuthStore());
+        reg.defineInstance(IMcpOAuthCallbackRegistry, new McpOAuthCallbackRegistryService());
         reg.defineInstance(ILogService, stubLog());
         reg.defineInstance(ITelemetryService, noopTelemetryService);
         const runtime = Object.assign(

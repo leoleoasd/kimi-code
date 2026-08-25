@@ -310,7 +310,7 @@ export interface HubToolWiring {
  */
 export function wireHubTools(
   core: Scope,
-  cfg: { hubUrl: string; token: string; agentName?: string },
+  cfg: { hubUrl: string; token: string; agentName?: string; agentId?: () => string | undefined },
   sessionIds: readonly string[],
 ): HubToolWiring {
   const bridged: string[] = [];
@@ -319,6 +319,7 @@ export function wireHubTools(
       hubUrl: cfg.hubUrl,
       token: cfg.token,
       agentName: cfg.agentName,
+      agentId: cfg.agentId,
       sessionIds: [...bridged],
     });
   };

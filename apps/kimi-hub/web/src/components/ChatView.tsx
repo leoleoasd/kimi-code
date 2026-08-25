@@ -76,6 +76,7 @@ import { Composer, planComposerKey } from './Composer';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
+import { resolveMcpAuthDisplay, type McpAuthDisplay } from './mcp-auth';
 import { appendQueuedEntry, PromptQueueStrip } from './PromptQueueStrip';
 import {
   parseShellInput,
@@ -1408,6 +1409,8 @@ function ToolFrameView({
     // parity) instead of a JSON-in-details row.
     if (display.plan !== '') return <ExitPlanModeCard display={display} />;
   }
+  const mcpAuth = resolveMcpAuthDisplay(frame);
+  if (mcpAuth !== undefined) return <McpAuthCard frame={frame} display={mcpAuth} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1547,6 +1550,55 @@ function ExitPlanModeCard({ display }: { display: ExitPlanDisplay }) {
           </div>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * `mcp__<server>__authenticate` as a sign-in card: the OAuth authorization
+ * URL as a plain tappable link (status text has the URL stripped — the link
+ * carries it). When the agent is attached to a hub the printed URL points at
+ * the hub and the provider's redirect rides the token-free proxy path back
+ * down the tunnel, so the tap completes the login from any device.
+ */
+function McpAuthCard({ frame, display }: { frame: ToolCallFrame; display: McpAuthDisplay }) {
+  const tone = frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'green';
+  const label =
+    frame.state === 'error'
+      ? 'sign-in failed'
+      : frame.state === 'running'
+        ? 'waiting for sign-in…'
+        : 'authorized';
+  return (
+    <div className="mb-3 max-w-full rounded border border-neutral-700/80 bg-neutral-900/40 px-3 py-2 text-[12px] sm:max-w-[92%]">
+      <div className="flex items-center gap-2">
+        <Badge tone={tone}>{label}</Badge>
+        <span className="text-neutral-300">MCP server “{display.serverName}”</span>
+      </div>
+      {display.authorizationUrl !== undefined ? (
+        <a
+          className="mt-1.5 block break-all text-sky-400 underline underline-offset-2"
+          href={display.authorizationUrl}
+          rel="noopener noreferrer"
+          target="_blank"
+        >
+          {display.authorizationUrl}
+        </a>
+      ) : null}
+      {display.statusText !== undefined ? (
+        <div className="mt-1 text-[11px] whitespace-pre-wrap text-neutral-500">
+          {display.statusText}
+        </div>
+      ) : null}
+      {typeof frame.output === 'string' && frame.output !== '' && frame.state !== 'running' ? (
+        <pre
+          className={`mt-1 max-h-40 overflow-auto whitespace-pre-wrap text-[11px] ${
+            frame.state === 'error' ? 'text-red-400' : 'text-neutral-500'
+          }`}
+        >
+          {frame.output}
+        </pre>
+      ) : null}
     </div>
   );
 }
