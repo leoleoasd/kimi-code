@@ -240,6 +240,7 @@ describe('remote slash command', () => {
       hubUrl: 'https://hub.example.com',
       token: 't-1',
       agentName: expect.any(String),
+      agentId: expect.any(Function),
       sessionIds: ['ses-1'],
     });
 
@@ -257,6 +258,7 @@ describe('remote slash command', () => {
       hubUrl: 'https://hub.example.com',
       token: 't-1',
       agentName: expect.any(String),
+      agentId: expect.any(Function),
       sessionIds: ['ses-1', 'ses-2'],
     });
   });
