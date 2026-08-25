@@ -587,6 +587,7 @@ describe('CLI options parsing', () => {
         'web',
         'server',
         'remote',
+        'headless',
         'login',
         'doctor',
         'vis',

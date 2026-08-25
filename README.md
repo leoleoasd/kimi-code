@@ -4,7 +4,7 @@
 
 ## What this fork adds
 
-- **`kimi-hub` (`apps/kimi-hub`) — decouple the web UI from the agent machine.** A single hub page lists and drives sessions from agents that dial out with `kimi remote connect <hub-url>` (reverse tunnel; agents never open ports). Sessions are scoped per connection; the hub proxies the unchanged kap-server protocol.
+- **`kimi-hub` (`apps/kimi-hub`) — decouple the web UI from the agent machine.** A single hub page lists and drives sessions from agents that dial out with `kimi remote connect <hub-url>` (reverse tunnel; agents never open ports). Sessions are scoped per connection; the hub proxies the unchanged kap-server protocol. `kimi headless` is the terminal-less variant: a background agent process (no TUI, no local web UI) that creates one session in its cwd and dials out, so the hub web UI is the only control surface.
 - **OS/browser notifications for agent-driven events (`NotifyUser`)**, including Web Push delivery that wakes devices with the page closed. Push details: an APNs-accepted VAPID contact (Apple rejects `*.local`, FCM does not), logged and self-pruning dead subscriptions, automatic re-subscribe after VAPID rotation, and no double notifications while a hub page is open.
 - **Streaming thinking frames pinned to two lines** when collapsed, so the chat doesn't jump around on narrow screens.
 
@@ -26,6 +26,13 @@ kimi remote connect http://<hub-host>:58630 --session <session-id> --token <toke
 ```
 
 An already-running TUI session can be attached from inside with the `/remote connect` slash command instead (no restart needed): `/remote connect http://<hub-host>:58630 --token <token>` — it auto-scopes to the current session.
+
+A headless agent (no terminal at all) is one command — it runs in the background and shows up on the same hub page with a fresh session for its cwd:
+
+```sh
+kimi headless http://<hub-host>:58630   # detaches; --foreground keeps it attached; --session <id> exposes an existing session
+```
+
 
 # Kimi Code CLI (upstream README)
 

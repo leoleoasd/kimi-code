@@ -6,6 +6,7 @@ import type { CLIOptions } from './options';
 import { registerAcpCommand } from './sub/acp';
 import { registerDoctorCommand } from './sub/doctor';
 import { registerExportCommand } from './sub/export';
+import { registerHeadlessCommand } from './sub/headless';
 import { registerLoginCommand } from './sub/login';
 import { registerProviderCommand } from './sub/provider';
 import { registerRemoteCommand } from './sub/remote';
@@ -125,6 +126,7 @@ export function createProgram(
   registerAcpCommand(program);
   registerWebCommand(program);
   registerRemoteCommand(program);
+  registerHeadlessCommand(program);
   registerLoginCommand(program);
   registerDoctorCommand(program);
   registerVisCommand(program);
