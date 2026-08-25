@@ -571,6 +571,12 @@ export async function sendPrompt(
     text: string;
     goal_objective?: string;
     goal_control?: unknown;
+    /**
+     * Steer this submission into the active turn (`steer: true` on the wire).
+     * Server-side it degrades silently to the plain queue/launch behavior when
+     * there is nothing to steer into, so callers never have to check busy.
+     */
+    steer?: boolean;
   },
 ): Promise<PromptSubmitResult> {
   const data = await postJson({
@@ -580,6 +586,7 @@ export async function sendPrompt(
       content: [{ type: 'text', text: endpoint.text }],
       goal_objective: endpoint.goal_objective,
       goal_control: endpoint.goal_control,
+      steer: endpoint.steer === true ? true : undefined,
     },
   });
   const p = (data ?? {}) as Record<string, unknown>;
@@ -677,5 +684,22 @@ export async function abortQueuedPrompt(
       endpoint.agentId === undefined ? '' : `?agent_id=${encodeURIComponent(endpoint.agentId)}`
     }`,
     acceptCodes: [0, 40903],
+  });
+}
+
+/**
+ * Steer one QUEUED prompt into the active turn (`prompts/{pid}:steer`) — the
+ * queue-strip menu's Steer action. Unlike submission-time `steer: true`, the
+ * server REJECTS when there is no active prompt to steer into
+ * (`prompt.not_found`); callers should surface that rather than swallow it.
+ */
+export async function steerQueuedPrompt(
+  endpoint: HttpEndpoint & { sessionId: string; promptId: string; agentId?: string },
+): Promise<void> {
+  await postJson({
+    ...endpoint,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts/${encodeURIComponent(endpoint.promptId)}:steer${
+      endpoint.agentId === undefined ? '' : `?agent_id=${encodeURIComponent(endpoint.agentId)}`
+    }`,
   });
 }

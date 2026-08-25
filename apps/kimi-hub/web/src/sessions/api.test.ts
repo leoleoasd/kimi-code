@@ -14,7 +14,9 @@ import {
   fetchPromptQueue,
   fetchSessionCommands,
   fetchSessionStatus,
+  sendPrompt,
   setSessionModel,
+  steerQueuedPrompt,
 } from './api';
 
 const ENDPOINT = { baseUrl: 'http://hub.example.com/agents/a1', token: 'tok' };
@@ -196,6 +198,73 @@ describe('abortQueuedPrompt', () => {
     expect(calls[0]).toBe(
       'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts/p%202:abort?agent_id=sub2',
     );
+  });
+});
+
+describe('steerQueuedPrompt', () => {
+  it('posts to the pid:steer path with the owning agent query', async () => {
+    const calls: string[] = [];
+    await steerQueuedPrompt({
+      ...ENDPOINT,
+      sessionId: 's 1',
+      promptId: 'p/2',
+      agentId: 'sub2',
+      fetchImpl: async (input) => {
+        calls.push(requestUrl(input));
+        return jsonResponse({ code: 0, msg: 'ok', data: { steered: true, prompt_ids: ['p/2'] } });
+      },
+    });
+    expect(calls[0]).toBe(
+      'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts/p%2F2:steer?agent_id=sub2',
+    );
+  });
+
+  it('surfaces prompt.not_found (no active turn to steer into) as a rejection', async () => {
+    await expect(
+      steerQueuedPrompt({
+        ...ENDPOINT,
+        sessionId: 's1',
+        promptId: 'p-2',
+        fetchImpl: async () =>
+          jsonResponse({ code: 40404, msg: 'no active prompt to steer into', data: null }),
+      }),
+    ).rejects.toThrow(EnvelopeError);
+  });
+});
+
+describe('sendPrompt steer flag', () => {
+  const submitOk = { code: 0, msg: 'ok', data: { prompt_id: 'p-1', status: 'running' } };
+
+  it('omits steer by default — the wire body is unchanged', async () => {
+    let capturedBody: unknown;
+    await sendPrompt({
+      ...ENDPOINT,
+      sessionId: 's1',
+      text: 'hello',
+      fetchImpl: async (_input, init) => {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return jsonResponse(submitOk);
+      },
+    });
+    expect(capturedBody).toEqual({ content: [{ type: 'text', text: 'hello' }] });
+  });
+
+  it('carries steer: true verbatim when requested', async () => {
+    let capturedBody: unknown;
+    await sendPrompt({
+      ...ENDPOINT,
+      sessionId: 's1',
+      text: 'now please',
+      steer: true,
+      fetchImpl: async (_input, init) => {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return jsonResponse(submitOk);
+      },
+    });
+    expect(capturedBody).toEqual({
+      content: [{ type: 'text', text: 'now please' }],
+      steer: true,
+    });
   });
 });
 

@@ -62,6 +62,7 @@ import {
   sendPrompt,
   sessionInfoQueryKey,
   setSessionModel,
+  steerQueuedPrompt,
   undoSession,
 } from '#/sessions/api';
 import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
@@ -270,6 +271,14 @@ export function ChatView({
 
   const abortQueued = async (promptId: string): Promise<void> => {
     await abortQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
+    await queryClient.invalidateQueries({ queryKey: queueQueryKey });
+  };
+
+  // Queue-strip menu's Steer: pull the entry out of the FIFO into the ACTIVE
+  // turn (server rejects with prompt.not_found when the turn just drained —
+  // that lands in the view error bar, and the poll redraws the strip).
+  const steerQueued = async (promptId: string): Promise<void> => {
+    await steerQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
   };
 
@@ -603,13 +612,15 @@ export function ChatView({
   const submitPrompt = async (
     text: string,
     images: readonly UploadedImage[],
+    steer = false,
   ): Promise<{ status: 'running' | 'queued' | 'blocked' }> => {
     // The plain-text path keeps the exact pre-images request (sendPrompt in
-    // sessions/api.ts); attachments route through the multi-part body.
+    // sessions/api.ts); attachments route through the multi-part body. Steer
+    // is a submission flag on the same wire schema — both paths carry it.
     const result =
       images.length === 0
-        ? await sendPrompt({ baseUrl, token, sessionId, text })
-        : await sendPromptWithImages({ baseUrl, token, sessionId, text, images });
+        ? await sendPrompt({ baseUrl, token, sessionId, text, steer })
+        : await sendPromptWithImages({ baseUrl, token, sessionId, text, images, steer });
     // The LOCAL USER just spoke — the one growth-adjacent scroll besides the
     // pill: land on their fresh turn (model output itself never scrolls).
     snapToBottom();
@@ -838,6 +849,7 @@ export function ChatView({
         queue={queue.data}
         onAbortQueued={(promptId) => void abortQueued(promptId).catch(setViewError)}
         onRecallQueued={(promptId, text) => void recallQueued(promptId, text).catch(setViewError)}
+        onSteerQueued={(promptId) => void steerQueued(promptId).catch(setViewError)}
       />
       <TodoListPanel todos={state.todos} />
       <Composer

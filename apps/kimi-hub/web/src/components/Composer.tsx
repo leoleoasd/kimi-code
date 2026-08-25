@@ -184,7 +184,7 @@ export function Composer({
     readonly saving: boolean;
     readonly onApply: (model: string, effort: string) => Promise<void>;
   };
-  onSend: (text: string, images: readonly UploadedImage[]) => Promise<{ status: 'running' | 'queued' | 'blocked' }>;
+  onSend: (text: string, images: readonly UploadedImage[], steer?: boolean) => Promise<{ status: 'running' | 'queued' | 'blocked' }>;
   onAbort: () => Promise<void>;
   onCommand: (action: ComposerAction) => Promise<void>;
   /**
@@ -398,7 +398,7 @@ export function Composer({
     dispatch({ type: 'clear' });
   };
 
-  const send = async () => {
+  const send = async (steer = false) => {
     if (sending) return;
     switch (plan.kind) {
       case 'noop':
@@ -410,6 +410,9 @@ export function Composer({
         // host's screen). A session whose catalog is unavailable keeps the
         // short-circuit-notice fallback; `/model <args>` still forwards to
         // the agent's command bridge as before.
+        // Commands are never steerable — steer carries a PROMPT, not a
+        // dispatch; the Steer button stays disabled for a command plan.
+        if (steer) return;
         if (input.trim() === '/model' && modelPicker !== undefined && modelPicker.models.length > 0) {
           setInput('');
           openPicker();
@@ -445,7 +448,7 @@ export function Composer({
         setInput('');
         clearAttachments();
         try {
-          const result = await onSend(text, ready);
+          const result = await onSend(text, ready, steer);
           if (result.status !== 'running') setQueuedHint(true);
         } catch (error) {
           setError(error);
@@ -682,17 +685,30 @@ export function Composer({
             addFiles(images, 'paste');
           }}
         />
-        {/* One button slot, period — while busy it's Stop, otherwise Send;
-            queueing is always available via Enter (engine-side). */}
+        {/* While busy the slot holds two buttons: Steer injects the typed
+            text into the running turn at the next step boundary (server-side
+            degrade = plain queue/launch when there is nothing to steer into);
+            Stop aborts the turn. Plain queueing is still available via Enter
+            (engine-side) — the queuedHint line says so after such a send. */}
         {busy ? (
-          <button
-            className="flex min-h-[40px] items-center justify-center gap-1.5 rounded border border-red-900/70 px-3 py-1.5 text-[12px] text-red-400 hover:bg-red-950/60"
-            onClick={() => {
-              void onAbort().catch(setError);
-            }}
-          >
-            Stop
-          </button>
+          <>
+            <button
+              className="flex min-h-[40px] items-center justify-center gap-1.5 rounded bg-sky-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-sky-500 disabled:opacity-40"
+              disabled={sending || plan.kind !== 'send'}
+              title="send now, injected into the running turn (steer)"
+              onClick={() => void send(true)}
+            >
+              {sending ? 'Sending…' : 'Steer'}
+            </button>
+            <button
+              className="flex min-h-[40px] items-center justify-center gap-1.5 rounded border border-red-900/70 px-3 py-1.5 text-[12px] text-red-400 hover:bg-red-950/60"
+              onClick={() => {
+                void onAbort().catch(setError);
+              }}
+            >
+              Stop
+            </button>
+          </>
         ) : (
           <button
             className="flex min-h-[40px] items-center justify-center gap-1.5 rounded bg-sky-600 px-3 py-1.5 text-[12px] font-medium text-white hover:bg-sky-500 disabled:opacity-40"
