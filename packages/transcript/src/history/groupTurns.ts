@@ -98,8 +98,13 @@ const FALLBACK_ORIGIN: TurnOrigin = { kind: 'other' };
  * numbering — so a contentless failed attempt (dropped from the message
  * sequence) leaves a HOLE (`…2` missing) instead of shifting every later step
  * down by one. A hint that does not advance past the turn's last step ordinal
- * is rejected in favor of the sequential successor, keeping ids unique and
- * ordered on degenerate input (legacy wires carry no hints).
+ * means the engine RE-RAN that step (a provider retry/interrupted attempt
+ * re-executed under the same ordinal): the live projector folds the rerun
+ * back into the same step id, so the cold fold must too — the entry replaces
+ * the existing step's frames (latest attempt wins) instead of forking a
+ * phantom successor the live store would otherwise absorb via heal as a
+ * duplicate. Non-retried successors stay sequential on degenerate input
+ * (legacy wires carry no hints).
  */
 export function groupMessagesIntoSnapshot(
   messages: readonly HistoryMessage[],
@@ -331,14 +336,24 @@ export function groupMessagesIntoSnapshot(
       const current = ensureTurn();
       const hinted = stepOrdinals?.[messageIndex];
       const lastStepOrdinal = current.steps.at(-1)?.ordinal ?? 0;
-      const stepOrdinal =
-        hinted !== undefined && hinted > lastStepOrdinal ? hinted : lastStepOrdinal + 1;
-      const step: StepDraft = {
-        stepId: `${current.turnId}.${stepOrdinal}`,
-        ordinal: stepOrdinal,
-        frames: [],
-      };
-      current.steps.push(step);
+      const rerun =
+        hinted !== undefined && hinted <= lastStepOrdinal
+          ? current.steps.find((entry) => entry.ordinal === hinted)
+          : undefined;
+      let step: StepDraft;
+      if (rerun !== undefined) {
+        rerun.frames = [];
+        step = rerun;
+      } else {
+        const stepOrdinal =
+          hinted !== undefined && hinted > lastStepOrdinal ? hinted : lastStepOrdinal + 1;
+        step = {
+          stepId: `${current.turnId}.${stepOrdinal}`,
+          ordinal: stepOrdinal,
+          frames: [],
+        };
+        current.steps.push(step);
+      }
       let frameCount = 0;
       const nextFrameId = (): string => {
         frameCount += 1;

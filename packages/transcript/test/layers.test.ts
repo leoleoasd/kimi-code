@@ -476,23 +476,43 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     ]);
   });
 
-  it('rejects a non-advancing step hint in favor of the sequential successor (unique ordered ids)', () => {
+  it('folds a re-run step hint back into its step (latest attempt wins, no phantom successor)', () => {
     const snapshot = groupMessagesIntoSnapshot(
       [
         { role: 'user' as const, content: [{ type: 'text' as const, text: 'q' }], origin: { kind: 'user' } },
-        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1' }], toolCalls: [] },
-        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'sX' }], toolCalls: [] },
-        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'sY' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1-attempt1' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1-attempt2' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's2' }], toolCalls: [] },
       ],
       [0, undefined, undefined, undefined],
-      [undefined, 1, 1, 0],
+      [undefined, 1, 1, 2],
     );
     const turn = snapshot.items.find((i) => i.kind === 'turn');
     if (turn?.kind !== 'turn') throw new Error('expected turn');
     expect(turn.steps.map((s) => [s.stepId, s.ordinal])).toEqual([
       ['t0.1', 1],
       ['t0.2', 2],
-      ['t0.3', 3],
+    ]);
+    expect(turn.steps[0]?.frames).toEqual([
+      { kind: 'text', frameId: 't0.1.f1', role: 'assistant', text: 's1-attempt2' },
+    ]);
+  });
+
+  it('falls back to the sequential successor for an out-of-range non-advancing hint', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'q' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 's1' }], toolCalls: [] },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'sY' }], toolCalls: [] },
+      ],
+      [0, undefined, undefined],
+      [undefined, 1, 0],
+    );
+    const turn = snapshot.items.find((i) => i.kind === 'turn');
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.steps.map((s) => [s.stepId, s.ordinal])).toEqual([
+      ['t0.1', 1],
+      ['t0.2', 2],
     ]);
   });
 
