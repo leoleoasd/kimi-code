@@ -232,6 +232,9 @@ export function foldWireRecordFacts(
   const appended: { readonly item: TranscriptItem; readonly after: number }[] = [];
   const activeCancelTurnIds = new Set<number>();
   const currentTurnAnchor = (): number => Math.max(0, nextTurnId - 1);
+  let currentOpenTurn: number | undefined;
+  const openTurnAnchor = (): number =>
+    currentOpenTurn === undefined ? currentTurnAnchor() : currentOpenTurn - 1;
   let markerSeq = 0;
   const usedRefIds = new Set<string>();
   for (const item of base.items) {
@@ -348,14 +351,14 @@ export function foldWireRecordFacts(
       case 'plan_mode.enter': {
         planActive = true;
         planRevision = undefined;
-        pushMarker('plan.enter', record);
+        pushMarker('plan.enter', record, openTurnAnchor());
         break;
       }
       case 'plan_mode.exit':
       case 'plan_mode.cancel': {
         planActive = false;
         planRevision = undefined;
-        pushMarker('plan.exit', record);
+        pushMarker('plan.exit', record, openTurnAnchor());
         break;
       }
       case 'plan.revision': {
@@ -365,7 +368,7 @@ export function foldWireRecordFacts(
           reviewPath: typeof payload.path === 'string' ? payload.path : undefined,
           version: typeof payload.version === 'number' ? payload.version : undefined,
         };
-        pushMarker('plan.revision', record);
+        pushMarker('plan.revision', record, openTurnAnchor());
         break;
       }
       case 'swarm_mode.enter': {
@@ -404,6 +407,7 @@ export function foldWireRecordFacts(
           break;
         }
         activeCancelTurnIds.add(payload.turnId);
+        if (payload.turnId === currentOpenTurn) currentOpenTurn = undefined;
         if (payload.reason !== 'user_cancelled') break;
         pushMarker('interruption', record, payload.turnId);
         break;
@@ -443,7 +447,10 @@ export function foldWireRecordFacts(
       }
       case 'turn.ended': {
         const payload = record as TurnEndedPayload;
-        if (typeof payload.turnId === 'number') endedTurns.set(payload.turnId, record);
+        if (typeof payload.turnId === 'number') {
+          endedTurns.set(payload.turnId, record);
+          if (payload.turnId === currentOpenTurn) currentOpenTurn = undefined;
+        }
         break;
       }
       case 'turn.prompt': {
@@ -451,6 +458,7 @@ export function foldWireRecordFacts(
         skipCancelledTurnIds();
         const turnId = nextTurnId;
         nextTurnId += 1;
+        currentOpenTurn = turnId;
         if (!isVisibleTurnOrigin((record as TurnPromptPayload).origin)) hiddenTurnIds.add(turnId);
         break;
       }

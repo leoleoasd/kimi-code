@@ -1376,6 +1376,29 @@ describe('AgentTranscriptProjector', () => {
     ).toHaveLength(2);
   });
 
+  it('places a live plan.revision marker before its still-running turn', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+
+    tx.apply(projector.map(ev({ type: 'turn.started', turnId: 0, origin: { kind: 'user' }, prompt: 'do it' })));
+    tx.apply(
+      projector.map(
+        ev({ type: 'plan.revision', id: 'plan-1', version: 1, path: 'agents/main/plan/plan-1/v1.md' }),
+      ),
+    );
+    expect(tx.getItems().map((item) => item.kind)).toEqual(['marker', 'turn']);
+
+    tx.apply(
+      projector.map(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' as const })),
+    );
+    tx.apply(
+      projector.map(
+        ev({ type: 'plan.revision', id: 'plan-1', version: 2, path: 'agents/main/plan/plan-1/v2.md' }),
+      ),
+    );
+    expect(tx.getItems().map((item) => item.kind)).toEqual(['marker', 'turn', 'marker']);
+  });
+
   it('projects skill / plugin-command / cron / compaction / hook / undo markers', () => {
     const projector = new AgentTranscriptProjector('main');
     const tx = new AgentTranscript('main');

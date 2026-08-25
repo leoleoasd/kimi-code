@@ -1342,7 +1342,11 @@ export class AgentTranscriptProjector {
    * the badge via the `planMode: false` slice, as before).
    */
   private onPlanRevision(event: PlanRevisionEvent): TranscriptOperation[] {
-    const ops: TranscriptOperation[] = [this.markerOp('plan.revision', restOf(event))];
+    const beforeTurn =
+      this.currentTurn?.state === 'running' ? this.currentTurn.ordinal : undefined;
+    const ops: TranscriptOperation[] = [
+      this.markerOp('plan.revision', restOf(event), beforeTurn),
+    ];
     if (this.planModeActive) {
       ops.push({
         op: 'meta.merge',
@@ -1352,7 +1356,11 @@ export class AgentTranscriptProjector {
     return ops;
   }
 
-  private markerOp(marker: string, payload: unknown): TranscriptOperation {
+  private markerOp(
+    marker: string,
+    payload: unknown,
+    beforeTurn?: number,
+  ): TranscriptOperation {
     this.markerSeq += 1;
     const item: TranscriptMarker = {
       kind: 'marker',
@@ -1361,7 +1369,7 @@ export class AgentTranscriptProjector {
       payload,
       at: nowIso(),
     };
-    return { op: 'marker.upsert', item };
+    return { op: 'marker.upsert', item, beforeTurn };
   }
 
   private noticeOp(

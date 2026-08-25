@@ -1497,6 +1497,36 @@ describe('foldWireRecordFacts (cold facts)', () => {
     expect(reentered.meta.modes).toEqual({ plan: {} });
   });
 
+  it('places mid-turn plan markers before their owning turn, not after its content', () => {
+    const base = groupMessagesIntoSnapshot(
+      [
+        { role: 'user', content: [{ type: 'text', text: 'do it' }], toolCalls: [], origin: { kind: 'user' } },
+        { role: 'assistant', content: [{ type: 'text', text: 'done' }], toolCalls: [] },
+        { role: 'user', content: [{ type: 'text', text: 'next' }], toolCalls: [], origin: { kind: 'user' } },
+      ],
+      [0, undefined, 1],
+    );
+    const folded = foldWireRecordFacts(
+      [
+        { type: 'turn.prompt', time: 1000 },
+        { type: 'plan_mode.enter', id: 'plan-1', time: 1100 },
+        { type: 'plan.revision', id: 'plan-1', version: 1, time: 1200 },
+        { type: 'plan_mode.exit', id: 'plan-1', time: 1300 },
+        { type: 'turn.ended', turnId: 0, reason: 'completed', time: 2000 },
+        { type: 'turn.prompt', time: 3000 },
+        { type: 'turn.ended', turnId: 1, reason: 'completed', time: 4000 },
+        { type: 'plan_mode.enter', id: 'plan-2', time: 5000 },
+      ],
+      base,
+    );
+    expect(folded.items.map(idLabel)).toEqual(['m1', 'm2', 'm3', 't0', 't1', 'm4']);
+    expect(folded.items.slice(0, 3).map((i) => (i.kind === 'marker' ? i.marker : ''))).toEqual([
+      'plan.enter',
+      'plan.revision',
+      'plan.exit',
+    ]);
+  });
+
   it('folds task records into task entities and timeline taskrefs', () => {
     const base = baseWithMarker();
     const folded = foldWireRecordFacts(
