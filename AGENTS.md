@@ -10,10 +10,10 @@ Treat code, not documentation, as the source of truth. Keep this root `AGENTS.md
 
 This is the section that most often gets wrong if you copy upstream habits.
 
-- Remotes: `leoleoasd` → `git@github.com:leoleoasd/kimi-code.git` (the fork; all branches, pushes, and PRs go here). `origin` → `https://github.com/MoonshotAI/kimi-code.git` (upstream; fetch-only in practice).
-- Local `main` is the fork's mainline and is identical to `leoleoasd/main`; it currently tracks `origin/main` (upstream), so `git status` shows the fork delta as "ahead N". Branch new work off local `main`, **not** off `origin/main` — branching off `origin/main` drops the entire fork delta (the user-level workflow file says `origin/main`; for this repo that means upstream and must not be used as the branch base).
-- When invoking `gh`, always pass `-R leoleoasd/kimi-code` explicitly (issues, PRs, releases). Never push branches to, or open PRs from this checkout against, the upstream `origin` repo.
-- The fork delta is a linear stack of commits on top of upstream (`git log --oneline origin/main..main` to inspect; as of 2026-08 it is 16 commits, mainline is also behind upstream by a few commits). Upstream syncs replay this stack over the new `origin/main`; after any sync, rerun `pnpm install && pnpm typecheck && pnpm test`.
+- Remotes: `origin` → `git@github.com:leoleoasd/kimi-code.git` (the fork; all branches, pushes, and PRs go here). The upstream (`https://github.com/MoonshotAI/kimi-code.git`) is NOT configured in this checkout — add it ad hoc (e.g. as `upstream`) when syncing.
+- Local `main` is the fork's mainline and tracks `origin/main` (the fork). Branch new work off local `main` — never off an upstream-tracking ref, that would drop the entire fork delta.
+- When invoking `gh`, always pass `-R leoleoasd/kimi-code` explicitly (issues, PRs, releases). Never push branches to, or open PRs from this checkout against, the upstream repo.
+- The fork delta is a linear stack of commits on top of upstream (fetch upstream first, then `git log --oneline upstream/main..main` to inspect). Upstream syncs replay this stack over the new upstream `main`; after any sync, rerun `pnpm install && pnpm typecheck && pnpm test`.
 - The fork delta is concentrated in: `apps/kimi-hub/**`, `packages/remote-tunnel/**`, the `remote` surfaces in `apps/kimi-code`, kap-server's command bridge / transcript service, agent-core-v2's notify-user tool, `.github/workflows/`, `install.sh`, `scripts/`, README's fork header. Upstream churn in those files is where sync conflicts land.
 
 ## What This Fork Adds (delta over upstream)
