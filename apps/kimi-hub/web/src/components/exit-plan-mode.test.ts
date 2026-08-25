@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { ToolCallFrame } from '@moonshot-ai/transcript';
 
-import { resolveExitPlanDisplay } from './exit-plan-mode';
+import { planReviewDisplayPlan, resolveExitPlanDisplay } from './exit-plan-mode';
 
 function frame(overrides: Partial<ToolCallFrame>): ToolCallFrame {
   return {
@@ -95,5 +95,22 @@ describe('resolveExitPlanDisplay', () => {
   it('yields an empty plan when no source has one', () => {
     const display = resolveExitPlanDisplay(frame({ input: {}, output: 'Exited plan mode.' }));
     expect(display.plan).toBe('');
+  });
+});
+
+describe('planReviewDisplayPlan', () => {
+  it('pulls the plan out of the approval plan_review display', () => {
+    expect(planReviewDisplayPlan({ kind: 'plan_review', plan: PLAN })).toBe(PLAN);
+  });
+
+  it('parses a still-stringified display', () => {
+    expect(planReviewDisplayPlan(JSON.stringify({ kind: 'plan_review', plan: PLAN }))).toBe(PLAN);
+  });
+
+  it('ignores generic tool input', () => {
+    expect(planReviewDisplayPlan({ command: 'ls' })).toBeUndefined();
+    expect(planReviewDisplayPlan({ kind: 'plan_review', plan: '  ' })).toBeUndefined();
+    expect(planReviewDisplayPlan('not json')).toBeUndefined();
+    expect(planReviewDisplayPlan(null)).toBeUndefined();
   });
 });

@@ -106,3 +106,26 @@ export function resolveExitPlanDisplay(
     inlinePlan(frame.input) || extractApprovedPlan(output) || (recoveredPlan ?? '').trim();
   return { plan, ...base };
 }
+
+/**
+ * The pending-approval surface carries the same plan in a `plan_review`
+ * display envelope (`{kind:'plan_review', plan}` — possibly still stringified
+ * mid-stream). Returns the embedded plan markdown, or undefined when the
+ * display is not a plan review (generic tools keep the JSON fallback).
+ */
+export function planReviewDisplayPlan(display: unknown): string | undefined {
+  if (typeof display === 'string') {
+    try {
+      display = JSON.parse(display) as unknown;
+    } catch {
+      return undefined;
+    }
+  }
+  if (display === null || typeof display !== 'object' || Array.isArray(display)) {
+    return undefined;
+  }
+  const record = display as Record<string, unknown>;
+  if (record['kind'] !== 'plan_review') return undefined;
+  const plan = record['plan'];
+  return typeof plan === 'string' && plan.trim() !== '' ? plan : undefined;
+}

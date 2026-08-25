@@ -8,6 +8,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 
 import { fetchPendingApprovals, resolveApproval } from '#/sessions/interactions';
+import { planReviewDisplayPlan } from './exit-plan-mode';
+import { Markdown } from './Markdown';
 import { ActionButton, ErrorLine, JsonView } from './ui';
 
 export function ApprovalsBar({
@@ -58,39 +60,46 @@ export function ApprovalsBar({
           <ErrorLine error={error} />
         </div>
       ) : null}
-      {items.map((item) => (
-        <div
-          key={item.approvalId}
-          className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2"
-        >
-          <div className="mb-1 text-[11px] text-neutral-300">
-            <span className="text-neutral-500">tool </span>
-            {item.toolName}
-            <span className="text-neutral-500"> · </span>
-            {item.action}
+      {items.map((item) => {
+        const reviewPlan = planReviewDisplayPlan(item.toolInputDisplay);
+        return (
+          <div
+            key={item.approvalId}
+            className="mb-2 rounded border border-neutral-800 bg-neutral-950/60 p-2"
+          >
+            <div className="mb-1 text-[11px] text-neutral-300">
+              <span className="text-neutral-500">tool </span>
+              {item.toolName}
+              <span className="text-neutral-500"> · </span>
+              {item.action}
+            </div>
+            {reviewPlan !== undefined ? (
+              <div className="max-h-72 overflow-y-auto pr-1">
+                <Markdown text={reviewPlan} />
+              </div>
+            ) : item.toolInputDisplay !== undefined && item.toolInputDisplay !== null ? (
+              <JsonView data={item.toolInputDisplay} />
+            ) : null}
+            <div className="mt-2 flex flex-col gap-1.5 sm:flex-row">
+              <ActionButton
+                className="w-full sm:w-auto"
+                onClick={() => decide(item.approvalId, 'approved')}
+                disabled={busyId !== null}
+              >
+                Approve
+              </ActionButton>
+              <ActionButton
+                className="w-full sm:w-auto"
+                danger
+                onClick={() => decide(item.approvalId, 'rejected')}
+                disabled={busyId !== null}
+              >
+                Reject
+              </ActionButton>
+            </div>
           </div>
-          {item.toolInputDisplay !== undefined && item.toolInputDisplay !== null ? (
-            <JsonView data={item.toolInputDisplay} />
-          ) : null}
-          <div className="mt-2 flex flex-col gap-1.5 sm:flex-row">
-            <ActionButton
-              className="w-full sm:w-auto"
-              onClick={() => decide(item.approvalId, 'approved')}
-              disabled={busyId !== null}
-            >
-              Approve
-            </ActionButton>
-            <ActionButton
-              className="w-full sm:w-auto"
-              danger
-              onClick={() => decide(item.approvalId, 'rejected')}
-              disabled={busyId !== null}
-            >
-              Reject
-            </ActionButton>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
