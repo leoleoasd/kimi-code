@@ -113,13 +113,19 @@ vi.mock('node:child_process', async () => {
   };
 });
 
-const buildInfoState = vi.hoisted(() => ({ channel: undefined as string | undefined }));
+const buildInfoState = vi.hoisted(() => ({
+  channel: undefined as string | undefined,
+  forkVersion: undefined as string | undefined,
+}));
 
 vi.mock('../../../src/cli/build-info', () => ({
-  // Live getter: one test temporarily poses as a fork build.
+  // Live getters: tests temporarily pose as fork builds (stamped or not).
   KIMI_BUILD_INFO: {
     get channel() {
       return buildInfoState.channel;
+    },
+    get forkVersion() {
+      return buildInfoState.forkVersion;
     },
   },
 }));
@@ -287,7 +293,7 @@ describe('runUpdatePreflight', () => {
     expect(detectInstallSource).not.toHaveBeenCalled();
   });
 
-  it('skips the upstream update channel entirely for fork-channel builds', async () => {
+  it('skips all release channels for an unstamped local fork build', async () => {
     buildInfoState.channel = 'fork';
     const { options } = captureOutput();
 
@@ -298,6 +304,34 @@ describe('runUpdatePreflight', () => {
     expect(detectInstallSource).not.toHaveBeenCalled();
     expect(mocks.spawn).not.toHaveBeenCalled();
     buildInfoState.channel = undefined;
+  });
+
+  it('prompts a stamped fork build with the fork installer command', async () => {
+    buildInfoState.channel = 'fork';
+    buildInfoState.forkVersion = '0.4.0';
+    // With the background auto-installer enabled the flow never reaches the
+    // prompt; disable it to pin the manual prompt path deterministically.
+    disableAutoInstall();
+    mocks.readUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.refreshUpdateCache.mockResolvedValue(cacheWith('0.5.0'));
+    mocks.detectInstallSource.mockResolvedValue('native');
+    mocks.promptForInstallChoice.mockResolvedValue('skip');
+    const { options } = captureOutput();
+
+    try {
+      await expect(runUpdatePreflight('0.4.0', options)).resolves.toBe('continue');
+
+      expect(mocks.promptForInstallChoice).toHaveBeenCalledWith(
+        expect.objectContaining({
+          currentVersion: '0.4.0',
+          target: { version: '0.5.0' },
+          installCommand: 'curl -fsSL https://raw.githubusercontent.com/leoleoasd/kimi-code/main/install.sh | bash',
+        }),
+      );
+    } finally {
+      buildInfoState.channel = undefined;
+      buildInfoState.forkVersion = undefined;
+    }
   });
 
   it('starts an automatic update from the first fresh check when the cache is empty', async () => {

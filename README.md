@@ -16,7 +16,7 @@ Prebuilt artifacts (kimi CLI for linux/darwin × x64/arm64 + Windows, kimi-hub f
 curl -fsSL https://raw.githubusercontent.com/leoleoasd/kimi-code/main/install.sh | bash
 ```
 
-This installs `kimi` and `kimi-hub` into `~/.local/bin` (override with `--install-dir`; install one product with `--cli-only` / `--hub-only`; pin a tag with `--version <tag>`). On Windows, download the `win32-*` archive from the Releases page manually.
+This installs `kimi` and `kimi-hub` into `~/.kimi-code/bin` (mirroring the official layout; override with `--install-dir`, add the dir to PATH automatically, keep `--cli-only` / `--hub-only` to install one product, `--version <tag>` to pin). Native `kimi` installs from these releases self-update from the fork's GitHub Releases channel (same staged-swap mechanism as upstream); local builds installed via `pnpm install:local` are deliberately unstamped and never self-update. On Windows, download the `win32-*` archive from the Releases page manually.
 
 Typical setup — start a hub on a reachable machine, then attach an agent's session to it:
 

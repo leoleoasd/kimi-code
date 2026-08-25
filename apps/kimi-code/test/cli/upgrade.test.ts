@@ -4,13 +4,19 @@ import { handleUpgrade } from '#/cli/sub/upgrade';
 import type { InstallPromptChoiceValue } from '#/cli/update/prompt';
 import type { InstallSource, UpdateCache } from '#/cli/update/types';
 
-const buildInfoState = vi.hoisted(() => ({ channel: undefined as string | undefined }));
+const buildInfoState = vi.hoisted(() => ({
+  channel: undefined as string | undefined,
+  forkVersion: undefined as string | undefined,
+}));
 
 vi.mock('#/cli/build-info', () => ({
-  // Live getter: one test temporarily poses as a fork build.
+  // Live getters: tests temporarily pose as fork builds (stamped or not).
   KIMI_BUILD_INFO: {
     get channel() {
       return buildInfoState.channel;
+    },
+    get forkVersion() {
+      return buildInfoState.forkVersion;
     },
   },
 }));
@@ -84,7 +90,7 @@ function createDeps(overrides: {
 }
 
 describe('handleUpgrade', () => {
-  it('never touches the upstream release channel on a fork-channel build', async () => {
+  it('refuses to replace an unstamped local fork build', async () => {
     buildInfoState.channel = 'fork';
     try {
       const { stdout, writable } = captureOutput();
@@ -95,9 +101,35 @@ describe('handleUpgrade', () => {
       expect(deps.refreshUpdateCache).not.toHaveBeenCalled();
       expect(deps.detectInstallSource).not.toHaveBeenCalled();
       expect(deps.installUpdate).not.toHaveBeenCalled();
-      expect(stdout.join('')).toContain('fork-channel build');
+      expect(stdout.join('')).toContain('unstamped local fork build');
     } finally {
       buildInfoState.channel = undefined;
+    }
+  });
+
+  it('offers the fork installer to a stamped fork build', async () => {
+    buildInfoState.channel = 'fork';
+    buildInfoState.forkVersion = '0.4.0';
+    try {
+      const { stdout, stderr, writable } = captureOutput();
+      const deps = createDeps({ latest: '0.5.0', source: 'native' });
+
+      await expect(handleUpgrade('0.4.0', { ...deps, ...writable })).resolves.toBe(0);
+
+      expect(deps.refreshUpdateCache).toHaveBeenCalledTimes(1);
+      expect(deps.promptForInstallChoice).toHaveBeenCalledWith({
+        currentVersion: '0.4.0',
+        target: { version: '0.5.0' },
+        installCommand: 'curl -fsSL https://raw.githubusercontent.com/leoleoasd/kimi-code/main/install.sh | bash',
+        installSource: 'native',
+        changelogUrl: 'https://github.com/leoleoasd/kimi-code/releases',
+      });
+      expect(deps.installUpdate).toHaveBeenCalledWith('native', '0.5.0', 'darwin');
+      expect(stdout.join('')).toContain('Updated @moonshot-ai/kimi-code to 0.5.0');
+      expect(stderr.join('')).toBe('');
+    } finally {
+      buildInfoState.channel = undefined;
+      buildInfoState.forkVersion = undefined;
     }
   });
 

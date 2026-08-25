@@ -33,7 +33,8 @@ export interface UpdateManifest {
 }
 
 export interface UpdateCache {
-  readonly source: 'cdn';
+  /** Which release channel produced this entry (upstream CDN or fork releases). */
+  readonly source: 'cdn' | 'fork';
   readonly checkedAt: string | null;
   readonly latest: string | null;
   /** Null when the manifest came from the plain-text fallback or a legacy cache file. */

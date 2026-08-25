@@ -1,5 +1,6 @@
 import { writeUpdateCache } from './cache';
 import { fetchLatestFromCdn, type FetchLatestResult } from './cdn';
+import { fetchLatestFromForkReleases, isForkChannel } from './fork-releases';
 import { type UpdateCache } from './types';
 
 export interface RefreshUpdateCacheDeps {
@@ -13,18 +14,24 @@ export interface RefreshUpdateCacheDeps {
   readonly now: () => Date;
 }
 
+function defaultFetchLatest(): Promise<FetchLatestResult> {
+  // Fork-channel builds track the fork's GitHub Releases; everything else
+  // tracks the upstream CDN.
+  return isForkChannel() ? fetchLatestFromForkReleases() : fetchLatestFromCdn();
+}
+
 export async function refreshUpdateCache(
   overrides: Partial<RefreshUpdateCacheDeps> = {},
 ): Promise<UpdateCache> {
   const resolved: RefreshUpdateCacheDeps = {
-    fetchLatest: overrides.fetchLatest ?? (() => fetchLatestFromCdn()),
+    fetchLatest: overrides.fetchLatest ?? (() => defaultFetchLatest()),
     writeCache: overrides.writeCache ?? writeUpdateCache,
     now: overrides.now ?? (() => new Date()),
   };
 
   const { latest, manifest } = await resolved.fetchLatest();
   const cache: UpdateCache = {
-    source: 'cdn',
+    source: isForkChannel() ? 'fork' : 'cdn',
     checkedAt: resolved.now().toISOString(),
     latest,
     manifest,

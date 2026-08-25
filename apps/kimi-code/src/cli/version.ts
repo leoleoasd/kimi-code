@@ -38,6 +38,13 @@ export function getHostPackageRoot(): string {
 }
 
 export function getVersion(): string {
+  // Fork release builds report the fork release version (the tag they were cut
+  // from): update checks and the staged-swap smoke check both key on it, and it
+  // is what the user installed. Local fork builds have no stamp and fall
+  // through to the package version.
+  if (KIMI_BUILD_INFO.forkVersion !== undefined) {
+    return KIMI_BUILD_INFO.forkVersion;
+  }
   if (KIMI_BUILD_INFO.version !== undefined) {
     return KIMI_BUILD_INFO.version;
   }

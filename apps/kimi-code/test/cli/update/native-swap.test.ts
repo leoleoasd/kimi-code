@@ -22,13 +22,19 @@ const fsMocks = vi.hoisted(() => ({
   linkError: null as string | null,
 }));
 
-const buildInfoState = vi.hoisted(() => ({ channel: undefined as string | undefined }));
+const buildInfoState = vi.hoisted(() => ({
+  channel: undefined as string | undefined,
+  forkVersion: undefined as string | undefined,
+}));
 
 vi.mock('#/cli/build-info', () => ({
-  // Live getter: one test temporarily poses as a fork build.
+  // Live getters: tests temporarily pose as fork builds (stamped or not).
   KIMI_BUILD_INFO: {
     get channel() {
       return buildInfoState.channel;
+    },
+    get forkVersion() {
+      return buildInfoState.forkVersion;
     },
   },
 }));
@@ -141,7 +147,7 @@ function createSpawnMock(routes: {
 async function seedStagedUpdate(
   exePath: string,
   version: string,
-  options?: { readonly manual?: boolean },
+  options?: { readonly manual?: boolean; readonly channel?: string },
 ): Promise<void> {
   const stagingDir = getNativeStagingDir(exePath);
   await mkdir(stagingDir, { recursive: true });
@@ -159,6 +165,7 @@ async function seedStagedUpdate(
       exeSize: STAGED_EXE_SIZE,
       stagedAt: new Date().toISOString(),
       manual: options?.manual === true ? true : undefined,
+      channel: options?.channel,
     }, null, 2)}\n`,
     'utf-8',
   );
@@ -234,8 +241,8 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
     expect(calls).toHaveLength(0);
   });
 
-  it('never applies a staged payload on a fork-channel build', async () => {
-    await seedStagedUpdate(exePath, STAGED_VERSION);
+  it('never applies a staged payload on an unstamped local fork build', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION, { channel: 'fork' });
     buildInfoState.channel = 'fork';
     try {
       const { calls, spawnImpl } = createSpawnMock({});
@@ -245,10 +252,53 @@ describe('maybeRelaunchWithStagedNativeUpdate', () => {
       expect(relaunched).toBe(false);
       expect(calls).toHaveLength(0);
       expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
-      // The stage is left untouched: fork builds neither apply nor curate it.
+      // The stage is left untouched: the binary stages nothing and never swaps.
       await expect(stat(getNativeStagedStateFile(exePath))).resolves.toBeDefined();
     } finally {
       buildInfoState.channel = undefined;
+    }
+  });
+
+  it('defers a foreign-channel stage instead of applying it', async () => {
+    // An upstream-era (channel-less) payload next to a fork release binary.
+    await seedStagedUpdate(exePath, STAGED_VERSION);
+    buildInfoState.channel = 'fork';
+    buildInfoState.forkVersion = '0.9.0';
+    try {
+      const { calls, spawnImpl } = createSpawnMock({});
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl }),
+      );
+      expect(relaunched).toBe(false);
+      expect(calls).toHaveLength(0);
+      expect(await readFile(exePath, 'utf-8')).toBe('old-binary');
+      // The claim was restored: a same-channel binary still curates the stage.
+      await expect(stat(getNativeStagedStateFile(exePath))).resolves.toBeDefined();
+    } finally {
+      buildInfoState.channel = undefined;
+      buildInfoState.forkVersion = undefined;
+    }
+  });
+
+  it('applies a same-channel stage on a fork release build', async () => {
+    await seedStagedUpdate(exePath, STAGED_VERSION, { channel: 'fork' });
+    buildInfoState.channel = 'fork';
+    buildInfoState.forkVersion = CURRENT_VERSION;
+    try {
+      const { calls, spawnImpl } = createSpawnMock({});
+      const exitImpl = vi.fn();
+      const relaunched = await maybeRelaunchWithStagedNativeUpdate(
+        makeDeps(exePath, { spawnImpl, exitImpl }),
+      );
+      expect(relaunched).toBe(true);
+      // Smoke check ran with the stage's version, then the exe was re-exec'd.
+      expect(calls[0]).toMatchObject({ args: ['--version'] });
+      expect(calls).toHaveLength(2);
+      expect(exitImpl).toHaveBeenCalledWith(0);
+      await expect(stat(getNativeStagedStateFile(exePath))).rejects.toThrow();
+    } finally {
+      buildInfoState.channel = undefined;
+      buildInfoState.forkVersion = undefined;
     }
   });
 

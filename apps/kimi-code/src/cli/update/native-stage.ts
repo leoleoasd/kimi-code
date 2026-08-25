@@ -16,13 +16,18 @@ import { basename, join } from 'node:path';
 import { valid } from 'semver';
 import { z } from 'zod';
 
-import { KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME } from '#/constant/app';
+import { KIMI_BUILD_INFO } from '#/cli/build-info';
+
+import {
+  KIMI_CODE_FORK_RELEASE_DOWNLOAD_BASE,
+  KIMI_CODE_NATIVE_STAGED_STATE_FILE_NAME,
+} from '#/constant/app';
 import { getNativeStagedStateFile, getNativeStagingDir } from '#/utils/paths';
 import { writeJsonFile } from '#/utils/persistence';
 
 import {
   fetchNativeReleaseManifest,
-  nativeBinaryUrl,
+  nativeArtifactDirUrl,
   selectPlatformEntry,
 } from './native-manifest';
 
@@ -45,6 +50,13 @@ const StagedNativeUpdateSchema = z
      * still apply when automatic updates are opted out via env.
      */
     manual: z.boolean().optional(),
+    /**
+     * Build channel of the stamper (fork vs upstream). The startup swap only
+     * applies a stage whose channel matches the running build — an upstream
+     * payload must never stomp a fork exe and vice versa. Absent on records
+     * written by pre-channel binaries, which legacy swaps treat as upstream.
+     */
+    channel: z.string().min(1).optional(),
   })
   .strict();
 
@@ -121,7 +133,8 @@ function isSameStagedRecord(a: StagedNativeUpdate, b: StagedNativeUpdate): boole
     a.exeFileName === b.exeFileName &&
     a.sha256 === b.sha256 &&
     a.exeSize === b.exeSize &&
-    a.stagedAt === b.stagedAt
+    a.stagedAt === b.stagedAt &&
+    a.channel === b.channel
   );
 }
 
@@ -271,6 +284,18 @@ async function cleanupStagingOrphans(stagingDir: string): Promise<void> {
   }
 }
 
+/**
+ * The release artifact directory a staged download resolves against. Upstream
+ * CDN keys releases as `<binaries>/<version>/…`; fork GitHub Releases attach
+ * the same files flat at `releases/download/fork-v<version>/…`.
+ */
+function releaseArtifactDirForVersion(version: string): string {
+  if (KIMI_BUILD_INFO.channel === 'fork') {
+    return `${KIMI_CODE_FORK_RELEASE_DOWNLOAD_BASE}/fork-v${version}`;
+  }
+  return nativeArtifactDirUrl(version);
+}
+
 export interface StageNativeUpdateOptions {
   readonly version: string;
   /** Path of the installed executable the staged binary will later replace. */
@@ -392,7 +417,13 @@ export async function stageNativeUpdate(
   const exeFileName = uniqueStagedExeFileName(options.version, platform);
 
   const existing = await readStagedNativeUpdate(options.exePath);
-  if (existing !== null && existing.version === options.version) {
+  if (
+    existing !== null &&
+    existing.version === options.version &&
+    // Only adopt a same-channel stage: an upstream payload with a colliding
+    // version must not satisfy a fork-channel download (and vice versa).
+    (existing.channel ?? null) === (KIMI_BUILD_INFO.channel ?? null)
+  ) {
     // readStagedNativeUpdate checks only the recorded size — a same-size
     // corruption after the download (disk damage, a non-durable write)
     // would still be adopted here and reported as success, only for the
@@ -437,17 +468,19 @@ export async function stageNativeUpdate(
     exeSize: 0,
     stagedAt: new Date().toISOString(),
     manual: options.manual === true ? true : undefined,
+    channel: KIMI_BUILD_INFO.channel,
   };
 
   // The .part intermediate is just the publish name plus the suffix — the
   // name already carries this worker's unique infix, so concurrent workers
   // never interleave writes into a shared path.
   const partPath = join(stagingDir, `${exeFileName}.part`);
+  const artifactDir = releaseArtifactDirForVersion(options.version);
   try {
-    const manifest = await fetchNativeReleaseManifest(options.version, fetchImpl);
+    const manifest = await fetchNativeReleaseManifest(options.version, fetchImpl, artifactDir);
     const entry = selectPlatformEntry(manifest, platform, arch);
     const size = await downloadAndHash(
-      nativeBinaryUrl(options.version, entry.filename),
+      `${artifactDir}/${entry.filename}`,
       partPath,
       entry.checksum,
       fetchImpl,

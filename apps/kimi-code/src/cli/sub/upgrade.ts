@@ -5,6 +5,7 @@ import { KIMI_BUILD_INFO } from '#/cli/build-info';
 import { refreshUpdateCache } from '#/cli/update/refresh';
 import { selectUpdateTarget } from '#/cli/update/select';
 import { detectInstallSource } from '#/cli/update/source';
+import { KIMI_CODE_FORK_RELEASES_URL } from '#/constant/app';
 import {
   canAutoInstall,
   installCommandFor,
@@ -55,11 +56,11 @@ export async function handleUpgrade(
 ): Promise<number> {
   const deps = createDefaultUpgradeDeps(overrides);
 
-  // Fork-channel builds ship through the fork's own install path — the
-  // upstream release channel must never replace them with an upstream build.
-  if (KIMI_BUILD_INFO.channel === 'fork') {
+  // A fork build without a release stamp is a local install:local binary: no
+  // release corresponds to it, and no release line may replace local work.
+  if (KIMI_BUILD_INFO.channel === 'fork' && KIMI_BUILD_INFO.forkVersion === undefined) {
     deps.stdout.write(
-      'This is a fork-channel build; the upstream update channel does not apply.\n' +
+      'This is an unstamped local fork build; release channels do not apply.\n' +
         'Update it with the fork installer (install.sh) or pnpm install:local.\n',
     );
     return 0;
@@ -127,6 +128,7 @@ export async function handleUpgrade(
     target,
     installCommand,
     installSource: source,
+    changelogUrl: KIMI_BUILD_INFO.channel === 'fork' ? KIMI_CODE_FORK_RELEASES_URL : undefined,
   });
   if (choice === 'skip') {
     trackUpgradeEvent(deps.track, 'upgrade_command_skipped', {

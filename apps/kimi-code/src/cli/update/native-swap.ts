@@ -479,11 +479,12 @@ export async function maybeRelaunchWithStagedNativeUpdate(
   deps: NativeSwapDeps,
 ): Promise<boolean> {
   if (!deps.isNative) return false;
-  // A fork-channel build never applies staged payloads: fork updates ship
-  // through the fork's own install path (install.sh / install:local), and the
-  // fork-gated preflight never stages — any stage found here was left by a
-  // pre-guard binary and must not stomp the fork exe with an upstream build.
-  if (KIMI_BUILD_INFO.channel === 'fork') return false;
+  const runningChannel = KIMI_BUILD_INFO.channel ?? null;
+  // A fork-channel build without a release stamp is a local install:local
+  // binary — it stages nothing and never swaps.
+  if (KIMI_BUILD_INFO.channel === 'fork' && KIMI_BUILD_INFO.forkVersion === undefined) {
+    return false;
+  }
   const swapInProgress = await sweepStaleNativeUpdateArtifacts(deps.exePath);
   if (isTruthy(deps.env[KIMI_CODE_UPDATE_REEXEC_ENV])) {
     // Read-once guard: drop it so this session's children (and any nested
@@ -505,6 +506,20 @@ export async function maybeRelaunchWithStagedNativeUpdate(
   if (claimed === null) return false;
   const { staged, claimedPath } = claimed;
   const spawnImpl = deps.spawnImpl ?? spawn;
+
+  // Channel match: only a stage published by the same release channel may
+  // replace this exe — an upstream payload (or a pre-channel stage that never
+  // recorded one) must never stomp a fork binary, and vice versa. Restore the
+  // claim for a same-channel binary to curate instead of discarding.
+  if ((staged.channel ?? null) !== runningChannel) {
+    logSwap('staged update channel mismatch, deferring', {
+      staged: staged.version,
+      stagedChannel: staged.channel ?? null,
+      channel: runningChannel,
+    });
+    await restoreClaimedUpdate(deps.exePath, claimedPath);
+    return false;
+  }
 
   const discard = async (): Promise<boolean> => {
     await discardClaimedUpdate(claimedPath);

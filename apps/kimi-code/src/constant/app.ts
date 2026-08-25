@@ -94,6 +94,20 @@ export const KIMI_CODE_CDN_LATEST_JSON_URL = `${KIMI_CODE_CDN_BASE}/latest.json`
 // `/binaries/<version>/kimi-code-<target>[.exe]` — the bare platform binary
 // (same layout install.ps1 consumes).
 export const KIMI_CODE_CDN_BINARIES_BASE = `${KIMI_CODE_CDN_BASE}/binaries`;
+// Fork release channel (leoleoasd/kimi-code on GitHub Releases): the fork's
+// auto-update source of truth for fork-channel native builds. The per-release
+// `manifest.json` shares the CDN rollout-manifest shape and doubles as the
+// "latest" pointer via GitHub's releases/latest/download redirect.
+export const KIMI_CODE_FORK_REPO = 'leoleoasd/kimi-code';
+export const KIMI_CODE_FORK_RELEASES_URL = `https://github.com/${KIMI_CODE_FORK_REPO}/releases`;
+export const KIMI_CODE_FORK_LATEST_MANIFEST_URL = `${KIMI_CODE_FORK_RELEASES_URL}/latest/download/manifest.json`;
+// Per-release artifacts live at `<download>/<tag>/…`; the tag is `fork-v<version>`.
+export const KIMI_CODE_FORK_RELEASE_DOWNLOAD_BASE = `${KIMI_CODE_FORK_RELEASES_URL}/download`;
+export const KIMI_CODE_FORK_INSTALL_SH_URL = `https://raw.githubusercontent.com/${KIMI_CODE_FORK_REPO}/main/install.sh`;
+export const KIMI_CODE_FORK_INSTALL_COMMAND = `curl -fsSL ${KIMI_CODE_FORK_INSTALL_SH_URL} | bash`;
+// Windows has no fork install script; manual updates go through the zip assets.
+export const KIMI_CODE_FORK_INSTALL_COMMAND_WIN = KIMI_CODE_FORK_RELEASES_URL;
+
 export const KIMI_CODE_TIPS_BANNER_URL = 'https://cdn.kimi.com/kimi-code-tips/tips.json';
 // The marketplace catalog location constants live in the shared
 // agent-core-v2 plugin domain (kap-server consumes them from there).

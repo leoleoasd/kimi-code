@@ -8,6 +8,8 @@
 
 import { log } from '@moonshot-ai/kimi-code-sdk';
 
+import { KIMI_BUILD_INFO } from '#/cli/build-info';
+
 import {
   readUpdateInstallLockVersion,
   tryAcquireUpdateInstallLock,
@@ -87,6 +89,15 @@ export async function runUpdateDownloadCommand(
 ): Promise<number> {
   if (!detectNativeInstall()) {
     process.stderr.write('error: update download is only available in the native build\n');
+    return 1;
+  }
+  // A fork build without a release stamp is a local install:local binary: no
+  // fork release corresponds to its bytes, so it must never stage a download
+  // that a fork-stamped startup would later swap in over local work.
+  if (KIMI_BUILD_INFO.channel === 'fork' && KIMI_BUILD_INFO.forkVersion === undefined) {
+    process.stderr.write(
+      'error: this is a local fork build without a release stamp; not staging an update\n',
+    );
     return 1;
   }
   const out = process.stdout;

@@ -18,6 +18,11 @@ on:
         required: false
         type: boolean
         default: false
+      fork-tag:
+        description: 'Fork release tag (fork-vX.Y.Z). When set, its version is stamped into the binary (KIMI_CODE_FORK_VERSION) so the fork self-update channel applies; empty produces an unstamped local build.'
+        required: false
+        type: string
+        default: ''
     secrets:
       APPLE_CERTIFICATE_P12:
         required: false
@@ -38,7 +43,8 @@ jobs:
     name: Native bundle (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     env:
-      # Fork-built binaries are excluded from the CLI's upstream self-update channel.
+      # Fork-built binaries self-update from the fork's GitHub Releases, never
+      # the upstream CDN.
       KIMI_CODE_CHANNEL: fork
     strategy:
       fail-fast: false
@@ -72,6 +78,14 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Stamp fork release version
+        # Must run before the bundler: tsdown inlines KIMI_CODE_FORK_VERSION.
+        if: inputs.fork-tag != ''
+        shell: bash
+        run: echo "KIMI_CODE_FORK_VERSION=${FORK_TAG#fork-v}" >> "$GITHUB_ENV"
+        env:
+          FORK_TAG: ${{ inputs.fork-tag }}
 
       - name: Setup macOS keychain (release only)
         if: runner.os == 'macOS' && inputs.sign-macos
@@ -129,3 +143,13 @@ jobs:
             apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip
             apps/kimi-code/dist-native/artifacts/kimi-code-${{ matrix.target }}.zip.sha256
           if-no-files-found: ignore
+
+      - name: Upload bare binary artifact
+        # The unzipped executable: the fork release job publishes it for the
+        # CLI's staged self-updater (and sha256s it into the release manifest).
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.upload-artifact-prefix }}-bare-${{ matrix.target }}
+          retention-days: ${{ inputs.retention-days }}
+          path: apps/kimi-code/dist-native/bin/${{ matrix.target }}/kimi*
+          if-no-files-found: error

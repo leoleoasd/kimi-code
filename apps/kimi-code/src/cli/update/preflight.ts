@@ -6,6 +6,9 @@ import type { TelemetryProperties } from '@moonshot-ai/kimi-telemetry';
 import { KIMI_BUILD_INFO } from '#/cli/build-info';
 
 import {
+  KIMI_CODE_FORK_INSTALL_COMMAND,
+  KIMI_CODE_FORK_INSTALL_COMMAND_WIN,
+  KIMI_CODE_FORK_RELEASES_URL,
   KIMI_CODE_OFFICIAL_INSTALL_URL,
   NATIVE_INSTALL_COMMAND_UNIX,
   NATIVE_INSTALL_COMMAND_WIN,
@@ -84,6 +87,11 @@ export function installCommandFor(
     case 'homebrew':
       return 'brew upgrade kimi-code';
     case 'native':
+      // Fork-channel native installs update through the fork's GitHub
+      // Releases (bash installer on unix, the release zips on Windows).
+      if (KIMI_BUILD_INFO.channel === 'fork') {
+        return platform === 'win32' ? KIMI_CODE_FORK_INSTALL_COMMAND_WIN : KIMI_CODE_FORK_INSTALL_COMMAND;
+      }
       return platform === 'win32' ? NATIVE_INSTALL_COMMAND_WIN : NATIVE_INSTALL_COMMAND_UNIX;
     case 'unsupported':
       return `npm install -g ${NPM_PACKAGE_NAME}@${version}`;
@@ -227,9 +235,13 @@ export function renderInstallSuccessMessage(target: UpdateTarget): string {
   return `Updated ${NPM_PACKAGE_NAME} to ${target.version}. Restart the CLI to use the new version.\n`;
 }
 
+function changelogUrl(): string {
+  return KIMI_BUILD_INFO.channel === 'fork' ? KIMI_CODE_FORK_RELEASES_URL : CHANGELOG_URL;
+}
+
 function renderBackgroundInstallSuccessNotice(version: string): string {
   const displayVersion = version.startsWith('v') ? version : `v${version}`;
-  return `Kimi Code updated to ${displayVersion}\nChangelog: ${CHANGELOG_URL}\n`;
+  return `Kimi Code updated to ${displayVersion}\nChangelog: ${changelogUrl()}\n`;
 }
 
 function refreshInBackground(): void {
@@ -571,6 +583,7 @@ async function promptInstall(
     target,
     installSource: source,
     installCommand,
+    changelogUrl: changelogUrl(),
   };
   return promptForInstallChoice(options);
 }
@@ -786,10 +799,13 @@ export async function runUpdatePreflight(
   const logger = options.logger ?? log;
   const platform = process.platform;
 
-  // A fork-channel build ships through the fork's own install script /
-  // install:local loop: the upstream CDN manifest must never stomp it with
-  // an upstream release (upstream builds lack every fork feature).
-  if (KIMI_BUILD_INFO.channel === 'fork' || isAutoUpdateDisabledByEnv()) {
+  // Fork-release builds update from the fork's GitHub Releases; fork builds
+  // without a release stamp are local install:local binaries (no matching
+  // release exists) and must not be stomped by any release line.
+  if (KIMI_BUILD_INFO.channel === 'fork' && KIMI_BUILD_INFO.forkVersion === undefined) {
+    return 'continue';
+  }
+  if (isAutoUpdateDisabledByEnv()) {
     return 'continue';
   }
 

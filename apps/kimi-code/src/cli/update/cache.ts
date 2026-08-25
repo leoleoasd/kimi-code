@@ -10,7 +10,7 @@ import { emptyUpdateCache, type UpdateCache } from './types';
 // as no manifest so one bad optional field does not discard the whole cache.
 const UpdateCacheSchema = z
   .object({
-    source: z.literal('cdn'),
+    source: z.union([z.literal('cdn'), z.literal('fork')]),
     checkedAt: z.string().min(1).nullable(),
     latest: z.string().min(1).nullable(),
     manifest: z.preprocess((value) => {

@@ -52,6 +52,9 @@ export default defineConfig({
     __KIMI_CODE_CHANNEL__: JSON.stringify(process.env['KIMI_CODE_CHANNEL'] ?? ''),
     __KIMI_CODE_COMMIT__: JSON.stringify(process.env['KIMI_CODE_COMMIT'] ?? ''),
     __KIMI_CODE_BUILD_TARGET__: JSON.stringify(buildTarget()),
+    // Fork release stamp (the tag without `fork-v`): set only by the fork
+    // release workflow. Local builds leave it empty so they never self-update.
+    __KIMI_CODE_FORK_VERSION__: JSON.stringify(process.env['KIMI_CODE_FORK_VERSION'] ?? ''),
     __KIMI_CODE_NATIVE_BUNDLE__: 'true',
   },
   deps: {

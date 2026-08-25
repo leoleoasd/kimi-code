@@ -37,12 +37,14 @@ jobs:
       upload-artifact-prefix: kimi-code-native
       retention-days: 3
       sign-macos: false
+      fork-tag: ${{ inputs.tag != '' && inputs.tag || github.ref_name }}
 
   hub:
     name: Hub SEA (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     env:
-      # Fork-built binaries are excluded from the CLI's upstream self-update channel.
+      # Hub binaries are fork-channel stamped but ship standalone (no hub
+      # self-updater — install.sh / install:local only).
       KIMI_CODE_CHANNEL: fork
     strategy:
       fail-fast: false
@@ -96,6 +98,14 @@ jobs:
             apps/kimi-hub/server/dist-native/artifacts/kimi-hub-${{ matrix.target }}.zip
             apps/kimi-hub/server/dist-native/artifacts/kimi-hub-${{ matrix.target }}.zip.sha256
 
+      - name: Upload bare hub artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: kimi-hub-bare-${{ matrix.target }}
+          retention-days: 3
+          path: apps/kimi-hub/server/dist-native/bin/${{ matrix.target }}/kimi-hub
+          if-no-files-found: error
+
   release:
     name: Publish release
     needs: [cli, hub]
@@ -119,16 +129,77 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Download bare CLI binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-code-native-bare-*
+          path: bare
+
+      - name: Download bare hub binaries
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kimi-hub-bare-*
+          path: bare
+
+      # Bare executables + a release manifest the CLI's staged self-updater
+      # consumes: version checks read this same file via releases/latest, and
+      # staging downloads `manifest.json` + the binary from the tagged release.
+      - name: Build bare assets and release manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#fork-v}"
+          mkdir -p assets
+          manifest="assets/manifest.json"
+          {
+            printf '{\n'
+            printf '  "version": "%s",\n' "$version"
+            printf '  "publishedAt": "%s",\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            printf '  "rollout": [],\n'
+            printf '  "platforms": {\n'
+          } > "$manifest"
+          first=1
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64 win32-x64 win32-arm64; do
+            src=""
+            for candidate in "bare/kimi-code-native-bare-$target/kimi" "bare/kimi-code-native-bare-$target/kimi.exe"; do
+              if [ -f "$candidate" ]; then src="$candidate"; break; fi
+            done
+            if [ -z "$src" ]; then
+              echo "::error ::missing CLI binary for $target"
+              exit 1
+            fi
+            name="kimi-code-$target"
+            case "$target" in win32-*) name="kimi-code-$target.exe" ;; esac
+            cp "$src" "assets/$name"
+            checksum="$(sha256sum "assets/$name" | cut -d' ' -f1)"
+            printf '%s  %s\n' "$checksum" "$name" > "assets/$name.sha256"
+            if [ "$first" = 0 ]; then printf ',\n' >> "$manifest"; fi
+            first=0
+            printf '    "%s": { "filename": "%s", "checksum": "%s" }' "$target" "$name" "$checksum" >> "$manifest"
+          done
+          printf '\n  }\n}\n' >> "$manifest"
+          for target in linux-x64 linux-arm64 darwin-x64 darwin-arm64; do
+            src="bare/kimi-hub-bare-$target/kimi-hub"
+            if [ ! -f "$src" ]; then
+              echo "::error ::missing hub binary for $target"
+              exit 1
+            fi
+            cp "$src" "assets/kimi-hub-$target"
+            printf '%s  %s\n' "$(sha256sum "assets/kimi-hub-$target" | cut -d' ' -f1)" "kimi-hub-$target" \
+              > "assets/kimi-hub-$target.sha256"
+          done
+          cat "$manifest"
+
       - name: Publish GitHub Release
         shell: bash
         run: |
           set -euo pipefail
-          ls -la dist
+          ls -la dist assets
           args=(--repo "$GITHUB_REPOSITORY" --title "$RELEASE_TAG" --notes "Fork build: kimi CLI native bundles + kimi-hub SEA executables.")
           if [ "$PRERELEASE" = "true" ] || [ "$PRERELEASE" = "1" ]; then args+=(--prerelease); fi
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$RELEASE_TAG" dist/*.zip dist/*.zip.sha256 --clobber --repo "$GITHUB_REPOSITORY"
+            gh release upload "$RELEASE_TAG" dist/*.zip dist/*.zip.sha256 assets/* --clobber --repo "$GITHUB_REPOSITORY"
             gh release edit "$RELEASE_TAG" "${args[@]}"
           else
-            gh release create "$RELEASE_TAG" dist/*.zip dist/*.zip.sha256 "${args[@]}"
+            gh release create "$RELEASE_TAG" dist/*.zip dist/*.zip.sha256 assets/* "${args[@]}"
           fi

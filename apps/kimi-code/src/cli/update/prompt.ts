@@ -28,6 +28,8 @@ export interface InstallPromptOptions {
   readonly target: UpdateTarget;
   readonly installCommand: string;
   readonly installSource: InstallSource;
+  /** Release-notes link shown in the prompt; defaults to the upstream changelog. */
+  readonly changelogUrl?: string;
   readonly input?: NodeJS.ReadStream;
   readonly output?: NodeJS.WriteStream;
 }
@@ -63,16 +65,17 @@ function renderInstallPrompt(
   choices: readonly InstallPromptChoice[],
   selectedIndex: number,
 ): readonly string[] {
+  const changelog = options.changelogUrl ?? CHANGELOG_URL;
   const label = chalk.hex(UPDATE_PROMPT_TEXT_DIM).bold;
   const currentVersion = chalk.hex(UPDATE_PROMPT_WARNING).bold(options.currentVersion);
   const targetVersion = chalk.hex(UPDATE_PROMPT_SUCCESS).bold(options.target.version);
   const sourceLabel = chalk.hex(UPDATE_PROMPT_PRIMARY).bold(options.installSource);
   const command = chalk.hex(UPDATE_PROMPT_PRIMARY)(options.installCommand);
-  const changelogText = chalk.hex(UPDATE_PROMPT_PRIMARY).underline(`View changelog: ${CHANGELOG_URL}`);
+  const changelogText = chalk.hex(UPDATE_PROMPT_PRIMARY).underline(`View changelog: ${changelog}`);
   const lines = [
     chalk.hex(UPDATE_PROMPT_PRIMARY).bold('Kimi Code Update Available'),
     chalk.hex(UPDATE_PROMPT_MUTED)(`${PRODUCT_NAME} has a newer release ready.`),
-    `]8;;${CHANGELOG_URL}\\${changelogText}]8;;\\`,
+    `]8;;${changelog}\\${changelogText}]8;;\\`,
     '',
     `${label('Current')}  ${currentVersion}`,
     `${label('Target ')}  ${targetVersion}`,

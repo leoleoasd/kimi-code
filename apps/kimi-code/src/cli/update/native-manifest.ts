@@ -32,12 +32,31 @@ export const NativeReleaseManifestSchema = z.object({
 export type NativeReleaseManifest = z.infer<typeof NativeReleaseManifestSchema>;
 export type NativePlatformEntry = z.infer<typeof PlatformEntrySchema>;
 
-export function nativeManifestUrl(version: string): string {
-  return `${KIMI_CODE_CDN_BINARIES_BASE}/${version}/manifest.json`;
+/**
+ * The full URL of one release's artifact directory: upstream CDN lays
+ * artifacts out as `<binaries>/<version>/<file>`; fork GitHub Releases attach
+ * them flat at `<repo>/releases/download/fork-v<version>/<file>`.
+ */
+export function nativeArtifactDirUrl(
+  version: string,
+  base: string = KIMI_CODE_CDN_BINARIES_BASE,
+): string {
+  return `${base}/${version}`;
 }
 
-export function nativeBinaryUrl(version: string, filename: string): string {
-  return `${KIMI_CODE_CDN_BINARIES_BASE}/${version}/${filename}`;
+export function nativeManifestUrl(
+  version: string,
+  base: string = KIMI_CODE_CDN_BINARIES_BASE,
+): string {
+  return `${nativeArtifactDirUrl(version, base)}/manifest.json`;
+}
+
+export function nativeBinaryUrl(
+  version: string,
+  filename: string,
+  base: string = KIMI_CODE_CDN_BINARIES_BASE,
+): string {
+  return `${nativeArtifactDirUrl(version, base)}/${filename}`;
 }
 
 /**
@@ -47,11 +66,14 @@ export function nativeBinaryUrl(version: string, filename: string): string {
  *
  * `version` goes into the URL, so it must be a valid semver (it always is:
  * upstream sources are the CDN `latest.json` / the `upgrade` command).
- * `fetchImpl` is injectable for tests.
+ * `artifactDir` overrides the whole artifact-directory URL for release
+ * channels whose layout is not `<base>/<version>` (fork GitHub Releases are
+ * `…/releases/download/fork-v<version>`). `fetchImpl` is injectable for tests.
  */
 export async function fetchNativeReleaseManifest(
   version: string,
   fetchImpl: typeof fetch = fetch,
+  artifactDir: string = nativeArtifactDirUrl(version),
 ): Promise<NativeReleaseManifest> {
   if (valid(version) === null) {
     throw new Error(`invalid semver for native manifest lookup: ${JSON.stringify(version)}`);
@@ -64,7 +86,7 @@ export async function fetchNativeReleaseManifest(
   // proxy can deliver headers within the limit and then stall mid-body, and
   // resolving `fetch()` alone would clear the timer and hang the worker.
   try {
-    const response = await fetchImpl(nativeManifestUrl(version), { signal: controller.signal });
+    const response = await fetchImpl(`${artifactDir}/manifest.json`, { signal: controller.signal });
     if (!response.ok) {
       throw new Error(`native manifest for ${version} returned HTTP ${response.status}`);
     }
