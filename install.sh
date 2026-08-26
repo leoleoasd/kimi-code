@@ -267,7 +267,7 @@ fi
 
 if [ "$WANT_HUB" = 1 ]; then
   hub_name="kimi-hub-$TARGET"
-  _log "downloading $hub_name…"
+  _log "downloading ${hub_name}…"
   if _download "$BASE_URL/$hub_name" "$TMP/kimi-hub" 2>/dev/null; then
     expected="$(_download "$BASE_URL/$hub_name.sha256")"
     [ -n "$expected" ] || _err "$hub_name.sha256 is empty or unreachable at $BASE_URL"
