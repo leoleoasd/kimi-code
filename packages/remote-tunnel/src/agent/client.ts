@@ -480,7 +480,10 @@ function fillAgentDefaults(agent: Partial<AgentInfo>): AgentInfo {
     arch: agent.arch ?? process.arch,
     version: agent.version,
     cwd: agent.cwd ?? process.cwd(),
-    pid: agent.pid ?? process.pid,
+    // pid is NOT defaulted: declaring one is the agent's opt-in to being
+    // hub-stoppable (kimi headless passes its own pid; interactive hosts like
+    // the TUI `/remote connect` must never be killable through the hub).
+    pid: agent.pid,
     scope: agent.scope,
   };
 }

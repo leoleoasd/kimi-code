@@ -28,6 +28,8 @@ import {
   wireNotifyBridge,
 } from '../remote/shared';
 
+import { createHeadlessCommandBridge } from './commands';
+
 export interface HeadlessOptions {
   /** Hub origin: `http(s)://` or `ws(s)://`; the tunnel client appends `/internal/tunnel`. */
   readonly hubUrl: string;
@@ -55,8 +57,14 @@ export async function runHeadless(options: HeadlessOptions): Promise<never> {
   let tunnel: TunnelClientHandle | undefined;
   let hubTools: { dispose(): void } | undefined;
 
+  let resolveCore!: (core: Scope) => void;
+  const coreReady = new Promise<Scope>((resolve) => {
+    resolveCore = resolve;
+  });
+
   const hooks: StartForegroundHooks = {
     onReady: (origin, server) => {
+      resolveCore(server.core);
       // Read the token only once the server is up: a fresh server writes
       // `server.token` on first boot (same timing as `kimi web`).
       const localToken = tryResolveServerToken(getDataDir());
@@ -131,7 +139,9 @@ export async function runHeadless(options: HeadlessOptions): Promise<never> {
     },
   };
 
-  return startApiServerForeground(options.serverOptions, hooks);
+  return startApiServerForeground(options.serverOptions, hooks, {
+    commandBridge: createHeadlessCommandBridge(coreReady),
+  });
 }
 
 async function createSession(core: Scope, title: string | undefined): Promise<string> {

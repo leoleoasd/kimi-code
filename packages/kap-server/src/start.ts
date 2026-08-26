@@ -200,6 +200,16 @@ export interface ServerStartOptions {
    * answers `40421 command.unavailable`, the catalog is empty).
    */
   readonly commandBridge?: SessionCommandBridge;
+  /**
+   * Host-injected handler for `POST /api/v1/shutdown`: when set, the route
+   * invokes it (after flushing its `ok` reply) instead of just closing this
+   * server. Embedding hosts whose server IS the process (the CLI's
+   * `kimi web` / `kimi remote connect` / `kimi headless` runner) pass their
+   * full shutdown path here so a remote stop tears down tunnels and exits;
+   * hosts embedding the server inside a longer-lived app (the TUI) leave it
+   * unset and keep the close-only behavior.
+   */
+  readonly shutdownHandler?: () => void;
 }
 
 export interface RunningServer {
@@ -490,9 +500,9 @@ export async function startServer(opts: ServerStartOptions): Promise<RunningServ
       opts.pluginMarketplaceUrl === undefined &&
       (process.env['KIMI_CODE_PLUGIN_MARKETPLACE_URL'] === undefined ||
         process.env['KIMI_CODE_PLUGIN_MARKETPLACE_FROM_DEV_SERVER'] === '1'),
-    onShutdown: () => {
+    onShutdown: opts.shutdownHandler ?? (() => {
       void close().catch((err: unknown) => logger.error({ err }, 'server close failed'));
-    },
+    }),
     connectionRegistry,
     broadcaster,
     transcriptService,

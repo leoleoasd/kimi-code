@@ -16,6 +16,7 @@ import {
   fetchSessionStatus,
   sendPrompt,
   setSessionModel,
+  shutdownAgentServer,
   steerQueuedPrompt,
 } from './api';
 
@@ -198,6 +199,29 @@ describe('abortQueuedPrompt', () => {
     expect(calls[0]).toBe(
       'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts/p%202:abort?agent_id=sub2',
     );
+  });
+});
+
+describe('shutdownAgentServer', () => {
+  it('posts to the agent server /api/v1/shutdown path', async () => {
+    const calls: string[] = [];
+    await shutdownAgentServer({
+      ...ENDPOINT,
+      fetchImpl: async (input) => {
+        calls.push(requestUrl(input));
+        return jsonResponse({ code: 0, msg: 'ok', data: { ok: true } });
+      },
+    });
+    expect(calls).toEqual(['http://hub.example.com/agents/a1/api/v1/shutdown']);
+  });
+
+  it('surfaces a business error (route disabled) as a rejection', async () => {
+    await expect(
+      shutdownAgentServer({
+        ...ENDPOINT,
+        fetchImpl: async () => jsonResponse({ code: 50001, msg: 'shutdown unavailable', data: null }),
+      }),
+    ).rejects.toThrow(EnvelopeError);
   });
 });
 

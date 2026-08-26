@@ -20,6 +20,9 @@
  *     unguessable, and prompt bodies stay session-checked;
  *   - `/{v1|v2}/sessions/{sid}/...` (any subpath, any method): allowed iff
  *     `sid` is in scope;
+ *   - `POST /api/v1/shutdown` (process control — only when the agent's hello
+ *     declared a `pid`, i.e. it is a self-identified daemon such as
+ *     `kimi headless`; the hub web gates its Stop button on the same field);
  *   - `GET /api/v1/sessions` + `GET /api/v2/sessions`: forwarded, and the
  *     successful JSON envelope body is filtered so every `data.*` array of
  *     session objects keeps only entries whose `id` is in scope
@@ -95,6 +98,7 @@ export function decideScopedRequest(
   scope: ReadonlySet<string>,
   method: string,
   rawPath: string,
+  opts?: { readonly daemonPid?: number },
 ): ScopedDecision {
   const q = rawPath.indexOf('?');
   const pathname = q === -1 ? rawPath : rawPath.slice(0, q);
@@ -109,6 +113,10 @@ export function decideScopedRequest(
     const sessionId = sessionMatch[1]!;
     if (scope.has(sessionId)) return { kind: 'forward' };
     return { kind: 'deny', reason: `session ${sessionId} is outside this agent's scope` };
+  }
+
+  if (upperMethod === 'POST' && pathname === '/api/v1/shutdown' && opts?.daemonPid !== undefined) {
+    return { kind: 'forward' };
   }
 
   if (FILES_PATH_PATTERN.test(pathname)) {

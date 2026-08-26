@@ -44,7 +44,12 @@ hub web UI lists and controls all their sessions.
 - `GET /hub/api/agents` → `{ agents: HubAgentInfo[] }` where
   `HubAgentInfo = { agentId, name, platform, arch, version?, cwd?, pid?, connectedAt, scope?: { sessions: string[] } }`
   (`connectedAt` is epoch ms; `agentId` is per-connection, a fresh id on
-  reconnect with the same `name`). Connections can be per-session: a scoped
+  reconnect with the same `name`; `pid` is an OPT-IN: only self-identified
+  daemons declare it — `kimi headless` passes its own pid, interactive hosts
+  like the TUI `/remote connect` deliberately do not, because a present pid
+  makes the agent stoppable through the hub: the proxy forwards
+  `POST /api/v1/shutdown` for scoped agents only when the roster entry carries
+  one, and the web UI gates its stop button on the same field). Connections can be per-session: a scoped
   agent's `scope.sessions` lists the session ids it exposes, and the web UI
   renders those as one FLAT remote-session list (session-centric, agent shown
   as subtitle). Agents without `scope` are legacy connectors — the UI keeps a

@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { type RunningServer, startServer } from '../src/start';
 import { TEST_HOST_IDENTITY } from './helpers/hostIdentity';
@@ -113,6 +113,30 @@ describe('server-v2 exposure hardening hooks', () => {
       headers: { authorization: `Bearer ${token}` },
     });
     expect(terminals.statusCode).toBe(404);
+  });
+
+  it('routes POST /api/v1/shutdown to a host-injected handler when one is set', async () => {
+    const onShutdown = vi.fn();
+    server = await startServer({
+      hostIdentity: TEST_HOST_IDENTITY,
+      host: '127.0.0.1',
+      port: 0,
+      homeDir: home,
+      logLevel: 'silent',
+      shutdownHandler: onShutdown,
+    });
+    const token = server.authTokenService.getToken();
+    const res = await server.app.inject({
+      method: 'POST',
+      url: '/api/v1/shutdown',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    expect((res.json() as Record<string, unknown>)['code']).toBe(0);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(onShutdown).toHaveBeenCalledOnce();
+    const health = await server.app.inject({ method: 'GET', url: '/api/v1/healthz' });
+    expect(health.statusCode).toBe(200);
   });
 
   it('can explicitly re-enable terminal routes on non-loopback', async () => {

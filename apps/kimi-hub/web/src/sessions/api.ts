@@ -284,6 +284,16 @@ export async function abortSession(endpoint: HttpEndpoint & { sessionId: string 
   });
 }
 
+/**
+ * Ask the agent's server to shut itself down (kap-server `POST /api/v1/shutdown`).
+ * A kimi-headless daemon takes its full graceful exit path on this — the row
+ * greys out on the next roster refresh. The reply races the process exit, so a
+ * transport-level rejection after the fact is indistinguishable from success.
+ */
+export async function shutdownAgentServer(endpoint: HttpEndpoint): Promise<void> {
+  await postJson({ ...endpoint, path: '/api/v1/shutdown' });
+}
+
 // ------------------------------------------------------------------ model catalog
 
 /**

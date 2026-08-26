@@ -62,6 +62,7 @@ import {
   sendPrompt,
   sessionInfoQueryKey,
   setSessionModel,
+  shutdownAgentServer,
   steerQueuedPrompt,
   undoSession,
 } from '#/sessions/api';
@@ -133,6 +134,7 @@ export function ChatView({
   sessionId,
   agentOffline,
   agentName: _agentName,
+  agentPid,
   onSessionMetaUpdated,
 }: {
   /** The agent's proxy base (`${hubOrigin}/agents/{agentId}`). */
@@ -147,6 +149,12 @@ export function ChatView({
   agentOffline?: boolean;
   /** The agent's display name — goes into OS notification bodies. */
   agentName?: string;
+  /**
+   * Headless daemons publish their pid (TUI `/remote connect` doesn't) — its
+   * presence gates the header's "Stop agent" button, so the button only ever
+   * shows where remote shutdown means "the daemon exits".
+   */
+  agentPid?: number;
   /** Global WS meta frames (rename / auto-title) — stamped with this (agent, session)'s cache. */
   onSessionMetaUpdated: (meta: SessionMetaUpdated) => void;
 }) {
@@ -763,6 +771,12 @@ export function ChatView({
           <ActionButton danger onClick={() => abortTurn().catch(setViewError)}>
             Abort
           </ActionButton>
+        ) : null}
+        {agentPid !== undefined && agentOffline !== true ? (
+          <StopAgentButton
+            onStop={() => shutdownAgentServer({ baseUrl, token })}
+            onError={setViewError}
+          />
         ) : null}
       </div>
 
@@ -1740,5 +1754,52 @@ function ImageThumb({ src, alt }: { src: string; alt: string }) {
         </div>
       ) : null}
     </>
+  );
+}
+
+/**
+ * The header's agent kill switch (headless daemons only — the prop is gated
+ * on the roster pid). Two-tap inline confirm: the first tap arms it for a few
+ * seconds, the second POSTs /api/v1/shutdown. A transport rejection right
+ * after the POST usually just means the process died before the response
+ * raced back through the tunnel — surfaced anyway; the roster going grey is
+ * the real confirmation.
+ */
+function StopAgentButton({
+  onStop,
+  onError,
+}: {
+  onStop: () => Promise<void>;
+  onError: (error: unknown) => void;
+}) {
+  const [armed, setArmed] = useState(false);
+  useEffect(() => {
+    if (!armed) return;
+    const timer = setTimeout(() => {
+      setArmed(false);
+    }, 3000);
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [armed]);
+  return (
+    <ActionButton
+      danger={armed}
+      title="stop the agent process on the remote machine (headless daemon exits; its rows go offline)"
+      onClick={async () => {
+        if (!armed) {
+          setArmed(true);
+          return;
+        }
+        setArmed(false);
+        try {
+          await onStop();
+        } catch (error) {
+          onError(error);
+        }
+      }}
+    >
+      {armed ? 'Confirm stop' : 'Stop agent'}
+    </ActionButton>
   );
 }

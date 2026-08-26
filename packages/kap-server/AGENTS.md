@@ -12,6 +12,8 @@ No comments — no file headers, no section banners, no statement-level narratio
 
 `ServerStartOptions.commandBridge` (`src/transport/commandBridge.ts`) is the other host-injection seam: the slash-command GRAMMAR belongs to the host (the TUI's registry + dispatch), not to kap-server, so remote clients run it through `POST /sessions/{id}:command` (raw line in, surfaced lines out) and enumerate it through `GET /sessions/{id}/commands` (composer hints). Unbridged servers answer `40421 command.unavailable` and an empty catalog — never a fallback interpreter.
 
+`ServerStartOptions.shutdownHandler` overrides what `POST /api/v1/shutdown` does after its `ok` reply: unset → the default close of this server; set → the host's own path (the CLI runner's full shutdown incl. tunnel teardown + process exit — for CLI hosts the server IS the process).
+
 ## Routes
 
 - Session create/resume/fork routes go through the App-scope `ISessionManager`, which seats on `IWorkspaceInstanceManager.getOrCreate` → `Program.createSessionController()`; the fs routes resolve session → workspace instance → the Workspace-scope fs services. One exception: `fs:search` also accepts a workspace reference (registered id or absolute root) in the `{session_id}` slot, so a not-yet-created draft session's `@` file mention resolves the workspace instance directly; the first-class session-less form is `POST /api/v1/workspace/fs:search` (the workspace reference travels in the body).

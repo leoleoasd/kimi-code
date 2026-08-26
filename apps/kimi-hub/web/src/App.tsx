@@ -363,6 +363,7 @@ export function App() {
             sessionId={sessionId}
             agentOffline={selectedAgentOffline}
             agentName={displayAgent.name}
+            agentPid={displayAgent.pid}
             onSessionMetaUpdated={(meta) => {
               // kap-server fans `session.meta.updated` out on the WS with no
               // subscription (a TUI /rename lands here live): refresh the

@@ -268,6 +268,10 @@ async function startScopedAgentServer(): Promise<ScopedLocalServer> {
       envelope({ id: 'f-x', name: 'pasted.png', media_type: 'image/png', size: 3, created_at: 1 });
       return;
     }
+    if (req.method === 'POST' && url.pathname === '/api/v1/shutdown') {
+      envelope({ ok: true });
+      return;
+    }
     if (req.method === 'GET' && url.pathname === '/api/v1/files/f-x') {
       res.writeHead(200, { 'content-type': 'image/png' });
       res.end('PNG');
@@ -560,7 +564,7 @@ interface ScopedHubContext {
   wsOrigin: string;
 }
 
-async function setupScopedHub(agent: { name: string; scope?: { sessions: string[] } }): Promise<ScopedHubContext> {
+async function setupScopedHub(agent: { name: string; scope?: { sessions: string[] }; pid?: number }): Promise<ScopedHubContext> {
   const webDist = await mkdtemp(join(tmpdir(), 'kimi-hub-web-'));
   await writeFile(join(webDist, 'index.html'), '<!doctype html><title>kimi-hub-test-ui</title>\n');
 
@@ -576,7 +580,7 @@ async function setupScopedHub(agent: { name: string; scope?: { sessions: string[
   const client = startTunnelClient({
     hubUrl: hub.origin,
     token: HUB_TOKEN,
-    agent: { name: agent.name, platform: 'test-platform', arch: 'test-arch', scope: agent.scope },
+    agent: { name: agent.name, platform: 'test-platform', arch: 'test-arch', scope: agent.scope, pid: agent.pid },
     local: { httpBase: local.httpBase, token: LOCAL_TOKEN },
     reconnect: false,
   });
@@ -670,6 +674,11 @@ describe('session-scoped agent', () => {
     const create = await scopedFetch(ctx, '/api/v1/sessions', { method: 'POST', body: '{}' });
     expect(create.status).toBe(403);
     expect(((await create.json()) as { code: number }).code).toBe(40302);
+
+    // A scoped agent WITHOUT a declared pid is never stoppable through the hub.
+    const shutdown = await scopedFetch(ctx, '/api/v1/shutdown', { method: 'POST', body: '{}' });
+    expect(shutdown.status).toBe(403);
+    expect(((await shutdown.json()) as { code: number }).code).toBe(40302);
   });
 
   it('(a) action-suffix routes match the scope on the id segment (<sid>:abort …)', async () => {
@@ -871,6 +880,38 @@ describe('session-scoped agent', () => {
       ws.close();
       await once(ws, 'close');
     }
+  });
+});
+
+/* ------------------------- session-scoped daemon (pid) ------------------------- */
+
+describe('session-scoped daemon (pid-carrying agent)', () => {
+  let ctx: ScopedHubContext;
+
+  beforeAll(async () => {
+    ctx = await setupScopedHub({
+      name: 'scoped-daemon',
+      scope: { sessions: [SCOPE_IN] },
+      pid: 4242,
+    });
+  }, 15_000);
+
+  afterAll(async () => {
+    await teardownScopedHub(ctx);
+  });
+
+  it('forwards POST /api/v1/shutdown — a self-identified daemon is hub-stoppable', async () => {
+    const res = await scopedFetch(ctx, '/api/v1/shutdown', { method: 'POST', body: '{}' });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { code: number; data: { ok: boolean } };
+    expect(body.code).toBe(0);
+    expect(body.data.ok).toBe(true);
+  });
+
+  it('still gates everything else the scope gates', async () => {
+    const res = await scopedFetch(ctx, '/api/v1/config');
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: number }).code).toBe(40302);
   });
 });
 

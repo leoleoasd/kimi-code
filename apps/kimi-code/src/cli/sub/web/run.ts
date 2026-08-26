@@ -16,6 +16,7 @@ import {
   startServer,
   type RunningServer,
   type ServerLogger,
+  type SessionCommandBridge,
 } from '@moonshot-ai/kap-server';
 import { shutdownTelemetry, track } from '@moonshot-ai/kimi-telemetry';
 import chalk from 'chalk';
@@ -78,6 +79,16 @@ export interface StartForegroundHooks {
    * server still listening (e.g. the hub tunnel of `kimi remote connect`).
    */
   onShutdown?: () => void | Promise<void>;
+}
+
+/**
+ * Extra host seams for the embedded kap-server, orthogonal to the lifecycle
+ * hooks: today only the slash-command bridge a headless host publishes
+ * (`kimi headless`); the TUI instead injects its bridge on its own
+ * `startServer` call.
+ */
+export interface StartServerExtras {
+  readonly commandBridge?: SessionCommandBridge;
 }
 
 export interface WebCommandDeps {
@@ -240,8 +251,9 @@ function formatDangerNoticeLines(): string[] {
 export async function startServerForeground(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks = {},
+  extras: StartServerExtras = {},
 ): Promise<never> {
-  return runServerInProcess(options, hooks, true);
+  return runServerInProcess(options, hooks, true, extras);
 }
 
 /**
@@ -252,8 +264,9 @@ export async function startServerForeground(
 export async function startApiServerForeground(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks = {},
+  extras: StartServerExtras = {},
 ): Promise<never> {
-  return runServerInProcess(options, hooks, false);
+  return runServerInProcess(options, hooks, false, extras);
 }
 
 /**
@@ -266,6 +279,7 @@ async function runServerInProcess(
   options: ParsedServerOptions,
   hooks: StartForegroundHooks,
   serveWebAssets: boolean,
+  extras: StartServerExtras,
 ): Promise<never> {
   const version = getVersion();
   // Registers the telemetry provider for `track` / `shutdownTelemetry`; the
@@ -332,6 +346,11 @@ async function runServerInProcess(
     // only covers host-level events.
     telemetry: true,
     webAssetsDir,
+    commandBridge: extras.commandBridge,
+    // A remote `POST /api/v1/shutdown` takes the same graceful path as
+    // SIGTERM (hooks.onShutdown → close → exit) — for a CLI host the server
+    // IS the process, so merely closing the socket would leave a corpse.
+    shutdownHandler: () => void shutdown('remote shutdown'),
   });
   logger.info(
     serveWebAssets

@@ -265,7 +265,8 @@ describe('remote-tunnel', () => {
       expect(info.name).toBe(hostname());
       expect(info.platform).toBe(process.platform);
       expect(info.arch).toBe(process.arch);
-      expect(info.pid).toBe(process.pid);
+      // No explicit pid → the agent is NOT hub-stoppable (pid is an opt-in).
+      expect(info.pid).toBeUndefined();
       expect(info.cwd).toBe(process.cwd());
       expect(info.version).toBeUndefined();
       expect(info.connectedAt).toBeGreaterThan(0);

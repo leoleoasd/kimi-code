@@ -33,6 +33,8 @@ A headless agent (no terminal at all) is one command — it runs in the backgrou
 kimi headless http://<hub-host>:58630   # detaches; --foreground keeps it attached; --session <id> exposes an existing session
 ```
 
+A headless daemon answers a small slash-command set from the hub composer (`/title`, `/help`) and is stopped from the chat header's two-tap **Stop agent** button (or `kill <pid>`, printed at start).
+
 
 # Kimi Code CLI (upstream README)
 

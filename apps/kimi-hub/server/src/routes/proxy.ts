@@ -63,11 +63,14 @@ export function registerProxyRoutes(app: FastifyInstance, opts: ProxyRouteOption
     // Session-scoped agents: gate the request BEFORE it crosses the tunnel
     // (see scope.ts). Unscoped agents (`scope === undefined`) fall through to
     // the plain verbatim relay — the legacy whole-machine behavior.
-    const scope = opts.registry.get(agentId)?.scope;
+    const entry = opts.registry.get(agentId);
+    const scope = entry?.scope;
     const scopeSet = scope !== undefined ? new Set(scope.sessions) : undefined;
     let filterList = false;
     if (scopeSet !== undefined) {
-      const decision = decideScopedRequest(scopeSet, req.method, strippedPath);
+      const decision = decideScopedRequest(scopeSet, req.method, strippedPath, {
+        daemonPid: entry?.pid,
+      });
       if (decision.kind === 'deny') {
         return reply
           .code(403)
