@@ -16,6 +16,7 @@ import {
   IAgentConversationUndoService,
   IAgentGoalService,
   IAgentLifecycleService,
+  IAgentLoopService,
   IEventBus,
   IEventService,
   MAIN_AGENT_ID,
@@ -842,6 +843,39 @@ describe('server-v2 /api/v1/sessions', () => {
     const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
     const { body } = await postJson<null>(`/api/v1/sessions/${created.body.data.id}:restart`);
     expect(body.code).toBe(40001);
+  });
+
+  it('aborts the queried agent on :abort?agent_id= (default stays main)', async () => {
+    const cwd = home as string;
+    const created = await postJson<SessionWire>('/api/v1/sessions', { metadata: { cwd } });
+    const id = created.body.data.id;
+    const session = getLiveSessionById((server as RunningServer).core.accessor, id);
+    if (session === undefined) throw new Error('expected live session');
+    const lifecycle = session.accessor.get(IAgentLifecycleService);
+    const main = await lifecycle.create({ agentId: MAIN_AGENT_ID });
+    const side = await lifecycle.create({ agentId: 'agent-side' });
+    const mainCancel = vi.spyOn(main.accessor.get(IAgentLoopService), 'cancelFromUser');
+    const sideCancel = vi.spyOn(side.accessor.get(IAgentLoopService), 'cancelFromUser');
+
+    try {
+      const defaultRes = await postJson<{ aborted: boolean }>(`/api/v1/sessions/${id}:abort`);
+      expect(defaultRes.body.code).toBe(0);
+      expect(mainCancel).toHaveBeenCalledTimes(1);
+      expect(sideCancel).not.toHaveBeenCalled();
+
+      const res = await postJson<{ aborted: boolean }>(
+        `/api/v1/sessions/${id}:abort?agent_id=agent-side`,
+      );
+      expect(res.body.code).toBe(0);
+      expect(sideCancel).toHaveBeenCalledTimes(1);
+      expect(mainCancel).toHaveBeenCalledTimes(1);
+
+      const missing = await postJson<null>(`/api/v1/sessions/${id}:abort?agent_id=agent-nope`);
+      expect(missing.body.code).toBe(40401);
+    } finally {
+      mainCancel.mockRestore();
+      sideCancel.mockRestore();
+    }
   });
 
   it('creates a child session tagged with parent_session_id and child_session_kind', async () => {

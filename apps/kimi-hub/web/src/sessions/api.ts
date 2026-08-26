@@ -277,10 +277,14 @@ export async function fetchSessionStatus(
 }
 
 /** Cancel whatever turn is active; a safe no-op when the session is idle. */
-export async function abortSession(endpoint: HttpEndpoint & { sessionId: string }): Promise<void> {
+export async function abortSession(
+  endpoint: HttpEndpoint & { sessionId: string; agentId?: string },
+): Promise<void> {
   await postJson({
     ...endpoint,
-    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}:abort`,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}:abort${
+      endpoint.agentId === undefined ? '' : `?agent_id=${encodeURIComponent(endpoint.agentId)}`
+    }`,
   });
 }
 
@@ -579,6 +583,8 @@ export async function sendPrompt(
   endpoint: HttpEndpoint & {
     sessionId: string;
     text: string;
+    /** Target agent (`agent_id` on the wire); omitted = the session's main agent. */
+    agentId?: string;
     goal_objective?: string;
     goal_control?: unknown;
     /**
@@ -594,6 +600,7 @@ export async function sendPrompt(
     path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts`,
     body: {
       content: [{ type: 'text', text: endpoint.text }],
+      agent_id: endpoint.agentId,
       goal_objective: endpoint.goal_objective,
       goal_control: endpoint.goal_control,
       steer: endpoint.steer === true ? true : undefined,

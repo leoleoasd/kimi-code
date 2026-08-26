@@ -209,8 +209,8 @@ export function ChatView({
 
   // The engine-owned prompt queue (active turn + FIFO) feeding the strip,
   // keyed per viewed agent: queues live on agents, not sessions, so the
-  // subagent tab shows the subagent's own queue (the web composer still only
-  // writes to main — same targeting as before).
+  // subagent tab shows the subagent's own queue — the same agent the composer
+  // writes to (it targets the viewed tab too, so strip and composer agree).
   // ChatView mounts ONLY for the selected (agent, session) and unmounts on
   // deselect, so this 2s poll never runs for idle background sessions.
   const queueQueryKey = useMemo(
@@ -274,7 +274,7 @@ export function ChatView({
   // on its own; this is a promptness nicety (the abort's drain freebie shows
   // the next queued prompt promoting within a tick).
   const abortTurn = async (): Promise<void> => {
-    await abortSession({ baseUrl, token, sessionId });
+    await abortSession({ baseUrl, token, sessionId, agentId: transcriptAgentId });
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
   };
 
@@ -586,6 +586,16 @@ export function ChatView({
       getLastAssistantText: () => lastAssistantText(state.items),
     });
     setCommandNotice(result.notice === '' ? null : result.notice);
+    if (result.btw !== undefined) {
+      // The page's version of the TUI side panel: open the new agent's tab;
+      // the optional first message goes straight onto ITS queue (submitPrompt
+      // targets the viewed agent, so the explicit id must win over the state
+      // that only catches up after this render).
+      setTranscriptAgentId(result.btw.agentId);
+      if (result.btw.text !== undefined) {
+        await submitPrompt(result.btw.text, [], false, result.btw.agentId);
+      }
+    }
     await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
   };
 
@@ -622,25 +632,30 @@ export function ChatView({
     text: string,
     images: readonly UploadedImage[],
     steer = false,
+    // The composer is a conversation with the VIEWED agent — queues live on
+    // agents (`/btw` exists precisely so a second one can keep talking while
+    // main grinds), so the submission and its optimistic chip key both target
+    // the tab the user is looking at, never hardcoded main.
+    agentId: string = transcriptAgentId,
   ): Promise<{ status: 'running' | 'queued' | 'blocked' }> => {
     // The plain-text path keeps the exact pre-images request (sendPrompt in
     // sessions/api.ts); attachments route through the multi-part body. Steer
     // is a submission flag on the same wire schema — both paths carry it.
     const result =
       images.length === 0
-        ? await sendPrompt({ baseUrl, token, sessionId, text, steer })
-        : await sendPromptWithImages({ baseUrl, token, sessionId, text, images, steer });
+        ? await sendPrompt({ baseUrl, token, sessionId, text, agentId, steer })
+        : await sendPromptWithImages({ baseUrl, token, sessionId, text, images, agentId, steer });
     // The LOCAL USER just spoke — the one growth-adjacent scroll besides the
     // pill: land on their fresh turn (model output itself never scrolls).
     snapToBottom();
     // Optimistic chip: the queue poll replays the same item authoritatively
     // — nothing needs to be carried until then. Never let this nicety fail
-    // the send UX (the REST already succeeded). Composed prompts always land
-    // on the MAIN agent's queue — key the chip there, not to the viewed tab.
+    // the send UX (the REST already succeeded). The chip keys to the TARGET
+    // agent's queue — the same key the strip's poll watches for this tab.
     if (result.status === 'queued') {
       try {
         queryClient.setQueryData(
-          ['promptQueue', baseUrl, sessionId, 'main'],
+          ['promptQueue', baseUrl, sessionId, agentId],
           (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
             appendQueuedEntry(
               old as Parameters<typeof appendQueuedEntry>[0],

@@ -261,7 +261,7 @@ export interface PromptSubmitResult {
  * that signature predates attachments and cannot carry content parts.
  */
 export async function sendPromptWithImages(
-  endpoint: HttpEndpoint & { sessionId: string; text: string; images: readonly UploadedImage[]; steer?: boolean },
+  endpoint: HttpEndpoint & { sessionId: string; text: string; images: readonly UploadedImage[]; agentId?: string; steer?: boolean },
 ): Promise<PromptSubmitResult> {
   const doFetch = endpoint.fetchImpl ?? fetch;
   const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -273,6 +273,7 @@ export async function sendPromptWithImages(
       headers,
       body: JSON.stringify({
         content: buildPromptContent(endpoint.text, endpoint.images),
+        agent_id: endpoint.agentId,
         steer: endpoint.steer === true ? true : undefined,
       }),
     },

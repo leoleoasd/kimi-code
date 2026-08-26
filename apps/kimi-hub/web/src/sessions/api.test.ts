@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import { EnvelopeError } from '#/http';
 import {
   abortQueuedPrompt,
+  abortSession,
   fetchModels,
   fetchPromptQueue,
   fetchSessionCommands,
@@ -202,6 +203,37 @@ describe('abortQueuedPrompt', () => {
   });
 });
 
+describe('abortSession', () => {
+  it('posts to the session :abort path with no query by default', async () => {
+    const calls: string[] = [];
+    await abortSession({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: async (input) => {
+        calls.push(requestUrl(input));
+        return jsonResponse({ code: 0, msg: 'ok', data: { aborted: true } });
+      },
+    });
+    expect(calls[0]).toBe('http://hub.example.com/agents/a1/api/v1/sessions/s1:abort');
+  });
+
+  it('appends ?agent_id= so the turn-level abort reaches the viewed agent', async () => {
+    const calls: string[] = [];
+    await abortSession({
+      ...ENDPOINT,
+      sessionId: 's1',
+      agentId: 'agent-7',
+      fetchImpl: async (input) => {
+        calls.push(requestUrl(input));
+        return jsonResponse({ code: 0, msg: 'ok', data: { aborted: true } });
+      },
+    });
+    expect(calls[0]).toBe(
+      'http://hub.example.com/agents/a1/api/v1/sessions/s1:abort?agent_id=agent-7',
+    );
+  });
+});
+
 describe('shutdownAgentServer', () => {
   it('posts to the agent server /api/v1/shutdown path', async () => {
     const calls: string[] = [];
@@ -271,6 +303,24 @@ describe('sendPrompt steer flag', () => {
       },
     });
     expect(capturedBody).toEqual({ content: [{ type: 'text', text: 'hello' }] });
+  });
+
+  it('carries agent_id verbatim when a specific agent is targeted', async () => {
+    let capturedBody: unknown;
+    await sendPrompt({
+      ...ENDPOINT,
+      sessionId: 's1',
+      text: 'side chat',
+      agentId: 'agent-7',
+      fetchImpl: async (_input, init) => {
+        capturedBody = JSON.parse((init as RequestInit).body as string);
+        return jsonResponse(submitOk);
+      },
+    });
+    expect(capturedBody).toEqual({
+      content: [{ type: 'text', text: 'side chat' }],
+      agent_id: 'agent-7',
+    });
   });
 
   it('carries steer: true verbatim when requested', async () => {

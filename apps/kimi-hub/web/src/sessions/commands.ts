@@ -8,9 +8,11 @@
  * the composer notice). Unknown words, busy-gating, and availability are the
  * TUI's calls, made over there — never re-judged here.
  *
- * Only two actions stay local, because their substance IS the browser, not
- * the agent: `/copy` (the clipboard lives here) and `/export-debug-zip` (the
- * download lives here — the TUI's own variant lands on the agent machine).
+ * Only three actions stay local, because their substance IS the browser, not
+ * the agent: `/copy` (the clipboard lives here), `/export-debug-zip` (the
+ * download lives here — the TUI's own variant lands on the agent machine),
+ * and `/btw` (the TUI opens a local side panel the page can neither see nor
+ * drive — the page owns the equivalent surface already: its agent tabs).
  * One more class never leaves the page: the host's INTERACTIVE-dialog
  * commands (`DIALOG_COMMANDS`, e.g. bare `/model`) would pop a TUI overlay on
  * the agent's screen with no way for the page to see or drive it. `/model`
@@ -27,12 +29,13 @@ import type { TranscriptItem } from '@moonshot-ai/transcript';
 
 import type { HttpEndpoint } from '#/http';
 
-import { exportSession, runSessionCommand } from './api';
+import { btwSession, exportSession, runSessionCommand } from './api';
 
 export type ComposerAction =
   | { readonly kind: 'remote'; readonly input: string }
   | { readonly kind: 'copy' }
   | { readonly kind: 'export-debug-zip' }
+  | { readonly kind: 'btw'; readonly text?: string }
   | { readonly kind: 'notice'; readonly notice: string };
 
 export interface ParsedComposerCommand {
@@ -58,6 +61,12 @@ export interface CommandContext extends HttpEndpoint {
 /** What the runner hands to ChatView: one completion notice line. */
 export interface CommandResult {
   readonly notice: string;
+  /**
+   * `/btw` — the new side-channel agent plus the optional first message.
+   * ChatView owns what the TUI does in its panel: switch to the agent's tab
+   * and forward the text as its first prompt.
+   */
+  readonly btw?: { readonly agentId: string; readonly text?: string };
 }
 
 /**
@@ -67,6 +76,7 @@ export interface CommandResult {
 export const LOCAL_COMMANDS = [
   { usage: '/copy', description: 'Copy the last assistant message to the clipboard' },
   { usage: '/export-debug-zip', description: 'Download the session as a debug ZIP archive' },
+  { usage: '/btw [message]', description: 'Open a side conversation in a new agent tab' },
 ] as const;
 
 /**
@@ -110,6 +120,11 @@ export function parseComposerCommand(input: string): ParsedComposerCommand | nul
   if (input === '/export-debug-zip') {
     return { kind: 'action', action: { kind: 'export-debug-zip' } };
   }
+  if (input === '/btw') return { kind: 'action', action: { kind: 'btw' } };
+  if (input.startsWith('/btw ')) {
+    const text = input.slice('/btw '.length).trim();
+    return { kind: 'action', action: text === '' ? { kind: 'btw' } : { kind: 'btw', text } };
+  }
   const dialogNotice = DIALOG_COMMAND_NOTICES[input];
   if (dialogNotice !== undefined) {
     return { kind: 'action', action: { kind: 'notice', notice: dialogNotice } };
@@ -141,6 +156,13 @@ export async function runComposerCommand(
     }
     await clipboard.writeText(text);
     return { notice: `copied to clipboard (${String(text.length)} characters)` };
+  }
+  if (action.kind === 'btw') {
+    const { agentId } = await btwSession(ctx);
+    return {
+      notice: `started btw agent ${agentId} — switched to its tab`,
+      btw: { agentId, text: action.text },
+    };
   }
   const blob = await exportSession(ctx);
   const filename = `session-${ctx.sessionId}-export.zip`;

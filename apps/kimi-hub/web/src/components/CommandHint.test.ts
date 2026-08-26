@@ -18,15 +18,15 @@ const CATALOG: readonly SessionCommandInfo[] = [
 const SOURCE = hintSource(CATALOG);
 
 describe('hintSource', () => {
-  it('maps catalog rows and always appends the local pair', () => {
-    expect(SOURCE.map((c) => c.primary)).toEqual(['/abort', '/yolo', '/goal', '/copy', '/export-debug-zip']);
+  it('maps catalog rows and always appends the local trio', () => {
+    expect(SOURCE.map((c) => c.primary)).toEqual(['/abort', '/yolo', '/goal', '/copy', '/export-debug-zip', '/btw [message]']);
     const yolo = SOURCE.find((c) => c.primary === '/yolo');
     expect(yolo?.matchWords).toEqual(['yolo', 'yes']);
     expect(yolo?.needsArg).toBe(true);
   });
 
-  it('degrades to the local pair for an empty catalog', () => {
-    expect(hintSource([]).map((c) => c.primary)).toEqual(['/copy', '/export-debug-zip']);
+  it('degrades to the local trio for an empty catalog', () => {
+    expect(hintSource([]).map((c) => c.primary)).toEqual(['/copy', '/export-debug-zip', '/btw [message]']);
   });
 });
 

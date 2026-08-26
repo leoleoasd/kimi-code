@@ -4,6 +4,7 @@ import {
   IAgentProfileService,
   IAgentConversationUndoService,
   IAgentFullCompactionService,
+  IAgentLifecycleService,
   IAgentLoopService,
   IAuthSummaryService,
   ISessionActivityView,
@@ -64,7 +65,7 @@ import { z } from 'zod';
 import { errEnvelope, okEnvelope } from '../envelope';
 import { requestLog } from '../lib/requestLog';
 import { defineRoute } from '../middleware/defineRoute';
-import { ensureMainAgent } from '../transport/mainAgent';
+import { ensureMainAgent, MAIN_AGENT_ID } from '../transport/mainAgent';
 import { parseActionSuffix } from './action-suffix';
 import { applySessionAgentConfig } from './sessionAgentConfig';
 import { updateSessionProfile } from './sessionProfile';
@@ -163,6 +164,10 @@ const sessionActionRequestSchema = z.preprocess(
     input: z.string().min(1).optional(),
   }),
 );
+
+const sessionActionQuerySchema = z.object({
+  agent_id: z.string().min(1).optional(),
+});
 
 export interface RegisterSessionsRoutesDeps {
   /**
@@ -600,6 +605,7 @@ export function registerSessionsRoutes(
       path: '/sessions/{tail}',
       params: sessionActionTailParamSchema,
       body: sessionActionRequestSchema,
+      querystring: sessionActionQuerySchema,
       success: {
         data: z.union([
           sessionSchema,
@@ -710,7 +716,21 @@ export function registerSessionsRoutes(
         }
 
         if (parsed.action === 'abort') {
-          const agent = await resolveMainAgent(core, parsed.id);
+          const session = await resumeSessionById(core.accessor, parsed.id);
+          if (session === undefined) {
+            throw new Error2(
+              ErrorCodes.SESSION_NOT_FOUND,
+              `session ${parsed.id} does not exist`,
+            );
+          }
+          const agentId = req.query.agent_id;
+          const agent =
+            agentId === undefined || agentId === MAIN_AGENT_ID
+              ? await ensureMainAgent(session)
+              : session.accessor.get(IAgentLifecycleService).get(agentId);
+          if (agent === undefined) {
+            throw new Error2(ErrorCodes.AGENT_NOT_FOUND, `agent ${agentId} does not exist`);
+          }
           agent.accessor.get(IAgentLoopService).cancelFromUser();
           requestLog(req)?.info({ session_id: parsed.id, action: 'abort' }, 'session action completed');
           reply.send(okEnvelope({ aborted: true }, req.id));

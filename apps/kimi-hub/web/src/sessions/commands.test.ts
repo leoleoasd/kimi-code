@@ -35,6 +35,20 @@ describe('parseComposerCommand', () => {
     });
   });
 
+  it('classifies /btw as page-local, bare or with a first message', () => {
+    expect(parseComposerCommand('/btw')).toEqual({ kind: 'action', action: { kind: 'btw' } });
+    expect(parseComposerCommand('/btw ')).toEqual({ kind: 'action', action: { kind: 'btw' } });
+    expect(parseComposerCommand('/btw hello there')).toEqual({
+      kind: 'action',
+      action: { kind: 'btw', text: 'hello there' },
+    });
+    // Lookalike prefixes stay remote — only the exact word owns the route.
+    expect(parseComposerCommand('/btwfoo hi')).toEqual({
+      kind: 'action',
+      action: { kind: 'remote', input: '/btwfoo hi' },
+    });
+  });
+
   it('forwards every other slash-prefixed line verbatim — known words included', () => {
     for (const input of ['/abort', '/yolo on', '/compact keep the api', '/goal pause', '/restart', '/', '/ABORT']) {
       expect(parseComposerCommand(input)).toEqual({
@@ -118,6 +132,24 @@ describe('runComposerCommand — remote forwarding', () => {
       { ...CTX, fetchImpl: silentFetch },
     );
     expect(silent.notice).toBe('');
+  });
+});
+
+describe('runComposerCommand — /btw', () => {
+  it('starts the side-channel agent via :btw and hands it to ChatView', async () => {
+    const { calls, fetchImpl } = fakeFetch(() => ({ agent_id: 'agent-42' }));
+    const result = await runComposerCommand({ kind: 'btw', text: 'ping' }, { ...CTX, fetchImpl });
+    expect(calls).toEqual([
+      { method: 'POST', url: 'http://hub.test/agents/a1/api/v1/sessions/sess-1:btw', body: '{}' },
+    ]);
+    expect(result.btw).toEqual({ agentId: 'agent-42', text: 'ping' });
+    expect(result.notice).toContain('agent-42');
+  });
+
+  it('starts bare — no text rides the result', async () => {
+    const { fetchImpl } = fakeFetch(() => ({ agent_id: 'agent-43' }));
+    const result = await runComposerCommand({ kind: 'btw' }, { ...CTX, fetchImpl });
+    expect(result.btw).toEqual({ agentId: 'agent-43', text: undefined });
   });
 });
 
