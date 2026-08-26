@@ -10,7 +10,10 @@ const target = targetTriple();
 const executablePath = nativeBinPath(target);
 const smokeHome = nativeSmokeHome();
 const packageJson = JSON.parse(await readFile(resolve(appRoot, 'package.json'), 'utf-8'));
-const expectedVersion = packageJson.version;
+// Release builds stamp the fork version into the binary (tsdown define), and
+// getVersion() reports it instead of the package version — same env the
+// workflow exports before bundling.
+const expectedVersion = process.env.KIMI_CODE_FORK_VERSION || packageJson.version;
 
 function fail(message) {
   console.error(message);
