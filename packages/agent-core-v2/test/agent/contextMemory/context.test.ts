@@ -5,6 +5,7 @@ import { estimateTokens, estimateTokensForMessages } from '#/kosong/contract/tok
 import { buildImageCompressionCaption } from '#/agent/media/image-compress';
 import {
   buildContextCompactionShape,
+  collectCompactableUserMessages,
   COMPACT_USER_MESSAGE_HEAD_TOKENS,
   COMPACT_USER_MESSAGE_MAX_TOKENS,
   selectCompactionUserMessages,
@@ -784,8 +785,9 @@ describe('Agent context', () => {
       );
 
       expect(shape.tokensAfter).toBe(0);
-      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user']);
+      expect(shape.messages.map((m) => m.role)).toEqual(['user', 'user', 'user']);
       expect(shape.messages[1]?.origin?.kind).toBe('compaction_summary');
+      expect(shape.messages[2]?.origin).toEqual({ kind: 'injection', variant: 'compaction_kickoff' });
     });
 
     it('prefers the measured summary output tokens over the text estimate', () => {
@@ -837,6 +839,47 @@ describe('Agent context', () => {
 
       expect(withOverhead.tokensAfter).toBe(withoutOverhead.tokensAfter + 3_000);
       expect(withOverhead.messages).toEqual(withoutOverhead.messages);
+    });
+  });
+
+  describe('compaction kickoff and media degradation', () => {
+    it('ends the shaped context with a reminder kickoff that future compactions skip', () => {
+      const shape = buildContextCompactionShape([userMessage('u1')], {
+        summary: 'summary',
+        compactedCount: 1,
+        tokensBefore: 0,
+      });
+      const kickoff = shape.messages.at(-1)!;
+      expect(shape.messages.at(-2)?.origin?.kind).toBe('compaction_summary');
+      expect(kickoff.origin).toEqual({ kind: 'injection', variant: 'compaction_kickoff' });
+      expect(textOf(kickoff).startsWith('<system-reminder>')).toBe(true);
+      expect(textOf(kickoff)).toContain('never write, paraphrase, or invent user messages');
+      expect(collectCompactableUserMessages(shape.messages)).not.toContain(kickoff);
+    });
+
+    it('degrades media in every kept message except the latest genuine user input', () => {
+      const image = (id: string): ContextMessage => ({
+        role: 'user',
+        content: [
+          { type: 'text', text: `look ${id}` },
+          { type: 'image_url', imageUrl: { url: `data:image/png;base64,${id}` } },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      });
+      const shape = buildContextCompactionShape(
+        [image('old'), userMessage('plain'), image('fresh')],
+        { summary: 'summary', compactedCount: 3, tokensBefore: 0 },
+      );
+      const [oldMsg, , freshMsg] = shape.messages;
+      expect(oldMsg?.content.some((p) => p.type === 'image_url')).toBe(false);
+      expect(textOf(oldMsg!)).toContain('look old');
+      expect(textOf(oldMsg!)).toContain('NOT sent just now');
+      expect(freshMsg?.content.some((p) => p.type === 'image_url')).toBe(true);
+      expect(
+        shape.messages.filter((m) => m.content.some((p) => p.type === 'image_url')),
+      ).toHaveLength(1);
+      expect(shape.messages.at(-1)?.origin?.kind).toBe('injection');
     });
   });
 

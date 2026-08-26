@@ -451,9 +451,10 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live).toHaveLength(5);
-    expect(transcript.foldedLength).toBe(live.length);
+    expect(live).toHaveLength(6);
+    expect(transcript.foldedLength).toBe(live.length - 1);
     expect(live[2]!.origin).toEqual({ kind: 'compaction_summary' });
+    expect(live[3]!.origin).toEqual({ kind: 'injection', variant: 'compaction_kickoff' });
   });
 
   it('settles a frame left open by a failed attempt when compaction lands mid-fold', () => {
@@ -466,9 +467,9 @@ describe('live fold parity', () => {
     ];
     const live = foldLive(records);
     const transcript = reduceContextTranscript(records);
-    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'assistant']);
+    expect(live.map((m) => m.role)).toEqual(['user', 'user', 'user', 'assistant']);
     expect(texts(transcript)).toEqual(['u1', 'a1', 'SUM', 'a3']);
-    expect(transcript.foldedLength).toBe(live.length);
+    expect(transcript.foldedLength).toBe(live.length - 1);
   });
 
   it('closes a pending tool exchange when compaction lands mid-fold', () => {
@@ -490,7 +491,7 @@ describe('live fold parity', () => {
     ]);
     expect(transcript.entries[2]!.toolCallId).toBe('c1');
     expect(transcript.entries[2]!.isError).toBe(true);
-    expect(transcript.foldedLength).toBe(live.length);
+    expect(transcript.foldedLength).toBe(live.length - 1);
   });
 
   it('keeps legacy compaction recovery on the pre-settlement count', () => {

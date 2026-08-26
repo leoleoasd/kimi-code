@@ -35,7 +35,9 @@ continue:
   returned, the key lines or error text, the schema or signature a lookup
   revealed, since re-running to recover them may be slow or impossible. Keep only
   the final working version of any code; drop intermediate attempts and
-  already-resolved errors.
+  already-resolved errors. Attachments (screenshots, images, pasted files) do not
+  survive compaction — if one informed the work, record the content you took from
+  it, because the next turn will only see a placeholder where it was.
 - What you still don't know: context the next step depends on that this
   conversation never established — files or paths referenced but not yet read,
   schemas or APIs assumed but unseen, questions the user has not answered. Name

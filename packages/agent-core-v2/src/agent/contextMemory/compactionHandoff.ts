@@ -8,6 +8,7 @@ export const COMPACTION_SUMMARY_PREFIX = summaryPrefixTemplate.trimEnd();
 export const COMPACT_USER_MESSAGE_MAX_TOKENS = 20_000;
 export const COMPACT_USER_MESSAGE_HEAD_TOKENS = 2_000;
 export const COMPACTION_ELISION_VARIANT = 'compaction_elision';
+export const COMPACTION_KICKOFF_VARIANT = 'compaction_kickoff';
 
 type MessageLike = ContextMessage;
 
@@ -90,15 +91,19 @@ export function buildContextCompactionShape(
   const elisionMessage = selection.elided
     ? createCompactionElisionMessage(selection.omittedTokens)
     : undefined;
-  const keptMessages = elisionMessage === undefined
-    ? [...selection.head, ...selection.tail]
-    : [...selection.head, elisionMessage, ...selection.tail];
+  const keptMessages = degradeHistoricalMedia(
+    elisionMessage === undefined
+      ? [...selection.head, ...selection.tail]
+      : [...selection.head, elisionMessage, ...selection.tail],
+  );
+  const kickoffMessage = createCompactionKickoffMessage();
   const contextSummary = input.contextSummary ?? input.summary;
   const tokensAfter =
     input.tokensAfter ??
     (input.requestOverheadTokens ?? 0) +
       (input.summaryOutputTokens ?? estimate.text(contextSummary)) +
-      estimate.messages(keptMessages);
+      estimate.messages(keptMessages) +
+      estimate.message(kickoffMessage);
   const keptUserMessageCount =
     input.keptUserMessageCount ?? selection.head.length + selection.tail.length;
   const keptHeadUserMessageCount =
@@ -113,7 +118,7 @@ export function buildContextCompactionShape(
     keptUserMessageCount,
     keptHeadUserMessageCount,
     droppedCount: input.droppedCount,
-    messages: [...keptMessages, createCompactionSummaryMessage(contextSummary)],
+    messages: [...keptMessages, createCompactionSummaryMessage(contextSummary), kickoffMessage],
   };
 }
 
@@ -144,6 +149,59 @@ export function buildCompactionElisionText(omittedTokens: number): string {
   return wrapSystemReminder(
     `Some of this conversation's user messages were omitted here during compaction: the messages above this note are the oldest user input, the messages below are the most recent, and roughly ${String(omittedTokens)} tokens in between were dropped. The omitted content is covered by the compaction summary at the end of the conversation.`,
   );
+}
+
+export function createCompactionKickoffMessage(): ContextMessage {
+  return {
+    role: 'user',
+    content: [{ type: 'text', text: buildCompactionKickoffText() }],
+    toolCalls: [],
+    origin: { kind: 'injection', variant: COMPACTION_KICKOFF_VARIANT },
+  };
+}
+
+export function buildCompactionKickoffText(): string {
+  return wrapSystemReminder(
+    `Compaction is complete. Everything above this note — the handoff summary and every preserved user message, images included — is historical context: none of it was just sent, and new user input only ever arrives after this point. Resume now as the assistant your plan describes — call tools or reply directly — and never write, paraphrase, or invent user messages. If the plan is finished or you were waiting on the user, say so and stop.`,
+  );
+}
+
+/**
+ * Kept user messages ride verbatim through every compaction, media bytes
+ * included, and a salient image sitting near the newest question reads to the
+ * model as "just attached". Degrade media parts to text placeholders in every
+ * kept message except the most recent genuine user input — that one may still
+ * be the live attachment of the turn in flight.
+ */
+export function degradeHistoricalMedia(messages: readonly ContextMessage[]): ContextMessage[] {
+  let latestUserIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    if (isRealUserInput(messages[i]!)) {
+      latestUserIndex = i;
+      break;
+    }
+  }
+  return messages.map((message, index) => {
+    if (index === latestUserIndex) return message;
+    if (!message.content.some((part) => isMediaPart(part))) return message;
+    return {
+      ...message,
+      content: message.content.map((part) =>
+        isMediaPart(part) ? { type: 'text', text: historicalMediaPlaceholder(part.type) } : part,
+      ),
+    };
+  });
+}
+
+function isMediaPart(
+  part: ContentPart,
+): part is ContentPart & { readonly type: 'image_url' | 'audio_url' | 'video_url' } {
+  return part.type === 'image_url' || part.type === 'audio_url' || part.type === 'video_url';
+}
+
+function historicalMediaPlaceholder(type: 'image_url' | 'audio_url' | 'video_url'): string {
+  const noun = type === 'image_url' ? 'an image' : type === 'audio_url' ? 'an audio clip' : 'a video';
+  return `[compaction removed ${noun} attached here earlier in the conversation — it was NOT sent just now; anything relevant from it is covered by the compaction summary below]`;
 }
 
 export function collectCompactableUserMessages<T extends MessageLike>(messages: readonly T[]): T[] {

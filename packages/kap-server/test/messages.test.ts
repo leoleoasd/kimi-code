@@ -303,8 +303,12 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
     await agent.accessor.get(IWireService).flush();
 
     const livePage = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
-    expect(livePage.body.data.items).toHaveLength(4);
-    const liveSummaryId = livePage.body.data.items[0]!.id;
+    expect(livePage.body.data.items).toHaveLength(5);
+    const liveSummaryItem = livePage.body.data.items.find(
+      (m) => (m as { metadata?: { origin?: { kind?: string } } }).metadata?.origin?.kind === 'compaction_summary',
+    );
+    if (liveSummaryItem === undefined) throw new Error('expected compaction summary message');
+    const liveSummaryId = liveSummaryItem.id;
 
     await server!.close();
     server = undefined;
@@ -312,17 +316,31 @@ describe('server-v2 /api/v1/sessions/{sid}/messages', () => {
 
     const { body } = await getJson<PageWire>(`/api/v1/sessions/${id}/messages?page_size=100`);
     expect(body.code).toBe(0);
-    expect(body.data.items).toHaveLength(4);
+    expect(body.data.items).toHaveLength(5);
     expect(body.data.items.every((m) => MSG_ID.test(m.id))).toBe(true);
 
-    const [summary, _m2, maybeM1] = body.data.items;
-    if (maybeM1 === undefined) throw new Error('expected m1 message');
-    const m1 = maybeM1;
-    expect(summary!.id).toBe(liveSummaryId);
+    const summary = body.data.items.find(
+      (m) => (m as { metadata?: { origin?: { kind?: string } } }).metadata?.origin?.kind === 'compaction_summary',
+    );
+    if (summary === undefined) throw new Error('expected compaction summary message');
+    const m1 = body.data.items.find(
+      (m) => (m as { metadata?: { origin?: { kind?: string } } }).metadata?.origin?.kind === undefined && m.role === 'assistant',
+    );
+    if (m1 === undefined) throw new Error('expected m1 message');
+    expect(summary.id).toBe(liveSummaryId);
     expect(summary).toMatchObject({
       role: 'user',
       metadata: { origin: { kind: 'compaction_summary' } },
     });
+    expect(
+      body.data.items.some(
+        (m) =>
+          (m as { metadata?: { origin?: { kind?: string; variant?: string } } }).metadata?.origin
+            ?.kind === 'injection' &&
+          (m as { metadata?: { origin?: { variant?: string } } }).metadata?.origin?.variant ===
+            'compaction_kickoff',
+      ),
+    ).toBe(true);
 
     const got = await getJson<MessageWire>(`/api/v1/sessions/${id}/messages/${m1.id}`);
     expect(got.body.code).toBe(0);
