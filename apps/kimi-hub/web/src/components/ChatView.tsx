@@ -77,6 +77,7 @@ import { Composer, planComposerKey } from './Composer';
 import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './editDiff';
 import { resolveBashDisplay, type BashDisplay } from './bashTerminal';
 import { resolveWriteDisplay, type WriteDisplay } from './writeFile';
+import { readParamsText, resolveReadDisplay, type ReadDisplay } from './readFile';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1449,6 +1450,8 @@ function ToolFrameView({
   if (bash !== undefined) return <BashTerminalCard frame={frame} display={bash} />;
   const write = resolveWriteDisplay(frame);
   if (write !== undefined) return <WriteFileCard frame={frame} display={write} />;
+  const read = resolveReadDisplay(frame);
+  if (read !== undefined) return <ReadFileCard frame={frame} display={read} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1695,6 +1698,51 @@ function BashTerminalCard({ frame, display }: { frame: ToolCallFrame; display: B
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * Read as a collapsed file card: one header line with the path and the paging
+ * parameters, the engine's line-numbered content behind the fold — no JSON
+ * anywhere. Frame tint and the badge carry the state.
+ */
+function ReadFileCard({ frame, display }: { frame: ToolCallFrame; display: ReadDisplay }) {
+  const failed = frame.state === 'error';
+  const frameTint = failed
+    ? 'border-red-900/80 bg-red-950/20'
+    : frame.state === 'running'
+      ? 'border-amber-900/60 bg-neutral-900/50'
+      : 'border-neutral-800 bg-neutral-900/50';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
+  const params = readParamsText(display);
+  const output = typeof frame.output === 'string' ? frame.output : undefined;
+  return (
+    <details
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <summary className="flex cursor-pointer items-center gap-2 select-none">
+        <Badge tone={badgeTone}>{frame.state}</Badge>
+        <span className="text-neutral-300">Read</span>
+        {display.path !== undefined ? (
+          <span className="truncate text-neutral-500" title={display.path}>
+            {display.path}
+          </span>
+        ) : null}
+        {params !== undefined ? <span className="shrink-0 text-neutral-600">{params}</span> : null}
+      </summary>
+      {output !== undefined && output !== '' ? (
+        <pre
+          className={`mt-1.5 max-h-96 overflow-auto rounded bg-neutral-950/70 px-2 py-1.5 whitespace-pre-wrap break-all ${
+            failed ? 'text-red-400' : 'text-neutral-400'
+          }`}
+        >
+          {output}
+        </pre>
+      ) : null}
+      {frame.error !== undefined && frame.error !== output ? (
+        <pre className="mt-1.5 whitespace-pre-wrap break-all text-red-400">{frame.error}</pre>
+      ) : null}
+    </details>
   );
 }
 
