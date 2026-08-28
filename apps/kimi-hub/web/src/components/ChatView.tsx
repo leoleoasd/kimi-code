@@ -76,6 +76,7 @@ import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
 import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './editDiff';
 import { resolveBashDisplay, type BashDisplay } from './bashTerminal';
+import { resolveWriteDisplay, type WriteDisplay } from './writeFile';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1446,6 +1447,8 @@ function ToolFrameView({
   if (editDiff !== undefined) return <EditDiffCard frame={frame} display={editDiff} />;
   const bash = resolveBashDisplay(frame);
   if (bash !== undefined) return <BashTerminalCard frame={frame} display={bash} />;
+  const write = resolveWriteDisplay(frame);
+  if (write !== undefined) return <WriteFileCard frame={frame} display={write} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1691,6 +1694,63 @@ function BashTerminalCard({ frame, display }: { frame: ToolCallFrame; display: B
           <pre className="mt-1 whitespace-pre-wrap break-all text-red-400">{frame.error}</pre>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Write as a file-view card: the target path in the header, the written
+ * content below as a line-numbered, scrollable file body. Frame tint and the
+ * badge carry the state (red for a failed write, emerald for a clean one).
+ */
+function WriteFileCard({ frame, display }: { frame: ToolCallFrame; display: WriteDisplay }) {
+  const failed = frame.state === 'error';
+  const lines = useMemo(() => {
+    const parts = display.content.split('\n');
+    if (parts.at(-1) === '') parts.pop();
+    return parts;
+  }, [display]);
+  const frameTint = failed
+    ? 'border-red-900/80 bg-red-950/20'
+    : frame.state === 'running'
+      ? 'border-amber-900/60 bg-neutral-900/50'
+      : 'border-emerald-900/70 bg-emerald-950/20';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'green';
+  const width = String(lines.length).length;
+  return (
+    <div
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <div className="flex items-center gap-2">
+        <Badge tone={badgeTone}>{frame.state}</Badge>
+        <span className="text-neutral-300">Write</span>
+        {display.path !== undefined ? (
+          <span className="truncate text-neutral-500" title={display.path}>
+            {display.path}
+          </span>
+        ) : null}
+        <span className="shrink-0 text-neutral-600">
+          {lines.length} {lines.length === 1 ? 'line' : 'lines'}
+        </span>
+      </div>
+      <div className="mt-1.5 max-h-96 overflow-auto rounded bg-neutral-950/70 py-1">
+        {lines.map((text, index) => (
+          <div key={index} className="flex px-1 leading-relaxed">
+            <span
+              className="shrink-0 pr-2 text-right select-none text-neutral-700"
+              style={{ width: `${width + 1}ch` }}
+            >
+              {index + 1}
+            </span>
+            <span className="whitespace-pre-wrap break-all text-neutral-300">{text === '' ? ' ' : text}</span>
+          </div>
+        ))}
+      </div>
+      {failed && (frame.error ?? (typeof frame.output === 'string' ? frame.output : undefined)) !== undefined ? (
+        <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap text-red-400">
+          {frame.error ?? (frame.output as string)}
+        </pre>
+      ) : null}
     </div>
   );
 }
