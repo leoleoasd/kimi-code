@@ -74,6 +74,7 @@ import {
 } from '#/sessions/commands';
 import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
+import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './editDiff';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1440,6 +1441,8 @@ function ToolFrameView({
   }
   const mcpAuth = resolveMcpAuthDisplay(frame);
   if (mcpAuth !== undefined) return <McpAuthCard frame={frame} display={mcpAuth} />;
+  const editDiff = resolveEditDiffDisplay(frame);
+  if (editDiff !== undefined) return <EditDiffCard frame={frame} display={editDiff} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1546,6 +1549,106 @@ function ToolFrameView({
       <summary className="flex cursor-pointer items-center gap-2 select-none">{summaryRow}</summary>
       {body}
     </details>
+  );
+}
+
+/**
+ * Edit as a git-style diff card: `- old` / `+ new` line gutter, long
+ * unchanged runs collapsed behind an expandable marker. Applied edits tint
+ * emerald, failed edits red, in-flight edits amber — the state reads from the
+ * frame alone without opening any details.
+ */
+function EditDiffCard({ frame, display }: { frame: ToolCallFrame; display: EditDiffDisplay }) {
+  const rows = useMemo(() => buildDiffRows(display.before, display.after), [display]);
+  const failed = frame.state === 'error';
+  const frameTint = failed
+    ? 'border-red-900/80 bg-red-950/20'
+    : frame.state === 'running'
+      ? 'border-amber-900/60 bg-neutral-900/50'
+      : 'border-emerald-900/70 bg-emerald-950/20';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'green';
+  return (
+    <div
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <div className="flex items-center gap-2">
+        <Badge tone={badgeTone}>{failed ? 'edit failed' : frame.state}</Badge>
+        <span className="text-neutral-300">Edit</span>
+        {display.path !== undefined ? (
+          <span className="truncate text-neutral-500" title={display.path}>
+            {display.path}
+          </span>
+        ) : null}
+      </div>
+      <div className="mt-1.5 max-h-80 overflow-auto rounded bg-neutral-950/70 py-1">
+        {rows.map((row, index) => {
+          if (row.type === 'collapse') {
+            return (
+              <details
+                key={index}
+                className="border-y border-neutral-800/60 bg-neutral-900/40"
+              >
+                <summary className="cursor-pointer px-2 py-0.5 text-[10px] text-neutral-600 select-none hover:text-neutral-400">
+                  ⋯ {row.lines.length} unchanged lines
+                </summary>
+                {row.lines.map((text, i) => (
+                  <DiffLine key={i} gutter={' '} text={text} className="text-neutral-500" />
+                ))}
+              </details>
+            );
+          }
+          if (row.type === 'add') {
+            return (
+              <DiffLine
+                key={index}
+                gutter="+"
+                text={row.text}
+                className="bg-emerald-950/50 text-emerald-300"
+                gutterClassName="text-emerald-500"
+              />
+            );
+          }
+          if (row.type === 'del') {
+            return (
+              <DiffLine
+                key={index}
+                gutter="-"
+                text={row.text}
+                className="bg-red-950/50 text-red-300"
+                gutterClassName="text-red-500"
+              />
+            );
+          }
+          return <DiffLine key={index} gutter={' '} text={row.text} className="text-neutral-500" />;
+        })}
+      </div>
+      {failed && (frame.error ?? (typeof frame.output === 'string' ? frame.output : undefined)) !== undefined ? (
+        <pre className="mt-1.5 max-h-40 overflow-auto whitespace-pre-wrap text-red-400">
+          {frame.error ?? (frame.output as string)}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+function DiffLine({
+  gutter,
+  text,
+  className,
+  gutterClassName,
+}: {
+  gutter: string;
+  text: string;
+  className: string;
+  gutterClassName?: string;
+}) {
+  return (
+    <div className={`flex px-1 leading-relaxed ${className}`}>
+      <span className={`w-4 shrink-0 text-center select-none ${gutterClassName ?? ''}`}>
+        {gutter}
+      </span>
+      <span className="whitespace-pre-wrap break-all">{text === '' ? ' ' : text}</span>
+    </div>
   );
 }
 
