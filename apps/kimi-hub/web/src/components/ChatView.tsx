@@ -78,6 +78,8 @@ import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './e
 import { resolveBashDisplay, type BashDisplay } from './bashTerminal';
 import { resolveWriteDisplay, type WriteDisplay } from './writeFile';
 import { readParamsText, resolveReadDisplay, type ReadDisplay } from './readFile';
+import { resolveLookupDisplay, resultLineCount, type LookupDisplay } from './lookup';
+import { resolveGoalDisplay, type GoalDisplay } from './goal';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1452,6 +1454,10 @@ function ToolFrameView({
   if (write !== undefined) return <WriteFileCard frame={frame} display={write} />;
   const read = resolveReadDisplay(frame);
   if (read !== undefined) return <ReadFileCard frame={frame} display={read} />;
+  const lookup = resolveLookupDisplay(frame);
+  if (lookup !== undefined) return <LookupCard frame={frame} display={lookup} />;
+  const goal = resolveGoalDisplay(frame);
+  if (goal !== undefined) return <GoalCard frame={frame} display={goal} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1697,6 +1703,95 @@ function BashTerminalCard({ frame, display }: { frame: ToolCallFrame; display: B
           <pre className="mt-1 whitespace-pre-wrap break-all text-red-400">{frame.error}</pre>
         ) : null}
       </div>
+    </div>
+  );
+}
+
+/**
+ * Glob / Grep / FetchURL / WebSearch as one collapsed lookup card: the
+ * subject (pattern / URL / query) on the summary row with its scope, the
+ * result body behind the fold. FetchURL's headline is a tappable link that
+ * does not toggle the fold.
+ */
+function LookupCard({ frame, display }: { frame: ToolCallFrame; display: LookupDisplay }) {
+  const failed = frame.state === 'error';
+  const frameTint = failed
+    ? 'border-red-900/80 bg-red-950/20'
+    : frame.state === 'running'
+      ? 'border-amber-900/60 bg-neutral-900/50'
+      : 'border-neutral-800 bg-neutral-900/50';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
+  const output = typeof frame.output === 'string' ? frame.output : undefined;
+  const lines = resultLineCount(output);
+  return (
+    <details
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <summary className="flex cursor-pointer items-center gap-2 select-none">
+        <Badge tone={badgeTone}>{frame.state}</Badge>
+        <span className="shrink-0 text-neutral-300">{display.tool}</span>
+        {display.url !== undefined ? (
+          <a
+            className="truncate break-all text-sky-400 underline underline-offset-2"
+            href={display.url}
+            rel="noopener noreferrer"
+            target="_blank"
+          >
+            {display.headline}
+          </a>
+        ) : (
+          <span className="truncate text-neutral-200" title={display.headline}>
+            {display.headline}
+          </span>
+        )}
+        {display.scope !== undefined ? (
+          <span className="shrink-0 truncate text-neutral-600" title={display.scope}>
+            {display.scope}
+          </span>
+        ) : null}
+        {lines !== undefined ? <span className="shrink-0 text-neutral-600">{lines} lines</span> : null}
+      </summary>
+      {output !== undefined && output !== '' ? (
+        <pre
+          className={`mt-1.5 max-h-96 overflow-auto rounded bg-neutral-950/70 px-2 py-1.5 whitespace-pre-wrap break-all ${
+            failed ? 'text-red-400' : 'text-neutral-400'
+          }`}
+        >
+          {output}
+        </pre>
+      ) : null}
+      {frame.error !== undefined && frame.error !== output ? (
+        <pre className="mt-1.5 whitespace-pre-wrap break-all text-red-400">{frame.error}</pre>
+      ) : null}
+    </details>
+  );
+}
+
+/**
+ * CreateGoal as the goal's opening card: violet chrome, the objective inline,
+ * the completion criterion and mode as secondary lines — no fold, a goal is a
+ * milestone row in the transcript.
+ */
+function GoalCard({ frame, display }: { frame: ToolCallFrame; display: GoalDisplay }) {
+  const failed = frame.state === 'error';
+  return (
+    <div
+      className={`mb-2 max-w-full rounded border px-3 py-2 text-[12px] sm:max-w-[92%] ${
+        failed
+          ? 'border-red-900/80 bg-red-950/20'
+          : 'border-violet-900/70 bg-violet-950/20'
+      }`}
+    >
+      <div className="flex items-center gap-2">
+        <Badge tone={failed ? 'red' : 'violet'}>goal</Badge>
+        <Badge tone={display.mode === 'yolo' ? 'amber' : 'neutral'}>{display.mode}</Badge>
+      </div>
+      <div className="mt-1 whitespace-pre-wrap text-neutral-200">{display.objective}</div>
+      {display.completionCriterion !== undefined ? (
+        <div className="mt-1 text-[11px] whitespace-pre-wrap text-neutral-500">
+          done when: {display.completionCriterion}
+        </div>
+      ) : null}
     </div>
   );
 }
