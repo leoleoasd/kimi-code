@@ -75,6 +75,7 @@ import {
 import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
 import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './editDiff';
+import { resolveBashDisplay, type BashDisplay } from './bashTerminal';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1443,6 +1444,8 @@ function ToolFrameView({
   if (mcpAuth !== undefined) return <McpAuthCard frame={frame} display={mcpAuth} />;
   const editDiff = resolveEditDiffDisplay(frame);
   if (editDiff !== undefined) return <EditDiffCard frame={frame} display={editDiff} />;
+  const bash = resolveBashDisplay(frame);
+  if (bash !== undefined) return <BashTerminalCard frame={frame} display={bash} />;
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1627,6 +1630,67 @@ function EditDiffCard({ frame, display }: { frame: ToolCallFrame; display: EditD
           {frame.error ?? (frame.output as string)}
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * Bash as a terminal card: `$ command` prompt line on a dark surface, the
+ * scrollback below in one scrollable box that follows the tail while running
+ * (releasing the pin once the user scrolls up inside it). Frame tint and the
+ * badge carry the state — red for a failed command, emerald for a clean one.
+ */
+function BashTerminalCard({ frame, display }: { frame: ToolCallFrame; display: BashDisplay }) {
+  const failed = frame.state === 'error';
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const output = typeof frame.output === 'string' ? frame.output : undefined;
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el === null) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight <= 24) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [output, frame.state]);
+  const frameTint = failed
+    ? 'border-red-900/80 bg-red-950/20'
+    : frame.state === 'running'
+      ? 'border-amber-900/60 bg-neutral-900/50'
+      : 'border-emerald-900/70 bg-emerald-950/20';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'green';
+  return (
+    <div
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <div className="flex items-center gap-2">
+        <Badge tone={badgeTone}>{frame.state}</Badge>
+        <span className="text-neutral-300">Bash</span>
+        {display.cwd !== undefined ? (
+          <span className="truncate text-neutral-500" title={display.cwd}>
+            {display.cwd}
+          </span>
+        ) : null}
+      </div>
+      <div
+        ref={scrollRef}
+        className="mt-1.5 max-h-96 overflow-auto rounded bg-neutral-950/70 px-2 py-1.5"
+      >
+        <div className="flex">
+          <span className="w-4 shrink-0 select-none text-emerald-500">$</span>
+          <span className="whitespace-pre-wrap break-all text-neutral-100">{display.command}</span>
+        </div>
+        {output !== undefined && output !== '' ? (
+          <pre
+            className={`mt-1 whitespace-pre-wrap break-all ${
+              failed ? 'text-red-400' : 'text-neutral-400'
+            }`}
+          >
+            {output}
+          </pre>
+        ) : null}
+        {frame.error !== undefined && frame.error !== output ? (
+          <pre className="mt-1 whitespace-pre-wrap break-all text-red-400">{frame.error}</pre>
+        ) : null}
+      </div>
     </div>
   );
 }
