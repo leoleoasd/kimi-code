@@ -42,6 +42,7 @@ import {
   type TranscriptFrame,
   type TranscriptItem,
   type TranscriptMarker,
+  type TranscriptTask,
   type TurnState,
 } from '@moonshot-ai/transcript';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
@@ -80,6 +81,7 @@ import { resolveWriteDisplay, type WriteDisplay } from './writeFile';
 import { readParamsText, resolveReadDisplay, type ReadDisplay } from './readFile';
 import { resolveLookupDisplay, resultLineCount, type LookupDisplay } from './lookup';
 import { resolveGoalDisplay, type GoalDisplay } from './goal';
+import { resolveWaitForDisplay, type WaitForDisplay } from './waitFor';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -854,6 +856,7 @@ export function ChatView({
                 onRollback={handleRollback}
                 planByMarkerId={planByMarkerId}
                 planByToolCallId={planByToolCallId}
+                tasksById={state.tasks}
                 baseUrl={baseUrl}
                 token={token}
                 sessionId={sessionId}
@@ -950,6 +953,7 @@ const ItemList = memo(function ItemList({
   onRollback,
   planByMarkerId,
   planByToolCallId,
+  tasksById,
   baseUrl,
   token,
   sessionId,
@@ -964,6 +968,8 @@ const ItemList = memo(function ItemList({
   planByMarkerId?: ReadonlyMap<string, PlanMarkerContent>;
   /** ExitPlanMode toolCallId → recovered plan content (same recovery entries). */
   planByToolCallId?: ReadonlyMap<string, string>;
+  /** taskId → live task record (the WaitFor card's description source). */
+  tasksById: ReadonlyMap<string, TranscriptTask>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -995,6 +1001,7 @@ const ItemList = memo(function ItemList({
             onRollback={onRollback}
             planContent={entry.row.item.kind === 'marker' ? planByMarkerId?.get(entry.row.item.markerId) : undefined}
             planByToolCallId={planByToolCallId}
+            tasksById={tasksById}
             baseUrl={baseUrl}
             token={token}
             sessionId={sessionId}
@@ -1021,6 +1028,7 @@ const ItemView = memo(function ItemView({
   onRollback,
   planContent,
   planByToolCallId,
+  tasksById,
   baseUrl,
   token,
   sessionId,
@@ -1036,6 +1044,7 @@ const ItemView = memo(function ItemView({
   onRollback?: (turnId: string) => void;
   planContent?: PlanMarkerContent;
   planByToolCallId?: ReadonlyMap<string, string>;
+  tasksById: ReadonlyMap<string, TranscriptTask>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -1051,6 +1060,7 @@ const ItemView = memo(function ItemView({
           rollbackCount={rollbackCount}
           onRollback={onRollback}
           planByToolCallId={planByToolCallId}
+          tasksById={tasksById}
           baseUrl={baseUrl}
           token={token}
           sessionId={sessionId}
@@ -1250,6 +1260,7 @@ function TurnView({
   rollbackCount,
   onRollback,
   planByToolCallId,
+  tasksById,
   baseUrl,
   token,
   sessionId,
@@ -1263,6 +1274,7 @@ function TurnView({
   rollbackCount?: number;
   onRollback?: (turnId: string) => void;
   planByToolCallId?: ReadonlyMap<string, string>;
+  tasksById: ReadonlyMap<string, TranscriptTask>;
   baseUrl: string;
   token: string;
   sessionId: string;
@@ -1397,6 +1409,7 @@ function TurnView({
               frame={frame}
               streaming={frame.frameId === openTailFrameId}
               planByToolCallId={planByToolCallId}
+              tasksById={tasksById}
             />
           ))}
           {step.state === 'interrupted' ? (
@@ -1420,10 +1433,12 @@ function FrameView({
   frame,
   streaming,
   planByToolCallId,
+  tasksById,
 }: {
   frame: TranscriptFrame;
   streaming: boolean;
   planByToolCallId?: ReadonlyMap<string, string>;
+  tasksById: ReadonlyMap<string, TranscriptTask>;
 }) {
   switch (frame.kind) {
     case 'text':
@@ -1447,7 +1462,7 @@ function FrameView({
     case 'thinking':
       return <ThinkingFrame text={frame.text} streaming={streaming} />;
     case 'tool':
-      return <ToolFrameView frame={frame} planByToolCallId={planByToolCallId} />;
+      return <ToolFrameView frame={frame} planByToolCallId={planByToolCallId} tasksById={tasksById} />;
     case 'notice':
       return <NoticeFrameView frame={frame} />;
   }
@@ -1485,9 +1500,11 @@ function isAgentCallDisplay(display: unknown): boolean {
 function ToolFrameView({
   frame,
   planByToolCallId,
+  tasksById,
 }: {
   frame: ToolCallFrame;
   planByToolCallId?: ReadonlyMap<string, string>;
+  tasksById: ReadonlyMap<string, TranscriptTask>;
 }) {
   if (frame.name === 'ExitPlanMode') {
     const display = resolveExitPlanDisplay(frame, planByToolCallId?.get(frame.toolCallId));
@@ -1509,6 +1526,10 @@ function ToolFrameView({
   if (lookup !== undefined) return <LookupCard frame={frame} display={lookup} />;
   const goal = resolveGoalDisplay(frame);
   if (goal !== undefined) return <GoalCard frame={frame} display={goal} />;
+  const waitFor = resolveWaitForDisplay(frame);
+  if (waitFor !== undefined) {
+    return <WaitForCard frame={frame} display={waitFor} tasksById={tasksById} />;
+  }
   const tone =
     frame.state === 'error' ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
   const subagentStream =
@@ -1842,6 +1863,51 @@ function GoalCard({ frame, display }: { frame: ToolCallFrame; display: GoalDispl
         <div className="mt-1 text-[11px] whitespace-pre-wrap text-neutral-500">
           done when: {display.completionCriterion}
         </div>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * WaitFor as a flat one-liner — NOT expandable: its result is the awaited
+ * task's own output snapshot, which that task already surfaces elsewhere, so
+ * hiding it behind a fold would turn every wait into a two-tap journey for
+ * nothing. The header carries the awaited task's id, its live description
+ * from the transcript's task registry when known, and the timeout.
+ */
+function WaitForCard({
+  frame,
+  display,
+  tasksById,
+}: {
+  frame: ToolCallFrame;
+  display: WaitForDisplay;
+  tasksById: ReadonlyMap<string, TranscriptTask>;
+}) {
+  const failed = frame.state === 'error';
+  const badgeTone = failed ? 'red' : frame.state === 'running' ? 'amber' : 'neutral';
+  const task = display.taskId !== undefined ? tasksById.get(display.taskId) : undefined;
+  const description = task?.description !== undefined && task.description !== '' ? task.description : undefined;
+  const frameTint = failed ? 'border-red-900/80 bg-red-950/20' : 'border-neutral-800 bg-neutral-900/50';
+  return (
+    <div
+      className={`mb-2 max-w-full rounded border px-3 py-1.5 font-mono text-[11px] sm:max-w-[92%] ${frameTint}`}
+    >
+      <div className="flex items-center gap-2">
+        <Badge tone={badgeTone}>{frame.state}</Badge>
+        <span className="text-neutral-300">WaitFor</span>
+        <span className="shrink-0 text-neutral-500">{display.taskId ?? 'first task to finish'}</span>
+        {description !== undefined ? (
+          <span className="min-w-0 truncate text-neutral-400" title={description}>
+            {description}
+          </span>
+        ) : null}
+        {display.timeoutSec !== undefined ? (
+          <span className="ml-auto shrink-0 text-neutral-600">≤{String(display.timeoutSec)}s</span>
+        ) : null}
+      </div>
+      {failed && frame.error !== undefined && frame.error !== '' ? (
+        <div className="mt-1 whitespace-pre-wrap text-red-400">{frame.error}</div>
       ) : null}
     </div>
   );
