@@ -14,6 +14,7 @@ import {
   buildPlanByMarker,
   collapseMarkerRuns,
   compactionInProgress,
+  interleaveMarkers,
   isVisibleMarker,
   markerLabel,
 } from './markers';
@@ -112,6 +113,142 @@ describe('collapseMarkerRuns', () => {
     ]);
     expect(rows.map((row) => row.key)).toEqual(['m1', 'm2']);
     expect(rows.every((row) => row.repeat === 1)).toBe(true);
+  });
+});
+
+// Timed fixtures: `interleaveMarkers` only anchors rows carrying `at`, and a
+// turn's window is [startedAt, endedAt] (open-ended while the turn runs).
+function timedTurn(
+  id: string,
+  startedAt: string,
+  endedAt?: string,
+  state: 'running' | 'completed' = 'completed',
+): TranscriptItem {
+  return {
+    kind: 'turn',
+    turnId: id,
+    ordinal: Number(id.slice(1)),
+    state,
+    origin: { kind: 'user' },
+    steps: [],
+    startedAt,
+    endedAt,
+  } as unknown as TranscriptItem;
+}
+
+function atMarker(id: string, markerName: string, at: string): TranscriptItem {
+  return { kind: 'marker', markerId: id, marker: markerName, at } as TranscriptItem;
+}
+
+describe('interleaveMarkers', () => {
+  it('pulls a mid-turn marker into the open turn it chronologically belongs to', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', undefined, 'running'),
+        atMarker('m1', 'compaction', '2026-08-14T00:05:00Z'),
+      ]),
+    );
+    expect(arranged).toHaveLength(1);
+    expect(arranged[0]!.embedded.map((row) => row.key)).toEqual(['m1']);
+  });
+
+  it('a marker after the turn ended stays a standalone row', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', '2026-08-14T00:10:00Z'),
+        atMarker('m1', 'compaction', '2026-08-14T00:11:00Z'),
+      ]),
+    );
+    expect(arranged).toHaveLength(2);
+    expect(arranged[0]!.embedded).toHaveLength(0);
+    expect(arranged[1]!.row.key).toBe('m1');
+  });
+
+  it('cold history: a marker inside a finished turn\'s window interleaves too', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', '2026-08-14T00:10:00Z'),
+        atMarker('m1', 'undo', '2026-08-14T00:05:00Z'),
+      ]),
+    );
+    expect(arranged).toHaveLength(1);
+    expect(arranged[0]!.embedded.map((row) => row.key)).toEqual(['m1']);
+  });
+
+  it('markers without a timestamp are left exactly where they were', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', undefined, 'running'),
+        marker('m1', 'compaction', { phase: 'started' }),
+      ]),
+    );
+    expect(arranged).toHaveLength(2);
+    expect(arranged[0]!.embedded).toHaveLength(0);
+  });
+
+  it('a turn without startedAt swallows nothing', () => {
+    const bare = {
+      kind: 'turn',
+      turnId: 't1',
+      ordinal: 1,
+      state: 'running',
+      origin: { kind: 'user' },
+      steps: [],
+    } as unknown as TranscriptItem;
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([bare, atMarker('m1', 'compaction', '2026-08-14T00:05:00Z')]),
+    );
+    expect(arranged).toHaveLength(2);
+    expect(arranged[0]!.embedded).toHaveLength(0);
+  });
+
+  it('plan.revision is never pulled — the store already anchors it ahead of its turn', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', undefined, 'running'),
+        atMarker('m1', 'plan.revision', '2026-08-14T00:05:00Z'),
+      ]),
+    );
+    expect(arranged).toHaveLength(2);
+    expect(arranged[0]!.embedded).toHaveLength(0);
+  });
+
+  it('taskrefs inside the window embed too', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-13T23:00:00Z', undefined, 'running'),
+        taskref('r1'),
+      ]),
+    );
+    expect(arranged).toHaveLength(1);
+    expect(arranged[0]!.embedded.map((row) => row.key)).toEqual(['r1']);
+  });
+
+  it('a collapsed burst keeps its repeat count when embedded', () => {
+    const rows = collapseMarkerRuns([
+      timedTurn('t1', '2026-08-14T00:00:00Z', undefined, 'running'),
+      atMarker('m1', 'compaction', '2026-08-14T00:05:00Z'),
+      atMarker('m2', 'compaction', '2026-08-14T00:05:10Z'),
+    ]);
+    const arranged = interleaveMarkers(rows);
+    expect(arranged).toHaveLength(1);
+    expect(arranged[0]!.embedded).toHaveLength(1);
+    expect(arranged[0]!.embedded[0]!.repeat).toBe(2);
+  });
+
+  it('embedded markers keep their own order, split across turn windows', () => {
+    const arranged = interleaveMarkers(
+      collapseMarkerRuns([
+        timedTurn('t1', '2026-08-14T00:00:00Z', '2026-08-14T00:10:00Z'),
+        atMarker('m1', 'compaction', '2026-08-14T00:11:00Z'),
+        timedTurn('t2', '2026-08-14T00:20:00Z', undefined, 'running'),
+        atMarker('m2', 'undo', '2026-08-14T00:25:00Z'),
+        atMarker('m3', 'interruption', '2026-08-14T00:26:00Z'),
+      ]),
+    );
+    expect(arranged.map((a) => a.row.key)).toEqual(['t1', 'm1', 't2']);
+    expect(arranged[0]!.embedded).toHaveLength(0);
+    expect(arranged[2]!.embedded.map((row) => row.key)).toEqual(['m2', 'm3']);
   });
 });
 

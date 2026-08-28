@@ -158,3 +158,69 @@ export function collapseMarkerRuns(items: readonly TranscriptItem[]): CollapsedR
   }
   return rows;
 }
+
+// ---------------------------------------------------------- turn interleaving
+
+/**
+ * Session-flow markers that occur DURING a turn's lifetime: the store can
+ * only place them as standalone items AFTER the whole turn (they are emitted
+ * while the turn is still open, and the item list has no intra-turn slots),
+ * so they render below all of the turn's steps — and while the turn keeps
+ * running, every later step appends above them, pinning the marker wall to
+ * the bottom forever. `plan.revision` is deliberately excluded: the store
+ * anchors it ahead of the turn it opened (beforeTurn), and each row pairs
+ * its own plan content.
+ */
+const MID_TURN_MARKERS = new Set(['compaction', 'compact', 'undo', 'interruption']);
+
+type TranscriptTurn = Extract<TranscriptItem, { kind: 'turn' }>;
+
+/** The timestamp a row anchors on for intra-turn placement, if it qualifies. */
+function interleavableAt(row: CollapsedRow): string | undefined {
+  if (row.item.kind === 'taskref') return row.item.at;
+  if (row.item.kind === 'marker' && MID_TURN_MARKERS.has(row.item.marker)) return row.item.at;
+  return undefined;
+}
+
+export interface ArrangedRow {
+  readonly row: CollapsedRow;
+  /** Marker rows re-anchored into the turn; TurnView places them between steps. */
+  readonly embedded: readonly CollapsedRow[];
+}
+
+/** Shared empty list so untouched rows keep a stable `embedded` reference (memo). */
+const NO_EMBEDDED: readonly CollapsedRow[] = Object.freeze([]);
+
+function withinTurn(turn: TranscriptTurn, at: string): boolean {
+  if (turn.startedAt === undefined || at < turn.startedAt) return false;
+  return turn.endedAt === undefined || at <= turn.endedAt;
+}
+
+/**
+ * Re-anchor qualifying marker/taskref rows into the turn they chronologically
+ * belong to. A row is pulled into the nearest preceding turn when its `at`
+ * falls inside the turn's [startedAt, endedAt] window (an open turn's window
+ * is open-ended). Everything else keeps its standalone position, so history
+ * with missing timestamps degrades to exactly today's rendering.
+ */
+export function interleaveMarkers(rows: readonly CollapsedRow[]): ArrangedRow[] {
+  const built: { row: CollapsedRow; embedded: CollapsedRow[] }[] = [];
+  let sink: { turn: TranscriptTurn; embedded: CollapsedRow[] } | undefined;
+  for (const row of rows) {
+    if (row.item.kind === 'turn') {
+      const embedded: CollapsedRow[] = [];
+      built.push({ row, embedded });
+      sink = { turn: row.item, embedded };
+      continue;
+    }
+    const at = interleavableAt(row);
+    if (sink !== undefined && at !== undefined && withinTurn(sink.turn, at)) {
+      sink.embedded.push(row);
+      continue;
+    }
+    built.push({ row, embedded: [] });
+  }
+  return built.map((entry) =>
+    entry.embedded.length === 0 ? { row: entry.row, embedded: NO_EMBEDDED } : entry,
+  );
+}

@@ -94,7 +94,7 @@ import {
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { ThinkingFrame } from './ThinkingFrame';
-import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, markerLabel, type PlanMarkerContent } from './markers';
+import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, interleaveMarkers, markerLabel, type CollapsedRow, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
 
 /**
@@ -972,23 +972,28 @@ const ItemList = memo(function ItemList({
   // Conversation rows: bookkeeping markers out, marker/taskref runs collapsed
   // — raw `items` stay the source for turn ordinals/anchors (see callers).
   const rows = useMemo(() => collapseMarkerRuns(items), [items]);
+  // Mid-turn markers (compaction/undo/interruption/taskref) re-anchor into the
+  // turn they happened during — otherwise they render below every step, and a
+  // live turn keeps appending steps above them (the bottom-pinned marker wall).
+  const arranged = useMemo(() => interleaveMarkers(rows), [rows]);
   return (
     <>
-      {rows.map((row) => (
+      {arranged.map((entry) => (
         // Native virtual screen: the browser skips layout/paint for
         // off-screen items, so long transcripts stay cheap without a
         // windowing library.
         <div
-          key={row.key}
+          key={entry.row.key}
           style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 200px' }}
         >
           <ItemView
-            item={row.item}
-            repeat={row.repeat}
+            item={entry.row.item}
+            repeat={entry.row.repeat}
+            embeddedMarkers={entry.embedded}
             attachments={attachments}
-            rollbackCount={row.item.kind === 'turn' ? rollbackCounts?.get(row.item.turnId) : undefined}
+            rollbackCount={entry.row.item.kind === 'turn' ? rollbackCounts?.get(entry.row.item.turnId) : undefined}
             onRollback={onRollback}
-            planContent={row.item.kind === 'marker' ? planByMarkerId?.get(row.item.markerId) : undefined}
+            planContent={entry.row.item.kind === 'marker' ? planByMarkerId?.get(entry.row.item.markerId) : undefined}
             planByToolCallId={planByToolCallId}
             baseUrl={baseUrl}
             token={token}
@@ -1010,6 +1015,7 @@ const ItemList = memo(function ItemList({
 const ItemView = memo(function ItemView({
   item,
   repeat,
+  embeddedMarkers,
   attachments,
   rollbackCount,
   onRollback,
@@ -1023,6 +1029,8 @@ const ItemView = memo(function ItemView({
   item: TranscriptItem;
   /** Size of the collapsed run this row stands for (1 = a lone item). */
   repeat: number;
+  /** Marker rows re-anchored into this turn (empty for non-turn items). */
+  embeddedMarkers?: readonly CollapsedRow[];
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   rollbackCount?: number;
   onRollback?: (turnId: string) => void;
@@ -1038,6 +1046,7 @@ const ItemView = memo(function ItemView({
       return (
         <TurnView
           turn={item}
+          embeddedMarkers={embeddedMarkers}
           attachments={attachments}
           rollbackCount={rollbackCount}
           onRollback={onRollback}
@@ -1051,18 +1060,28 @@ const ItemView = memo(function ItemView({
     case 'marker':
       return <MarkerView marker={item} repeat={repeat} planContent={planContent} />;
     case 'taskref':
-      return (
-        <div className="mb-2 flex items-center gap-2 text-[10px] text-neutral-600">
-          <div className="h-px flex-1 bg-neutral-800" />
-          <span className="font-mono">
-            task spawned (async work continues in the background)
-            {repeat > 1 ? ` ×${repeat}` : ''}
-          </span>
-          <div className="h-px flex-1 bg-neutral-800" />
-        </div>
-      );
+      return <TaskRefView repeat={repeat} />;
   }
 });
+
+function TaskRefView({ repeat }: { repeat: number }) {
+  return (
+    <div className="mb-2 flex items-center gap-2 text-[10px] text-neutral-600">
+      <div className="h-px flex-1 bg-neutral-800" />
+      <span className="font-mono">
+        task spawned (async work continues in the background)
+        {repeat > 1 ? ` ×${repeat}` : ''}
+      </span>
+      <div className="h-px flex-1 bg-neutral-800" />
+    </div>
+  );
+}
+
+/** A marker row rendered inside a turn, at the step slot it landed on. */
+function EmbeddedMarkerRow({ row }: { row: CollapsedRow }) {
+  if (row.item.kind === 'marker') return <MarkerView marker={row.item} repeat={row.repeat} />;
+  return <TaskRefView repeat={row.repeat} />;
+}
 
 function MarkerView({
   marker,
@@ -1226,6 +1245,7 @@ function ShellCommandView({
 
 function TurnView({
   turn,
+  embeddedMarkers,
   attachments,
   rollbackCount,
   onRollback,
@@ -1236,6 +1256,8 @@ function TurnView({
   agentId,
 }: {
   turn: Extract<TranscriptItem, { kind: 'turn' }>;
+  /** Timeline markers re-anchored into this turn, slotted between steps by `at`. */
+  embeddedMarkers?: readonly CollapsedRow[];
   attachments: ReadonlyMap<string, TranscriptAttachment>;
   /** Undo-count to roll back to before this turn; undefined → no button. */
   rollbackCount?: number;
@@ -1259,6 +1281,29 @@ function TurnView({
     turn.state === 'running' && lastStep?.state === 'running'
       ? lastStep.frames.at(-1)?.frameId
       : undefined;
+  // Distribute re-anchored markers: a marker renders before the first step it
+  // chronologically precedes (tail when nothing timed can place it, so the
+  // no-timestamp fallback matches the old after-the-turn position).
+  const embeddedByStep = useMemo(() => {
+    if (embeddedMarkers === undefined || embeddedMarkers.length === 0) return undefined;
+    const anyTimedStep = turn.steps.some((step) => step.startedAt !== undefined);
+    const byStep = new Map<number, CollapsedRow[]>();
+    for (const row of embeddedMarkers) {
+      const at = row.item.kind === 'marker' || row.item.kind === 'taskref' ? row.item.at : undefined;
+      let pos = turn.steps.length;
+      if (at !== undefined && anyTimedStep) {
+        pos = turn.steps.reduce(
+          (count, step) =>
+            step.startedAt !== undefined && step.startedAt <= at ? count + 1 : count,
+          0,
+        );
+      }
+      const bucket = byStep.get(pos);
+      if (bucket === undefined) byStep.set(pos, [row]);
+      else bucket.push(row);
+    }
+    return byStep;
+  }, [embeddedMarkers, turn.steps]);
   const hasPrompt = turn.prompt !== undefined && turn.prompt !== '';
   return (
     <div className="mb-3">
@@ -1341,8 +1386,11 @@ function TurnView({
           waiting for model…
         </div>
       ) : null}
-      {turn.steps.map((step) => (
+      {turn.steps.map((step, stepIndex) => (
         <div key={step.stepId}>
+          {embeddedByStep?.get(stepIndex)?.map((row) => (
+            <EmbeddedMarkerRow key={row.key} row={row} />
+          ))}
           {step.frames.map((frame) => (
             <FrameView
               key={frame.frameId}
@@ -1355,6 +1403,9 @@ function TurnView({
             <div className="mb-2 text-[10px] text-neutral-600 italic">step interrupted</div>
           ) : null}
         </div>
+      ))}
+      {embeddedByStep?.get(turn.steps.length)?.map((row) => (
+        <EmbeddedMarkerRow key={row.key} row={row} />
       ))}
       {turn.error !== undefined && turn.error !== '' ? (
         <div className="mb-2 max-w-full rounded bg-red-950/50 px-3 py-1.5 text-[11px] whitespace-pre-wrap text-red-400 sm:max-w-[85%]">
