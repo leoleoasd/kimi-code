@@ -203,6 +203,33 @@ export function parseMarkdown(source: string): readonly MdBlock[] {
   return out;
 }
 
+/**
+ * Chat models routinely split ONE logical ordered list into many one-item
+ * lists: blank lines and unindented "→ …" / "because …" paragraphs between
+ * items end the CommonMark list run, and every lazy "1." marker then becomes
+ * item 1 of its own <ol> — an all-ones wall. Number those fragments as one
+ * list: a plain paragraph between ordered lists never resets the counter,
+ * any structural boundary (heading, quote, code, table, unordered list) does.
+ * Map keys are block indexes; an ordered list absent from the map renders
+ * with the CSS default (start 1).
+ */
+export function orderedListStarts(blocks: readonly MdBlock[]): ReadonlyMap<number, number> {
+  const starts = new Map<number, number>();
+  let next = 1;
+  let open = false;
+  blocks.forEach((block, index) => {
+    if (block.kind === 'list' && block.ordered) {
+      starts.set(index, open ? next : 1);
+      next = (open ? next : 1) + block.items.length;
+      open = true;
+      return;
+    }
+    if (block.kind === 'paragraph') return;
+    open = false;
+  });
+  return starts;
+}
+
 // ------------------------------------------------------------------ inline
 
 export type MdInline =
@@ -402,7 +429,7 @@ const HEADING_CLASSES: readonly string[] = [
   'mt-1.5 mb-1 text-[12px] font-medium text-neutral-300',
 ];
 
-function BlockView({ block, index }: { block: MdBlock; index: number }) {
+function BlockView({ block, index, start }: { block: MdBlock; index: number; start?: number }) {
   const keyPrefix = `b${index}`;
   switch (block.kind) {
     case 'code':
@@ -425,6 +452,7 @@ function BlockView({ block, index }: { block: MdBlock; index: number }) {
       const Tag = block.ordered ? 'ol' : 'ul';
       return (
         <Tag
+          start={block.ordered ? start : undefined}
           className={`mb-2 pl-5 last:mb-0 ${block.ordered ? 'list-decimal' : 'list-disc'} marker:text-neutral-600`}
         >
           {block.items.map((item, i) => (
@@ -481,10 +509,11 @@ export function Markdown({ text }: { text: string }) {
   // Whole-string re-parse per render — the memo key IS the accumulated text,
   // so identical frames are free and streaming frames pay one flat parse.
   const blocks = useMemo(() => parseMarkdown(text), [text]);
+  const olStarts = useMemo(() => orderedListStarts(blocks), [blocks]);
   return (
     <div className="text-[13px] leading-relaxed text-neutral-100">
       {blocks.map((block, i) => (
-        <BlockView key={i} block={block} index={i} />
+        <BlockView key={i} block={block} index={i} start={olStarts.get(i)} />
       ))}
     </div>
   );
