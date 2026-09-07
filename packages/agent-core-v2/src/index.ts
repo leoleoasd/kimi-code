@@ -466,6 +466,8 @@ export * from '#/session/subagent/mirrorAgentRun';
 import '#/session/subagent/configSection';
 export * from '#/agent/tools/agent/agent';
 import '#/agent/tools/agent/agentTool';
+export * from '#/agent/tools/steer-agent/steer-agent';
+import '#/agent/tools/steer-agent/steerAgentTool';
 export * from '#/app/sessionManager/sessionLookup';
 export * from '#/workspace/workspaceContext/workspaceContext';
 export * from '#/workspace/sessionLifecycle/sessionLifecycle';

@@ -567,6 +567,7 @@ function formatBackgroundAgentResult(
     allowBackground
       ? `next_step: The completion arrives automatically in a later turn — do NOT wait, poll, or call TaskOutput on it; continue with other work or hand back to the user. (If you have nothing to do until it finishes, run such tasks in the foreground next time.)`
       : 'next_step: The completion arrives automatically in a later turn.',
+    `steer_hint: While it is still running, redirect it mid-turn with SteerAgent(agent_id="${handle.agentId}", message="...") — a steered message lands at its next step boundary.`,
     `resume_hint: To continue or recover this same subagent later, call Agent(resume="${handle.agentId}", prompt="..."). The parameter is agent_id ("${handle.agentId}"), NOT task_id ("${taskId}") or source_id from a later <notification>. Recovery cases: a later <notification type="task.lost" | "task.failed" | "task.killed"> for this subagent — its conversation history is preserved across session restarts and resume will pick it up.`,
   ].join('\n');
 }
