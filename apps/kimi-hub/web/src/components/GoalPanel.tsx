@@ -60,18 +60,10 @@ export function GoalPanel({
   const view = goalPanelView(goal);
   if (view === undefined) return null;
   const chip = STATUS_CHIP[view.status];
-  const meta = [
-    ...(view.completionCriterion !== undefined && view.completionCriterion !== ''
+  const meta =
+    view.completionCriterion !== undefined && view.completionCriterion !== ''
       ? [`done when: ${view.completionCriterion}`]
-      : []),
-    ...(view.budget !== undefined
-      ? [
-          view.budget.limit !== undefined
-            ? `turns ${String(view.budget.used)}/${String(view.budget.limit)}`
-            : `turns ${String(view.budget.used)}`,
-        ]
-      : []),
-  ];
+      : [];
   return (
     <div className="border-t border-neutral-800/80 px-3 py-1.5 lg:px-4" aria-label="goal">
       <div className="flex items-center gap-2">
@@ -82,6 +74,12 @@ export function GoalPanel({
           <span className={`inline-block h-1.5 w-1.5 rounded-full ${chip.dotClass}`} />
           {chip.label}
         </span>
+        {view.budget !== undefined ? (
+          <span className="text-[10px] text-neutral-500">
+            · turns {String(view.budget.used)}
+            {view.budget.limit !== undefined ? `/${String(view.budget.limit)}` : ''}
+          </span>
+        ) : null}
         <span className="flex-1" />
         {view.action !== undefined ? (
           <button
