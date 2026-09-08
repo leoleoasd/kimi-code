@@ -4,6 +4,7 @@ import { ScopeActivation, registerScopedService } from '#/_base/di/scope';
 import { IAgentContextMemoryService } from '#/agent/contextMemory/contextMemory';
 import type { ContextMessage } from '#/agent/contextMemory/types';
 import { isVacuousContentPart } from '#/agent/contextMemory/vacuousContent';
+import { IAgentGoalService } from '#/agent/goal/goal';
 import { TurnEnded } from '#/agent/loop/turnOps';
 import { IAgentSystemReminderService } from '#/agent/systemReminder/systemReminder';
 import { IAgentStateService } from '#/agent/state/agentState';
@@ -18,6 +19,9 @@ const INTERRUPTION_REMINDER = [
   "The user's next message continues the conversation.",
 ].join(' ');
 
+const INTERRUPTION_REMINDER_GOAL_SUFFIX =
+  ' A goal is active and was NOT paused by the interruption — pause, replace, or cancel it explicitly (UpdateGoal) only if that is what the user means; otherwise keep working toward it.';
+
 export class AgentInterruptionReminderService
   extends Disposable
   implements IAgentInterruptionReminderService
@@ -29,6 +33,7 @@ export class AgentInterruptionReminderService
     @IAgentContextMemoryService private readonly context: IAgentContextMemoryService,
     @IAgentSystemReminderService private readonly reminders: IAgentSystemReminderService,
     @IAgentStateService agentState: IAgentStateService,
+    @IAgentGoalService private readonly goal: IAgentGoalService,
   ) {
     super();
     agentState.contributeState(interruptionReminderKey);
@@ -37,10 +42,16 @@ export class AgentInterruptionReminderService
         if (event.reason !== 'cancelled' || event.interruptReason !== 'user_cancelled') return;
         const origin = lastComparableMessage(this.context.get())?.origin;
         if (origin?.kind === 'injection' && origin.variant === INTERRUPTION_REMINDER_VARIANT) return;
-        this.reminders.appendSystemReminder(INTERRUPTION_REMINDER, {
-          kind: 'injection',
-          variant: INTERRUPTION_REMINDER_VARIANT,
-        });
+        const goalActive = this.goal.getGoal().goal?.status === 'active';
+        this.reminders.appendSystemReminder(
+          goalActive
+            ? INTERRUPTION_REMINDER + INTERRUPTION_REMINDER_GOAL_SUFFIX
+            : INTERRUPTION_REMINDER,
+          {
+            kind: 'injection',
+            variant: INTERRUPTION_REMINDER_VARIANT,
+          },
+        );
       }),
     );
   }

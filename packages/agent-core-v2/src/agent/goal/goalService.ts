@@ -879,7 +879,6 @@ export class AgentGoalService extends Disposable implements IAgentGoalService {
       return true;
     }
     if (result.reason === 'cancelled') {
-      await this.pauseOnInterrupt({ reason: 'Paused after interruption' });
       return true;
     }
     if (result.reason === 'failed') {
