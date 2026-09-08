@@ -207,7 +207,12 @@ function ScopedSessionEntry({
 }) {
   const { hubOrigin, token } = useConnection();
   const baseUrl = agentBaseUrl(hubOrigin, entry.agent.agentId);
-  const shortId = `${entry.sessionId.slice(0, 8)}…`;
+  // Id fallback for untitled sessions: the redundant `session_` prefix goes —
+  // what remains uses the row's real width (CSS truncate), so the first
+  // DISTINCTIVE chars survive instead of every row reading "session_…".
+  const shortId = entry.sessionId.startsWith('session_')
+    ? entry.sessionId.slice('session_'.length)
+    : entry.sessionId;
 
   // Title + status dot for EVERY online row come from the per-agent session
   // list — the query key is shared with the legacy drill-in, one 5s poll loop
