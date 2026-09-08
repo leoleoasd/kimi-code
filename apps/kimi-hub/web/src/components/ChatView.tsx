@@ -702,6 +702,7 @@ export function ChatView({
       try {
         await submitGoalControl({ baseUrl, token, sessionId, control });
         if (control === 'pause' && running) await abortTurn();
+        setCommandNotice(`goal ${control === 'pause' ? 'paused' : 'resumed'}.`);
       } catch (error) {
         setCommandNotice(`goal ${control} failed: ${errorMessage(error)}`);
       } finally {
@@ -967,11 +968,6 @@ export function ChatView({
               />
             )}
             {/* Slash-command completion line — the neutral NoticeFrame grammar. */}
-            {commandNotice !== null ? (
-              <div className="mb-2 max-w-full rounded bg-neutral-900/60 px-3 py-1.5 text-[11px] break-words text-neutral-400 sm:max-w-[92%]">
-                {commandNotice}
-              </div>
-            ) : null}
           </div>
         </div>
         {showJump ? (
@@ -985,6 +981,14 @@ export function ChatView({
       </div>
 
       {/* ------------------------------------------------ interactions + composer */}
+      {/* Slash-command completion line: pinned in the FIXED zone (not inside
+          the scrolling transcript) — pin-follow would otherwise glue it below
+          whatever the stream just printed, forever. */}
+      {commandNotice !== null ? (
+        <div className="border-t border-neutral-800/80 bg-neutral-900/40 px-3 py-1.5 text-[11px] break-words text-neutral-400 lg:px-4">
+          {commandNotice}
+        </div>
+      ) : null}
       <ApprovalsBar baseUrl={baseUrl} token={token} sessionId={sessionId} active={running} />
       {goalStartAsk !== null ? (
         <GoalStartCard
