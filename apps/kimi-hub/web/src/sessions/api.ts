@@ -619,6 +619,24 @@ export async function sendPrompt(
   return { promptId: p['prompt_id'], status: p['status'] as PromptSubmitResult['status'] };
 }
 
+/**
+ * Goal lifecycle controls over the prompt submission: the server answers a
+ * synthetic blocked receipt and mints NO prompt (prompts.ts goal_control-only
+ * branch), so the text part is echoed, never launched.
+ */
+export async function submitGoalControl(
+  endpoint: HttpEndpoint & { sessionId: string; control: 'pause' | 'resume' },
+): Promise<void> {
+  await postJson({
+    ...endpoint,
+    path: `/api/v1/sessions/${encodeURIComponent(endpoint.sessionId)}/prompts`,
+    body: {
+      content: [{ type: 'text', text: '' }],
+      goal_control: endpoint.control,
+    },
+  });
+}
+
 // ------------------------------------------------------------- prompt queue
 
 export interface PromptQueueItem {

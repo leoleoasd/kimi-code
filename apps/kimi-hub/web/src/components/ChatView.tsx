@@ -65,6 +65,7 @@ import {
   setSessionModel,
   shutdownAgentServer,
   steerQueuedPrompt,
+  submitGoalControl,
   undoSession,
 } from '#/sessions/api';
 import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
@@ -97,6 +98,7 @@ import {
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
 import { GoalStartCard } from './GoalStartCard';
+import { GoalPanel } from './GoalPanel';
 import { ThinkingFrame } from './ThinkingFrame';
 import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, interleaveMarkers, markerLabel, type CollapsedRow, type PlanMarkerContent } from './markers';
 import { ActionButton, Badge, Banner, ErrorLine, JsonView, errorMessage, relTime } from './ui';
@@ -688,6 +690,26 @@ export function ChatView({
     }
   };
 
+  /**
+   * Goal panel lifecycle buttons: straight wire controls (`goal_control`), no
+   * bridge needed. Pause additionally aborts the in-flight turn — that is the
+   * TUI's `/goal pause` behavior too, not an engine semantic.
+   */
+  const [goalControlBusy, setGoalControlBusy] = useState(false);
+  const runGoalControl = (control: 'pause' | 'resume'): void => {
+    setGoalControlBusy(true);
+    void (async () => {
+      try {
+        await submitGoalControl({ baseUrl, token, sessionId, control });
+        if (control === 'pause' && running) await abortTurn();
+      } catch (error) {
+        setCommandNotice(`goal ${control} failed: ${errorMessage(error)}`);
+      } finally {
+        setGoalControlBusy(false);
+      }
+    })();
+  };
+
   // The hint popover's command pool — the agent's registry when bridged (the
   // TUI's own list); query failures (headless agent) degrade to the local pair.
   const commandCatalog = useQuery({
@@ -981,6 +1003,7 @@ export function ChatView({
         onSteerQueued={(promptId) => void steerQueued(promptId).catch(setViewError)}
       />
       <TodoListPanel todos={state.todos} />
+      <GoalPanel goal={state.meta.goal} busy={goalControlBusy} onControl={runGoalControl} />
       <Composer
         busy={running}
         baseUrl={baseUrl}
