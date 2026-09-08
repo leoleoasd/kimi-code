@@ -73,6 +73,7 @@ import {
   runComposerCommand,
   type ComposerAction,
 } from '#/sessions/commands';
+import { EnvelopeError } from '#/http';
 import { ApprovalsBar } from './ApprovalsBar';
 import { Composer, planComposerKey } from './Composer';
 import { buildDiffRows, resolveEditDiffDisplay, type EditDiffDisplay } from './editDiff';
@@ -95,9 +96,10 @@ import {
 } from './shellCommand';
 import { TodoListPanel } from './TodoListPanel';
 import { QuestionsCard } from './QuestionsCard';
+import { GoalStartCard } from './GoalStartCard';
 import { ThinkingFrame } from './ThinkingFrame';
 import { buildPlanByMarker, collapseMarkerRuns, compactionInProgress, interleaveMarkers, markerLabel, type CollapsedRow, type PlanMarkerContent } from './markers';
-import { ActionButton, Badge, Banner, ErrorLine, JsonView, relTime } from './ui';
+import { ActionButton, Badge, Banner, ErrorLine, JsonView, errorMessage, relTime } from './ui';
 
 /**
  * Narrow the Agent tool frame's `subagent_stream` progress (set by the
@@ -304,6 +306,19 @@ export function ChatView({
   // distinct request even when the text repeats.
   const [recallDraft, setRecallDraft] = useState<{ text: string; nonce: number } | null>(null);
   const recallNonceRef = useRef(0);
+  /**
+   * `/goal <objective>` in manual/yolo mode parks a mode-switch picker on the
+   * agent's OWN screen (the TUI's dialog; invisible over the bridge) — the
+   * page asks the same question itself and does the whole flow protocol-native
+   * (one prompt submission carries goal_objective + goal_replace + the mode).
+   */
+  const [goalStartAsk, setGoalStartAsk] = useState<{
+    readonly objective: string;
+    readonly replace: boolean;
+    readonly commandText: string;
+    readonly mode: 'manual' | 'yolo';
+  } | null>(null);
+  const [goalStartBusy, setGoalStartBusy] = useState(false);
   const recallQueued = async (promptId: string, text: string): Promise<void> => {
     await abortQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
@@ -587,6 +602,20 @@ export function ChatView({
   // (compact/undo/fork/btw) surface through the normal resync/refresh path.
   const runCommand = async (action: ComposerAction): Promise<void> => {
     setCommandNotice(null);
+    if (action.kind === 'goal') {
+      const mode = status.data?.permission;
+      if (mode === 'manual' || mode === 'yolo') {
+        setGoalStartAsk({
+          objective: action.objective,
+          replace: action.replace,
+          commandText: action.commandText,
+          mode,
+        });
+        return;
+      }
+      await startGoalNow(action, undefined);
+      return;
+    }
     const result = await runComposerCommand(action, {
       baseUrl,
       token,
@@ -605,6 +634,58 @@ export function ChatView({
       }
     }
     await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
+  };
+
+  /**
+   * Protocol-native goal start: exactly what the TUI's dialog-driven flow
+   * ends up doing (mode switch + createGoal + the objective as the first
+   * prompt), collapsed into ONE submission — the server applies the mode
+   * before creating the goal (`permission_mode` ahead of `goal_objective`).
+   */
+  const startGoalNow = async (
+    action: { readonly objective: string; readonly replace: boolean },
+    switchMode: 'auto' | 'yolo' | undefined,
+  ): Promise<void> => {
+    try {
+      await sendPrompt({
+        baseUrl,
+        token,
+        sessionId,
+        text: action.objective,
+        goal_objective: action.objective,
+        goal_replace: action.replace,
+        permission_mode: switchMode,
+      });
+      setCommandNotice(`goal started: ${action.objective}`);
+    } catch (error) {
+      setCommandNotice(
+        error instanceof EnvelopeError && error.code === 40913
+          ? 'a goal is already active — send /goal replace <objective>, or /goal cancel first.'
+          : `failed to start the goal: ${errorMessage(error)}`,
+      );
+    }
+    await queryClient.invalidateQueries({ queryKey: ['status', baseUrl, sessionId] });
+  };
+
+  const chooseGoalStart = (choice: 'auto' | 'yolo' | 'manual'): void => {
+    const ask = goalStartAsk;
+    if (ask === null) return;
+    setGoalStartBusy(true);
+    const switchMode = choice === ask.mode || choice === 'manual' ? undefined : choice;
+    void startGoalNow(ask, switchMode).finally(() => {
+      setGoalStartAsk(null);
+      setGoalStartBusy(false);
+    });
+  };
+
+  const cancelGoalStart = (): void => {
+    const ask = goalStartAsk;
+    setGoalStartAsk(null);
+    setCommandNotice('Goal not started.');
+    if (ask !== null) {
+      recallNonceRef.current += 1;
+      setRecallDraft({ text: ask.commandText, nonce: recallNonceRef.current });
+    }
   };
 
   // The hint popover's command pool — the agent's registry when bridged (the
@@ -883,6 +964,15 @@ export function ChatView({
 
       {/* ------------------------------------------------ interactions + composer */}
       <ApprovalsBar baseUrl={baseUrl} token={token} sessionId={sessionId} active={running} />
+      {goalStartAsk !== null ? (
+        <GoalStartCard
+          mode={goalStartAsk.mode}
+          objective={goalStartAsk.objective}
+          busy={goalStartBusy}
+          onChoice={chooseGoalStart}
+          onCancel={cancelGoalStart}
+        />
+      ) : null}
       <QuestionsCard baseUrl={baseUrl} token={token} sessionId={sessionId} active={running} />
       <PromptQueueStrip
         queue={queue.data}

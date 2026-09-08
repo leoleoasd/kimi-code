@@ -36,7 +36,14 @@ export type ComposerAction =
   | { readonly kind: 'copy' }
   | { readonly kind: 'export-debug-zip' }
   | { readonly kind: 'btw'; readonly text?: string }
-  | { readonly kind: 'notice'; readonly notice: string };
+  | { readonly kind: 'notice'; readonly notice: string }
+  | {
+      readonly kind: 'goal';
+      readonly objective: string;
+      readonly replace: boolean;
+      /** The verbatim composer line — restored into the composer on cancel. */
+      readonly commandText: string;
+    };
 
 export interface ParsedComposerCommand {
   readonly kind: 'action';
@@ -129,7 +136,39 @@ export function parseComposerCommand(input: string): ParsedComposerCommand | nul
   if (dialogNotice !== undefined) {
     return { kind: 'action', action: { kind: 'notice', notice: dialogNotice } };
   }
+  const goal = parseGoalCreate(input);
+  if (goal !== undefined) return { kind: 'action', action: goal };
   return { kind: 'action', action: { kind: 'remote', input } };
+}
+
+/**
+ * `/goal <objective>` (+ `/goal replace …`) is claimed by the page itself:
+ * starting a goal speaks pure protocol (`goal_objective` rides the prompt
+ * submission), so the page runs its OWN permission-mode confirmation instead
+ * of letting the line park a picker dialog on the agent's screen via the
+ * bridge. Control subcommands — and a create line with no objective (the
+ * bridge's own usage hint is more truthful than re-deriving one) — forward.
+ * Mirrors the TUI grammar: status/pause/resume/cancel count as controls only
+ * as single words (`/goal pause the rollout` is a CREATE objective).
+ */
+function parseGoalCreate(input: string): ComposerAction | undefined {
+  if (!input.startsWith('/goal ')) return undefined;
+  const rest = input.slice('/goal '.length).trim();
+  if (rest === 'status' || rest === 'pause' || rest === 'resume' || rest === 'cancel') {
+    return undefined;
+  }
+  const tokens = rest.split(/\s+/);
+  if (tokens[0] === undefined || tokens[0] === 'next') return undefined;
+  let index = 0;
+  let replace = false;
+  if (tokens[index] === 'replace') {
+    replace = true;
+    index += 1;
+  }
+  if (tokens[index] === '--') index += 1;
+  const objective = tokens.slice(index).join(' ').trim();
+  if (objective === '') return undefined;
+  return { kind: 'goal', objective, replace, commandText: input };
 }
 
 /** ChatView's runner: local effects run here; `/…` lines ride the agent's command bridge. */
@@ -139,6 +178,13 @@ export async function runComposerCommand(
 ): Promise<CommandResult> {
   if (action.kind === 'notice') {
     return { notice: action.notice };
+  }
+  if (action.kind === 'goal') {
+    // ChatView owns the goal start flow (permission confirmation + protocol
+    // submission); reaching here means a context-less caller — degrade to the
+    // verbatim bridge line, which is exactly yesterday's behavior.
+    const result = await runSessionCommand({ ...ctx, input: action.commandText });
+    return { notice: [...result.errors, ...result.notices].join('\n') };
   }
   if (action.kind === 'remote') {
     const result = await runSessionCommand({ ...ctx, input: action.input });

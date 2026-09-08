@@ -304,7 +304,10 @@ export function registerPromptsRoutes(app: PromptRouteHost, core: Scope): void {
           );
         }
         if (req.body.goal_objective !== undefined) {
-          await resolved.goal.createGoal({ objective: req.body.goal_objective });
+          await resolved.goal.createGoal({
+            objective: req.body.goal_objective,
+            replace: req.body.goal_replace === true ? true : undefined,
+          });
         }
         if (req.body.goal_control !== undefined) {
           switch (req.body.goal_control) {

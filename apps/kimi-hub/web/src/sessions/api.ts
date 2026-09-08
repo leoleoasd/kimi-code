@@ -587,6 +587,10 @@ export async function sendPrompt(
     agentId?: string;
     goal_objective?: string;
     goal_control?: unknown;
+    /** Replace any active goal instead of failing 40913 (wire `goal_replace`). */
+    goal_replace?: boolean;
+    /** Switch the session's permission mode BEFORE the objective is created. */
+    permission_mode?: string;
     /**
      * Steer this submission into the active turn (`steer: true` on the wire).
      * Server-side it degrades silently to the plain queue/launch behavior when
@@ -603,6 +607,8 @@ export async function sendPrompt(
       agent_id: endpoint.agentId,
       goal_objective: endpoint.goal_objective,
       goal_control: endpoint.goal_control,
+      goal_replace: endpoint.goal_replace === true ? true : undefined,
+      permission_mode: endpoint.permission_mode,
       steer: endpoint.steer === true ? true : undefined,
     },
   });

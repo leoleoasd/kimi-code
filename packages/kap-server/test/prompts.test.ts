@@ -1508,6 +1508,27 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(goalOf(id)?.objective).toBe('keep this one');
   });
 
+  it('replaces the active goal when goal_replace rides the same submission', async () => {
+    const id = await createSession(home as string);
+    await createMainAgent(id);
+
+    const first = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'keep this one' }],
+      goal_objective: 'keep this one',
+    });
+    expect(first.body.code).toBe(0);
+
+    const second = await call<PromptItemWire>('POST', `/api/v1/sessions/${id}/prompts`, {
+      content: [{ type: 'text', text: 'forge ahead' }],
+      goal_objective: 'forge ahead',
+      goal_replace: true,
+    });
+    expect(second.body.code).toBe(0);
+    expect(second.body.data.status).toBe('running');
+    expect(goalOf(id)?.objective).toBe('forge ahead');
+    await waitFor(() => hasUserText(id, 'forge ahead'), 'replacement objective in context memory');
+  });
+
   it('rejects an invalid goal_objective with the engine validation codes', async () => {
     const id = await createSession(home as string);
     await createMainAgent(id);

@@ -72,6 +72,54 @@ describe('parseComposerCommand', () => {
     });
   });
 
+  it('claims /goal <objective> (+ replace) for the page-native start flow', () => {
+    expect(parseComposerCommand('/goal Ship feature X')).toEqual({
+      kind: 'action',
+      action: {
+        kind: 'goal',
+        objective: 'Ship feature X',
+        replace: false,
+        commandText: '/goal Ship feature X',
+      },
+    });
+    expect(parseComposerCommand('/goal replace Ship feature Y')).toEqual({
+      kind: 'action',
+      action: {
+        kind: 'goal',
+        objective: 'Ship feature Y',
+        replace: true,
+        commandText: '/goal replace Ship feature Y',
+      },
+    });
+    expect(parseComposerCommand('/goal -- pause the rollout')).toEqual({
+      kind: 'action',
+      action: {
+        kind: 'goal',
+        objective: 'pause the rollout',
+        replace: false,
+        commandText: '/goal -- pause the rollout',
+      },
+    });
+    expect(parseComposerCommand('/goal pause the rollout')).toEqual({
+      kind: 'action',
+      action: {
+        kind: 'goal',
+        objective: 'pause the rollout',
+        replace: false,
+        commandText: '/goal pause the rollout',
+      },
+    });
+  });
+
+  it('keeps /goal control subcommands and empty creates on the bridge', () => {
+    for (const input of ['/goal', '/goal status', '/goal pause', '/goal resume', '/goal cancel', '/goal next Ship later', '/goal replace']) {
+      expect(parseComposerCommand(input)).toEqual({
+        kind: 'action',
+        action: { kind: 'remote', input },
+      });
+    }
+  });
+
   it('never treats a multi-line paste as a command — it goes through as a prompt', () => {
     // The reported case: a pasted comment snippet whose first line begins with '//'.
     const paste =
