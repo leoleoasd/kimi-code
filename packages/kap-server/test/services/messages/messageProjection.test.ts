@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 
 import type { ContextMessage } from '@moonshot-ai/agent-core-v2';
 
-import { toProtocolMessage } from '../../../src/services/messages/messageProjection';
+import { buildImageCompressionCaption } from '@moonshot-ai/agent-core-v2';
+
+import { projectPromptContentParts, toProtocolMessage } from '../../../src/services/messages/messageProjection';
 
 const SESSION_ID = 'session_1';
 const CREATED_AT = 1_700_000_000_000;
@@ -207,5 +209,33 @@ describe('toProtocolMessage', () => {
     expect(toProtocolMessage(SESSION_ID, 0, userText('a'), CREATED_AT)).not.toHaveProperty(
       'metadata',
     );
+  });
+});
+
+describe('projectPromptContentParts', () => {
+  it('drops image-compression caption parts entirely (caption-only text never leaks into previews)', () => {
+    const caption = buildImageCompressionCaption({
+      original: { width: 4096, height: 2048, byteLength: 8_000_000, mimeType: 'image/png' },
+      final: { width: 1568, height: 784, byteLength: 500_000, mimeType: 'image/png' },
+    });
+    expect(caption).toContain('Image compressed to fit model limits');
+    const parts = projectPromptContentParts([
+      { type: 'text', text: 'look at this' },
+      { type: 'text', text: caption },
+      { type: 'image_url', imageUrl: { url: 'kimi-file://f1' } },
+    ]);
+    expect(parts).toEqual([
+      { type: 'text', text: 'look at this' },
+      { type: 'image', source: { kind: 'session_media', file_id: 'f1' } },
+    ]);
+  });
+
+  it('mixed caption + real text keeps the cleaned text only', () => {
+    const caption = buildImageCompressionCaption({
+      original: { width: 6400, height: 3200, byteLength: 20_000_000, mimeType: 'image/jpeg' },
+      final: { width: 1568, height: 784, byteLength: 500_000, mimeType: 'image/jpeg' },
+    });
+    const parts = projectPromptContentParts([{ type: 'text', text: `${caption}\nwhat is on it?` }]);
+    expect(parts).toEqual([{ type: 'text', text: '\nwhat is on it?' }]);
   });
 });

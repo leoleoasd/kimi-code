@@ -68,6 +68,7 @@ import {
   submitGoalControl,
   undoSession,
 } from '#/sessions/api';
+import type { PromptQueueImage } from '#/sessions/api';
 import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
 import {
   lastAssistantText,
@@ -306,7 +307,11 @@ export function ChatView({
   // Queue-strip chip click = edit: drop the entry AND hand its text to the
   // composer (the TUI's recall-last-queued). The nonce makes every recall a
   // distinct request even when the text repeats.
-  const [recallDraft, setRecallDraft] = useState<{ text: string; nonce: number } | null>(null);
+  const [recallDraft, setRecallDraft] = useState<{
+    text: string;
+    images?: readonly PromptQueueImage[];
+    nonce: number;
+  } | null>(null);
   const recallNonceRef = useRef(0);
   /**
    * `/goal <objective>` in manual/yolo mode parks a mode-switch picker on the
@@ -322,11 +327,14 @@ export function ChatView({
   } | null>(null);
   const [goalStartBusy, setGoalStartBusy] = useState(false);
   const recallQueued = async (promptId: string, text: string): Promise<void> => {
+    const item = [...(queue.data?.queued ?? []), ...(queue.data?.active !== null && queue.data?.active !== undefined ? [queue.data.active] : [])].find(
+      (candidate) => candidate.promptId === promptId,
+    );
     await abortQueuedPrompt({ baseUrl, token, sessionId, promptId, agentId: transcriptAgentId });
     await queryClient.invalidateQueries({ queryKey: queueQueryKey });
-    if (text.trim() !== '') {
+    if (text.trim() !== '' || (item?.images.length ?? 0) > 0) {
       recallNonceRef.current += 1;
-      setRecallDraft({ text, nonce: recallNonceRef.current });
+      setRecallDraft({ text, images: item?.images ?? [], nonce: recallNonceRef.current });
     }
   };
 
@@ -771,7 +779,7 @@ export function ChatView({
           (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
             appendQueuedEntry(
               old as Parameters<typeof appendQueuedEntry>[0],
-              { promptId: result.promptId, status: 'queued', text },
+              { promptId: result.promptId, status: 'queued', text, images: images.map((image) => ({ id: image.id })) },
             ),
         );
       } catch {

@@ -305,14 +305,16 @@ export async function sendPromptWithImages(
 /**
  * One composer attachment chip. The `File` is retained so a failed upload can
  * be RETRIED without re-pasting; `fileId` lands when the upload finishes
- * (READY), `previewUrl` when the thumbnail read-back succeeded.
+ * (READY), `previewUrl` when the thumbnail read-back succeeded. Queue-recalled
+ * images arrive already READY with no `File` — their bytes sit in the session
+ * media store, so no re-upload (and thus no retry) is ever possible.
  */
 export interface ComposerAttachment {
   readonly localId: string;
   readonly name: string;
   readonly size: number;
   readonly mediaType: string;
-  readonly file: File;
+  readonly file?: File;
   readonly status: 'uploading' | 'ready' | 'failed';
   readonly fileId?: string;
   readonly previewUrl?: string;
@@ -321,6 +323,7 @@ export interface ComposerAttachment {
 
 export type ComposerAttachmentsAction =
   | { readonly type: 'add'; readonly attachment: ComposerAttachment }
+  | { readonly type: 'restore'; readonly image: { readonly fileId: string; readonly name: string; readonly mediaType: string } }
   | { readonly type: 'resolve'; readonly localId: string; readonly fileId: string }
   | { readonly type: 'fail'; readonly localId: string; readonly error: string }
   /** Back to `uploading` (the component re-runs the upload with the kept File). */
@@ -336,6 +339,20 @@ export function composerAttachmentsReducer(
   switch (action.type) {
     case 'add':
       return [...state, action.attachment];
+    case 'restore': {
+      if (state.some((a) => a.fileId === action.image.fileId)) return state;
+      return [
+        ...state,
+        {
+          localId: `restore:${action.image.fileId}`,
+          name: action.image.name,
+          size: 0,
+          mediaType: action.image.mediaType,
+          status: 'ready' as const,
+          fileId: action.image.fileId,
+        },
+      ];
+    }
     case 'resolve':
       return state.map((a) =>
         a.localId === action.localId

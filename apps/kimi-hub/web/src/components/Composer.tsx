@@ -30,7 +30,7 @@
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
 
 import { parseComposerCommand, type ComposerAction } from '#/sessions/commands';
-import type { ModelChoice, SessionCommandInfo } from '#/sessions/api';
+import type { ModelChoice, SessionCommandInfo, PromptQueueImage } from '#/sessions/api';
 import {
   buildImagePreviewUrl,
   composerAttachmentsReducer,
@@ -192,7 +192,7 @@ export function Composer({
    * each recall a one-shot (same text recalled twice still lands twice); an
    * in-progress draft is preserved by appending on a new line.
    */
-  draftRequest?: { text: string; nonce: number } | null;
+  draftRequest?: { text: string; images?: readonly PromptQueueImage[]; nonce: number } | null;
 }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
@@ -242,6 +242,9 @@ export function Composer({
           ? prev
           : `${prev}\n${draftRequest.text}`;
     setInput(next);
+    for (const image of draftRequest.images ?? []) {
+      dispatch({ type: 'restore', image: { fileId: image.id, name: 'image', mediaType: 'image/png' } });
+    }
     if (next.startsWith('/')) setHintDismissedFor(next);
     textareaRef.current?.focus();
   }, [draftRequest]);
@@ -344,6 +347,7 @@ export function Composer({
   );
 
   const runUpload = async (attachment: ComposerAttachment): Promise<void> => {
+    if (attachment.file === undefined) return;
     try {
       const uploaded = await uploadImage({
         baseUrl,

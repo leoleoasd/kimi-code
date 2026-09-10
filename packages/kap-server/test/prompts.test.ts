@@ -1,4 +1,4 @@
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { deflateSync } from 'node:zlib';
@@ -586,17 +586,20 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     const content = submitted.body.data.content as Array<Record<string, unknown>>;
-    expect(content).toHaveLength(2);
-    const caption = content[0] as { type: string; text: string };
-    expect(caption.type).toBe('text');
-    expect(caption.text).toContain('Image compressed');
-    expect(caption.text).toContain('3600x1800');
-    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
-    expect(pathMatch).not.toBeNull();
-    expect(pathMatch![1]!).toContain('/media-originals/');
-    expect(await readFile(pathMatch![1]!)).toEqual(bigPng);
+    expect(content).toHaveLength(1);
 
-    const image = content[1] as { type: string; source: { kind: string; file_id: string } };
+    const originalsDir = join(
+      sessionMediaDir(server!, id),
+      '..',
+      'media-originals',
+    );
+    await vi.waitFor(async () => {
+      expect(await readdir(originalsDir).catch(() => [])).toHaveLength(1);
+    });
+    const [originalName] = await readdir(originalsDir);
+    expect(await readFile(join(originalsDir, originalName!))).toEqual(bigPng);
+
+    const image = content[0] as { type: string; source: { kind: string; file_id: string } };
     expect(image.type).toBe('image');
     expect(image.source.kind).toBe('session_media');
     const finalFileId = image.source.file_id;
@@ -625,6 +628,7 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(reminderText?.type).toBe('text');
     expect((reminderText as { type: 'text'; text: string }).text).toContain('<system-reminder>');
     expect((reminderText as { type: 'text'; text: string }).text).toContain('Image compressed');
+    expect((reminderText as { type: 'text'; text: string }).text).toContain('3600x1800');
   });
 
   it('rolls back a compressed upload when a later prompt part fails to resolve', async () => {
@@ -797,16 +801,18 @@ describe('server-v2 /api/v1 prompts', () => {
     expect(submitted.body.code).toBe(0);
 
     const content = submitted.body.data.content as PromptContentPart[];
-    expect(content).toHaveLength(2);
-    const caption = content[0];
-    if (caption?.type !== 'text') throw new Error('expected compression caption');
-    const pathMatch = /saved at "([^"]+)"/.exec(caption.text);
-    expect(pathMatch).not.toBeNull();
-    expect(pathMatch![1]!).toContain('/media-originals/');
-    expect((await realpath(pathMatch![1]!)).startsWith(await realpath(home as string))).toBe(true);
-    expect(await readFile(pathMatch![1]!)).toEqual(bigPng);
+    expect(content).toHaveLength(1);
 
-    const image = content[1];
+    const originalsDir = join(sessionMediaDir(server!, id), '..', 'media-originals');
+    await vi.waitFor(async () => {
+      expect(await readdir(originalsDir).catch(() => [])).toHaveLength(1);
+    });
+    const [originalName] = await readdir(originalsDir);
+    const originalPath = join(originalsDir, originalName!);
+    expect((await realpath(originalPath)).startsWith(await realpath(home as string))).toBe(true);
+    expect(await readFile(originalPath)).toEqual(bigPng);
+
+    const image = content[0];
     if (image?.type !== 'image' || image.source.kind !== 'base64') {
       throw new Error('expected resolved base64 image');
     }

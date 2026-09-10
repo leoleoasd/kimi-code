@@ -74,8 +74,8 @@ describe('fetchPromptQueue', () => {
       'http://hub.example.com/agents/a1/api/v1/sessions/s%201/prompts',
     );
     expect(queue).toEqual({
-      active: { promptId: 'p-1', status: 'running', text: 'rewrite the parser' },
-      queued: [{ promptId: 'p-2', status: 'queued', text: 'then add tests' }],
+      active: { promptId: 'p-1', status: 'running', text: 'rewrite the parser', images: [] },
+      queued: [{ promptId: 'p-2', status: 'queued', text: 'then add tests', images: [] }],
     });
   });
 
@@ -101,6 +101,23 @@ describe('fetchPromptQueue', () => {
     expect(queue.queued[0]?.text).toBe('');
   });
 
+  it('file/session_media image parts land on the item as re-attachable refs; other image kinds stay out', async () => {
+    const withImages = {
+      ...QUEUED,
+      content: [
+        { type: 'image', source: { kind: 'file', file_id: 'f-1' } },
+        { type: 'image', source: { kind: 'session_media', file_id: 'f-2' } },
+        { type: 'image', source: { kind: 'url', url: 'https://example.com/a.png' } },
+      ],
+    };
+    const queue = await fetchPromptQueue({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: queueFetch([], { active: null, queued: [withImages] }),
+    });
+    expect(queue.queued[0]?.images).toEqual([{ id: 'f-1' }, { id: 'f-2' }]);
+  });
+
   it('drops malformed entries, keeps the well-formed ones', async () => {
     const queue = await fetchPromptQueue({
       ...ENDPOINT,
@@ -111,7 +128,9 @@ describe('fetchPromptQueue', () => {
       }),
     });
     expect(queue.active).toBeNull();
-    expect(queue.queued).toEqual([{ promptId: 'p-2', status: 'queued', text: 'then add tests' }]);
+    expect(queue.queued).toEqual([
+      { promptId: 'p-2', status: 'queued', text: 'then add tests', images: [] },
+    ]);
   });
 
   it('throws on a body that is not the queue shape at all', async () => {

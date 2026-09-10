@@ -214,6 +214,26 @@ describe('composerAttachmentsReducer', () => {
     expect(composerAttachmentsReducer(state, { type: 'remove', localId: 'zzz' })).toBe(state);
   });
 
+  it('restore lands a ready fileless chip and dedupes by file id', () => {
+    let state: readonly ComposerAttachment[] = [chip('a', { status: 'ready', fileId: 'f-1' })];
+    state = composerAttachmentsReducer(state, {
+      type: 'restore',
+      image: { fileId: 'f-1', name: 'image', mediaType: 'image/png' },
+    });
+    expect(state).toHaveLength(1);
+    state = composerAttachmentsReducer(state, {
+      type: 'restore',
+      image: { fileId: 'f-2', name: 'image', mediaType: 'image/png' },
+    });
+    expect(state).toHaveLength(2);
+    expect(state[1]).toMatchObject({
+      localId: 'restore:f-2',
+      status: 'ready',
+      fileId: 'f-2',
+    });
+    expect(state[1]).not.toHaveProperty('file');
+  });
+
   it('preview attaches the object URL', () => {
     let state: readonly ComposerAttachment[] = [chip('a', { status: 'ready', fileId: 'f-1' })];
     state = composerAttachmentsReducer(state, { type: 'preview', localId: 'a', previewUrl: 'blob:1' });

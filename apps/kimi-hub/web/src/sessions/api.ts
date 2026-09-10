@@ -644,6 +644,13 @@ export interface PromptQueueItem {
   readonly status: 'running' | 'queued' | 'blocked';
   /** Text parts joined with a space — the strip's snippet source; '' for media-only prompts. */
   readonly text: string;
+  /** Server-stored images (file/session_media refs) — the edit-recall's re-attach payload. */
+  readonly images: readonly PromptQueueImage[];
+}
+
+/** A queue item's server-stored image: re-attachable by id, no re-upload. */
+export interface PromptQueueImage {
+  readonly id: string;
 }
 
 /**
@@ -670,6 +677,24 @@ function promptItemText(content: unknown): string {
   return texts.join(' ');
 }
 
+/** Pull server-stored image refs (`file` / `session_media` kinds) out of raw wire content parts. */
+function promptItemImages(content: unknown): readonly PromptQueueImage[] {
+  if (!Array.isArray(content)) return [];
+  const images: PromptQueueImage[] = [];
+  for (const part of content) {
+    if (part === null || typeof part !== 'object' || Array.isArray(part)) continue;
+    const p = part as Record<string, unknown>;
+    if (p['type'] !== 'image') continue;
+    const source = p['source'];
+    if (source === null || typeof source !== 'object' || Array.isArray(source)) continue;
+    const s = source as Record<string, unknown>;
+    if ((s['kind'] === 'file' || s['kind'] === 'session_media') && typeof s['file_id'] === 'string') {
+      images.push({ id: s['file_id'] });
+    }
+  }
+  return images;
+}
+
 function parsePromptQueueItem(value: unknown): PromptQueueItem | undefined {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
   const p = value as Record<string, unknown>;
@@ -685,6 +710,7 @@ function parsePromptQueueItem(value: unknown): PromptQueueItem | undefined {
     promptId: p['prompt_id'],
     status: status as PromptQueueItem['status'],
     text: promptItemText(p['content']),
+    images: promptItemImages(p['content']),
   };
 }
 

@@ -11,7 +11,7 @@ import type { PromptQueueItem } from '#/sessions/api';
 import { appendQueuedEntry, buildQueueStripRows, queueSnippet } from './PromptQueueStrip';
 
 function item(promptId: string, text: string): PromptQueueItem {
-  return { promptId, status: 'queued', text };
+  return { promptId, status: 'queued', text, images: [] };
 }
 
 describe('queueSnippet', () => {
@@ -45,6 +45,16 @@ describe('buildQueueStripRows', () => {
     expect(rows[0]?.abortTitle).toBe('drop this queued prompt');
     expect(rows[0]?.menuTitle).toContain('edit or steer');
     expect(rows.map((r) => r.key)).toEqual(['queued:p-1', 'queued:p-2', 'queued:p-3']);
+  });
+
+  it('image count joins the label; an image-only prompt shows it in the empty-text slot', () => {
+    const rows = buildQueueStripRows({
+      queued: [
+        { ...item('p-1', 'first'), images: [{ id: 'f-1' }, { id: 'f-2' }] },
+        { ...item('p-2', ''), images: [{ id: 'f-3' }] },
+      ],
+    });
+    expect(rows.map((r) => r.label)).toEqual(['queued · first +2 img', 'queued · +1 img']);
   });
 
   it('keeps the UNTRIMMED text for composer recall (the label snippet is display-only)', () => {
@@ -84,7 +94,7 @@ describe('appendQueuedEntry (optimistic display)', () => {
   });
 
   it('preserves the active slot when the cache already has one', () => {
-    const active = { promptId: 'p-9', status: 'running' as const, text: 'working' };
+    const active = { promptId: 'p-9', status: 'running' as const, text: 'working', images: [] };
     const merged = appendQueuedEntry({ active, queued: [] }, item('p-1', 'x'));
     expect(merged.active).toEqual(active);
   });

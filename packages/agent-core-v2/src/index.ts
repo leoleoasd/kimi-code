@@ -563,6 +563,7 @@ export {
   buildImageCompressionCaption,
   compressBase64ForModel,
   compressImageForModel,
+  extractImageCompressionCaptions,
   gateImageFormatParts,
   IMAGE_BYTE_BUDGET,
   MAX_IMAGE_EDGE_PX,

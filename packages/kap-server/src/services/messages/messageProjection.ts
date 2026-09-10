@@ -1,4 +1,4 @@
-import { daemonFileRefFromPart, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
+import { daemonFileRefFromPart, extractImageCompressionCaptions, parseDaemonFileUrl, type ContentPart, type ContextMessage } from '@moonshot-ai/agent-core-v2';
 
 import type { Message, MessageContent, MessageRole, ToolUseContent } from '../../protocol/message';
 
@@ -109,7 +109,11 @@ export function projectPromptContentParts(content: readonly ContentPart[]): Mess
       });
       continue;
     }
-    if (part.type === 'text') parts.push({ type: 'text', text: part.text });
+    if (part.type === 'text') {
+      const extracted = extractImageCompressionCaptions(part.text);
+      if (extracted.text.trim() !== '') parts.push({ type: 'text', text: extracted.text });
+      continue;
+    }
     else if (part.type === 'image_url') {
       const match = /^data:([^;]+);base64,(.*)$/.exec(part.imageUrl.url);
       parts.push(match === null

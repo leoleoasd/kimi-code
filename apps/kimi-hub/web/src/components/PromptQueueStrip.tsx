@@ -47,10 +47,11 @@ export function buildQueueStripRows(queue: {
 }): QueueStripRow[] {
   return (queue.queued ?? []).map((item) => {
     const snippet = queueSnippet(item.text);
+    const images = item.images.length > 0 ? ` +${item.images.length} img` : '';
     return {
       key: `queued:${item.promptId}`,
       promptId: item.promptId,
-      label: snippet === '' ? 'queued' : `queued · ${snippet}`,
+      label: snippet === '' ? `queued${images === '' ? '' : ` ·${images}`}` : `queued · ${snippet}${images}`,
       text: item.text,
       abortTitle: 'drop this queued prompt',
       menuTitle: 'edit or steer this queued prompt',
