@@ -243,7 +243,7 @@ export function Composer({
           : `${prev}\n${draftRequest.text}`;
     setInput(next);
     for (const image of draftRequest.images ?? []) {
-      dispatch({ type: 'restore', image: { fileId: image.id, name: 'image', mediaType: 'image/png' } });
+      dispatch({ type: 'restore', image: { fileId: image.id, name: 'image', mediaType: 'image/png', refKind: image.kind } });
     }
     if (next.startsWith('/')) setHintDismissedFor(next);
     textareaRef.current?.focus();

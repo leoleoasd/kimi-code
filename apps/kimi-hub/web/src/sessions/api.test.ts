@@ -115,7 +115,40 @@ describe('fetchPromptQueue', () => {
       sessionId: 's1',
       fetchImpl: queueFetch([], { active: null, queued: [withImages] }),
     });
-    expect(queue.queued[0]?.images).toEqual([{ id: 'f-1' }, { id: 'f-2' }]);
+    expect(queue.queued[0]?.images).toEqual([
+      { id: 'f-1', kind: 'file' },
+      { id: 'f-2', kind: 'session_media' },
+    ]);
+  });
+
+  it('strips engine image-compression captions left over by old agent binaries', async () => {
+    const captionOnly = {
+      ...QUEUED,
+      content: [
+        {
+          type: 'text',
+          text: '<system>Image compressed to fit model limits: original 3840x1970 image/png (756 KB) -> sent 2000x1026 image/png (530 KB). Fine detail may be lost.</system>',
+        },
+        { type: 'image', source: { kind: 'session_media', file_id: 'f-1' } },
+      ],
+    };
+    const mixed = {
+      ...QUEUED,
+      prompt_id: 'p-3',
+      content: [
+        {
+          type: 'text',
+          text: '<system>Image compressed to fit model limits: original 1x1 image/png (1 KB) -> sent 1x1 image/png (1 KB).</system>what is this?',
+        },
+      ],
+    };
+    const queue = await fetchPromptQueue({
+      ...ENDPOINT,
+      sessionId: 's1',
+      fetchImpl: queueFetch([], { active: null, queued: [captionOnly, mixed] }),
+    });
+    expect(queue.queued[0]?.text).toBe('');
+    expect(queue.queued[1]?.text).toBe('what is this?');
   });
 
   it('drops malformed entries, keeps the well-formed ones', async () => {

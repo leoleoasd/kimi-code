@@ -38,6 +38,11 @@ export interface UploadedImage {
   readonly name: string;
   readonly mediaType: string;
   readonly size: number;
+  /**
+   * Which store the id belongs to: `file` (a fresh app upload — the default)
+   * or `session_media` (a queue-recalled image re-attached by reference).
+   */
+  readonly refKind?: 'file' | 'session_media';
 }
 
 const EXTENSIONS_BY_MEDIA_TYPE: Readonly<Record<string, string>> = {
@@ -244,7 +249,7 @@ export function buildPromptContent(
   return [
     ...images.map((image) => ({
       type: 'image',
-      source: { kind: 'file', file_id: image.id },
+      source: { kind: image.refKind ?? 'file', file_id: image.id },
     })),
     ...(text === '' ? [] : [{ type: 'text', text }]),
   ];
@@ -317,13 +322,15 @@ export interface ComposerAttachment {
   readonly file?: File;
   readonly status: 'uploading' | 'ready' | 'failed';
   readonly fileId?: string;
+  /** Set on queue-restored chips: the store their `fileId` belongs to. */
+  readonly refKind?: 'file' | 'session_media';
   readonly previewUrl?: string;
   readonly error?: string;
 }
 
 export type ComposerAttachmentsAction =
   | { readonly type: 'add'; readonly attachment: ComposerAttachment }
-  | { readonly type: 'restore'; readonly image: { readonly fileId: string; readonly name: string; readonly mediaType: string } }
+  | { readonly type: 'restore'; readonly image: { readonly fileId: string; readonly name: string; readonly mediaType: string; readonly refKind: 'file' | 'session_media' } }
   | { readonly type: 'resolve'; readonly localId: string; readonly fileId: string }
   | { readonly type: 'fail'; readonly localId: string; readonly error: string }
   /** Back to `uploading` (the component re-runs the upload with the kept File). */
@@ -350,6 +357,7 @@ export function composerAttachmentsReducer(
           mediaType: action.image.mediaType,
           status: 'ready' as const,
           fileId: action.image.fileId,
+          refKind: action.image.refKind,
         },
       ];
     }
@@ -386,5 +394,5 @@ export function readyAttachments(
 ): readonly UploadedImage[] {
   return state
     .filter((a): a is ComposerAttachment & { readonly fileId: string } => a.status === 'ready' && a.fileId !== undefined)
-    .map((a) => ({ id: a.fileId, name: a.name, mediaType: a.mediaType, size: a.size }));
+    .map((a) => ({ id: a.fileId, name: a.name, mediaType: a.mediaType, size: a.size, refKind: a.refKind ?? 'file' }));
 }

@@ -150,6 +150,17 @@ describe('buildPromptContent', () => {
       { type: 'image', source: { kind: 'file', file_id: 'f-1' } },
     ]);
   });
+
+  it('session_media images keep their store kind (queue-recall re-send)', () => {
+    expect(
+      buildPromptContent('again', [
+        { id: 'm-1', name: 'image', mediaType: 'image/png', size: 0, refKind: 'session_media' },
+      ]),
+    ).toEqual([
+      { type: 'image', source: { kind: 'session_media', file_id: 'm-1' } },
+      { type: 'text', text: 'again' },
+    ]);
+  });
 });
 
 describe('sendPromptWithImages', () => {
@@ -218,18 +229,19 @@ describe('composerAttachmentsReducer', () => {
     let state: readonly ComposerAttachment[] = [chip('a', { status: 'ready', fileId: 'f-1' })];
     state = composerAttachmentsReducer(state, {
       type: 'restore',
-      image: { fileId: 'f-1', name: 'image', mediaType: 'image/png' },
+      image: { fileId: 'f-1', name: 'image', mediaType: 'image/png', refKind: 'session_media' },
     });
     expect(state).toHaveLength(1);
     state = composerAttachmentsReducer(state, {
       type: 'restore',
-      image: { fileId: 'f-2', name: 'image', mediaType: 'image/png' },
+      image: { fileId: 'f-2', name: 'image', mediaType: 'image/png', refKind: 'session_media' },
     });
     expect(state).toHaveLength(2);
     expect(state[1]).toMatchObject({
       localId: 'restore:f-2',
       status: 'ready',
       fileId: 'f-2',
+      refKind: 'session_media',
     });
     expect(state[1]).not.toHaveProperty('file');
   });
@@ -251,6 +263,25 @@ describe('composerAttachmentsReducer', () => {
     for (const a of state.filter((x) => x.status === 'ready')) {
       expect(a.fileId).toBeDefined();
     }
+  });
+
+  it('readyAttachments carries the restored chip refKind, defaulting fresh uploads to file', () => {
+    const state: readonly ComposerAttachment[] = [
+      chip('a', { status: 'ready', fileId: 'f-1' }),
+      {
+        localId: 'restore:m-1',
+        name: 'image',
+        size: 0,
+        mediaType: 'image/png',
+        status: 'ready',
+        fileId: 'm-1',
+        refKind: 'session_media',
+      },
+    ];
+    expect(readyAttachments(state)).toEqual([
+      { id: 'f-1', name: 'a.png', mediaType: 'image/png', size: 100, refKind: 'file' },
+      { id: 'm-1', name: 'image', mediaType: 'image/png', size: 0, refKind: 'session_media' },
+    ]);
   });
 
   it('clear empties (send success path)', () => {

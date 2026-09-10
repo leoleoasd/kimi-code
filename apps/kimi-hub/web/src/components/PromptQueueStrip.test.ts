@@ -50,8 +50,8 @@ describe('buildQueueStripRows', () => {
   it('image count joins the label; an image-only prompt shows it in the empty-text slot', () => {
     const rows = buildQueueStripRows({
       queued: [
-        { ...item('p-1', 'first'), images: [{ id: 'f-1' }, { id: 'f-2' }] },
-        { ...item('p-2', ''), images: [{ id: 'f-3' }] },
+        { ...item('p-1', 'first'), images: [{ id: 'f-1', kind: 'file' as const }, { id: 'f-2', kind: 'file' as const }] },
+        { ...item('p-2', ''), images: [{ id: 'f-3', kind: 'session_media' as const }] },
       ],
     });
     expect(rows.map((r) => r.label)).toEqual(['queued · first +2 img', 'queued · +1 img']);

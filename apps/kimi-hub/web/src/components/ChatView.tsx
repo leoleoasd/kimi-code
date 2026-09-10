@@ -779,7 +779,7 @@ export function ChatView({
           (old: { readonly active: unknown; readonly queued?: readonly unknown[] } | undefined) =>
             appendQueuedEntry(
               old as Parameters<typeof appendQueuedEntry>[0],
-              { promptId: result.promptId, status: 'queued', text, images: images.map((image) => ({ id: image.id })) },
+              { promptId: result.promptId, status: 'queued', text, images: images.map((image) => ({ id: image.id, kind: image.refKind ?? 'file' })) },
             ),
         );
       } catch {

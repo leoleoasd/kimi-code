@@ -651,6 +651,8 @@ export interface PromptQueueItem {
 /** A queue item's server-stored image: re-attachable by id, no re-upload. */
 export interface PromptQueueImage {
   readonly id: string;
+  /** Which store the id belongs to — `file` (app uploads) or `session_media`. */
+  readonly kind: 'file' | 'session_media';
 }
 
 /**
@@ -666,13 +668,32 @@ export interface PromptQueue {
 
 const PROMPT_QUEUE_STATUSES = new Set<string>(['running', 'queued', 'blocked']);
 
+/**
+ * The engine wraps its image-compression caption as
+ * `<system>Image compressed to fit model limits:…</system>` and prepends it to
+ * prompt content; kap-server's projection strips it for new agents, but queue
+ * items served by older binaries still carry it — strip it here too so it
+ * never reaches the strip label or the edit-recall draft. Mirrors
+ * `extractImageCompressionCaptions` in agent-core-v2's image-compress.ts.
+ */
+const IMAGE_COMPRESSION_CAPTION_PATTERN =
+  /<system>Image compressed to fit model limits:[\s\S]*?<\/system>/g;
+
+export function stripImageCompressionCaptions(text: string): string {
+  if (!text.includes('<system>Image compressed')) return text;
+  return text.replace(IMAGE_COMPRESSION_CAPTION_PATTERN, '');
+}
+
 function promptItemText(content: unknown): string {
   if (!Array.isArray(content)) return '';
   const texts: string[] = [];
   for (const part of content) {
     if (part === null || typeof part !== 'object' || Array.isArray(part)) continue;
     const p = part as Record<string, unknown>;
-    if (p['type'] === 'text' && typeof p['text'] === 'string') texts.push(p['text']);
+    if (p['type'] === 'text' && typeof p['text'] === 'string') {
+      const stripped = stripImageCompressionCaptions(p['text']).trim();
+      if (stripped !== '') texts.push(stripped);
+    }
   }
   return texts.join(' ');
 }
@@ -689,7 +710,7 @@ function promptItemImages(content: unknown): readonly PromptQueueImage[] {
     if (source === null || typeof source !== 'object' || Array.isArray(source)) continue;
     const s = source as Record<string, unknown>;
     if ((s['kind'] === 'file' || s['kind'] === 'session_media') && typeof s['file_id'] === 'string') {
-      images.push({ id: s['file_id'] });
+      images.push({ id: s['file_id'], kind: s['kind'] });
     }
   }
   return images;
