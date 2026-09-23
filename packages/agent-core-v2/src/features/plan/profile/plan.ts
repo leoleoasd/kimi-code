@@ -15,6 +15,7 @@ const PLAN_TOOLS = [
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
 ] as const;
 
 const PLAN_ROLE =

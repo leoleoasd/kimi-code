@@ -7,7 +7,7 @@ import '#/session/agentLifecycle/profile/profiles';
 
 import { createTestAgent, type TestAgentContext } from '../../harness';
 
-const NAMES = ['NotifyUser', 'ListHubSessions', 'SendHubMessage'] as const;
+const NAMES = ['NotifyUser', 'ListHubSessions', 'SendHubMessage', 'DeliverFile'] as const;
 
 describe.each(NAMES)('%s registration', (toolName) => {
   let ctx: TestAgentContext | undefined;

@@ -45,12 +45,17 @@ const sessionMediaParamSchema = z.object({
   file_id: z.string().min(1),
 });
 
+const sessionMediaQuerySchema = z.object({
+  download: z.string().optional(),
+});
+
 export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Scope): void {
   const route = defineRoute(
     {
       method: 'GET',
       path: '/sessions/{session_id}/media/{file_id}',
       params: sessionMediaParamSchema,
+      querystring: sessionMediaQuerySchema,
       rawResponse: { 200: { type: 'string', format: 'binary' } },
       errors: {
         [ErrorCode.SESSION_NOT_FOUND]: {},
@@ -82,7 +87,12 @@ export function registerSessionMediaRoutes(app: SessionMediaRouteHost, core: Sco
 
       r
         .type(file.mediaType)
-        .header('content-disposition', buildContentDisposition(file.name, file.mediaType))
+        .header(
+          'content-disposition',
+          buildContentDisposition(file.name, file.mediaType, {
+            forceAttachment: req.query.download === '1',
+          }),
+        )
         .header('accept-ranges', 'bytes')
         .header('etag', `"${session_id}-${file_id}-${file.size}"`);
 

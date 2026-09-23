@@ -425,6 +425,25 @@ describe('GET /api/v1/sessions/{session_id}/media/{file_id} (server-v2)', () => 
     expect(res.rawPayload).toEqual(data);
   });
 
+  it('forces attachment disposition with ?download=1 even for inline media types', async () => {
+    const r = await boot();
+    const data = Buffer.from('canonical image bytes');
+    const sessionId = await createSession(r);
+    const meta = await uploadFile(r, data, 'pasted image.png', 'image/png');
+    await materializeUploadedFile(r, sessionId, meta);
+
+    const res = await appOf(r).inject({
+      method: 'GET',
+      url: `/api/v1/sessions/${sessionId}/media/${meta.id}?download=1`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    expect(String(res.headers['content-disposition'])).toMatch(
+      /attachment; filename="pasted image\.png"/,
+    );
+    expect(res.rawPayload).toEqual(data);
+  });
+
   it('returns file-not-found when neither the session store nor the staged upload holds it', async () => {
     const r = await boot();
     const sessionId = await createSession(r);

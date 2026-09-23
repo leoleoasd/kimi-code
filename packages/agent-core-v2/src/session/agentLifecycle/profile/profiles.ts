@@ -41,6 +41,7 @@ const AGENT_TOOLS = [
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
   'mcp__*',
 ] as const;
 
@@ -68,6 +69,7 @@ const CODER_TOOLS = [
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
   'mcp__*',
 ] as const;
 
@@ -82,6 +84,7 @@ const EXPLORE_TOOLS = [
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
 ] as const;
 
 const CODER_ROLE =

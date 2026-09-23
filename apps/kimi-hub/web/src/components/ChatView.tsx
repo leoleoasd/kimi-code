@@ -85,6 +85,7 @@ import { readParamsText, resolveReadDisplay, type ReadDisplay } from './readFile
 import { resolveLookupDisplay, resultLineCount, type LookupDisplay } from './lookup';
 import { resolveGoalDisplay, type GoalDisplay } from './goal';
 import { resolveWaitForDisplay, type WaitForDisplay } from './waitFor';
+import { formatDeliverSize, resolveDeliverFileDisplay, type DeliverFileDisplay } from './deliverFile';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1535,6 +1536,9 @@ function TurnView({
               streaming={frame.frameId === openTailFrameId}
               planByToolCallId={planByToolCallId}
               tasksById={tasksById}
+              baseUrl={baseUrl}
+              token={token}
+              sessionId={sessionId}
             />
           ))}
           {step.state === 'interrupted' ? (
@@ -1559,11 +1563,17 @@ function FrameView({
   streaming,
   planByToolCallId,
   tasksById,
+  baseUrl,
+  token,
+  sessionId,
 }: {
   frame: TranscriptFrame;
   streaming: boolean;
   planByToolCallId?: ReadonlyMap<string, string>;
   tasksById: ReadonlyMap<string, TranscriptTask>;
+  baseUrl: string;
+  token: string;
+  sessionId: string;
 }) {
   switch (frame.kind) {
     case 'text':
@@ -1587,7 +1597,16 @@ function FrameView({
     case 'thinking':
       return <ThinkingFrame text={frame.text} streaming={streaming} />;
     case 'tool':
-      return <ToolFrameView frame={frame} planByToolCallId={planByToolCallId} tasksById={tasksById} />;
+      return (
+        <ToolFrameView
+          frame={frame}
+          planByToolCallId={planByToolCallId}
+          tasksById={tasksById}
+          baseUrl={baseUrl}
+          token={token}
+          sessionId={sessionId}
+        />
+      );
     case 'notice':
       return <NoticeFrameView frame={frame} />;
   }
@@ -1626,10 +1645,16 @@ function ToolFrameView({
   frame,
   planByToolCallId,
   tasksById,
+  baseUrl,
+  token,
+  sessionId,
 }: {
   frame: ToolCallFrame;
   planByToolCallId?: ReadonlyMap<string, string>;
   tasksById: ReadonlyMap<string, TranscriptTask>;
+  baseUrl: string;
+  token: string;
+  sessionId: string;
 }) {
   if (frame.name === 'ExitPlanMode') {
     const display = resolveExitPlanDisplay(frame, planByToolCallId?.get(frame.toolCallId));
@@ -1639,6 +1664,12 @@ function ToolFrameView({
   }
   const mcpAuth = resolveMcpAuthDisplay(frame);
   if (mcpAuth !== undefined) return <McpAuthCard frame={frame} display={mcpAuth} />;
+  const deliver = resolveDeliverFileDisplay(frame);
+  if (deliver !== undefined) {
+    return (
+      <DeliverFileCard frame={frame} display={deliver} baseUrl={baseUrl} token={token} sessionId={sessionId} />
+    );
+  }
   const editDiff = resolveEditDiffDisplay(frame);
   if (editDiff !== undefined) return <EditDiffCard frame={frame} display={editDiff} />;
   const bash = resolveBashDisplay(frame);
@@ -1839,6 +1870,92 @@ function EditDiffCard({ frame, display }: { frame: ToolCallFrame; display: EditD
           {frame.error ?? (frame.output as string)}
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * DeliverFile as a file card: the delivered name + size + media type with
+ * Open / Download actions wired to the session media route. Bearer auth means
+ * a bare <a href> won't work — both actions fetch the bytes first and ride an
+ * object URL (Open keeps it for the new tab, Download revokes after the
+ * save dialog had time to grab it). A still-running frame has no file handle
+ * yet, so the actions stay disabled.
+ */
+function DeliverFileCard({
+  frame,
+  display,
+  baseUrl,
+  token,
+  sessionId,
+}: {
+  frame: ToolCallFrame;
+  display: DeliverFileDisplay;
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+}) {
+  const fileId = display.fileId;
+  const [working, setWorking] = useState<'' | 'open' | 'download'>('');
+  const [actionError, setActionError] = useState<unknown>(null);
+  const fetchUrl = async () =>
+    buildSessionMediaPreviewUrl({ baseUrl, token, sessionId, fileId: fileId ?? '' });
+  const run = async (kind: 'open' | 'download') => {
+    setWorking(kind);
+    setActionError(null);
+    try {
+      const url = await fetchUrl();
+      if (kind === 'open') {
+        window.open(url, '_blank', 'noopener');
+      } else {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = display.name ?? 'download';
+        a.click();
+        setTimeout(() => {
+          revokePreviewUrl(url);
+        }, 10_000);
+      }
+    } catch (error) {
+      setActionError(error);
+    } finally {
+      setWorking('');
+    }
+  };
+  return (
+    <div className="mb-2 max-w-full rounded border border-sky-900/70 bg-sky-950/20 px-3 py-1.5 text-[11px] sm:max-w-[92%]">
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge tone={frame.state === 'running' ? 'amber' : 'sky'}>{frame.state}</Badge>
+        <span className="text-neutral-300">DeliverFile</span>
+        <span className="truncate text-neutral-200">{display.name ?? display.path ?? 'file'}</span>
+        {display.size !== undefined ? (
+          <span className="shrink-0 text-neutral-500">{formatDeliverSize(display.size)}</span>
+        ) : null}
+        {display.mediaType !== undefined ? (
+          <span className="shrink-0 text-neutral-600">{display.mediaType}</span>
+        ) : null}
+        <span className="flex-1" />
+        <ActionButton
+          disabled={fileId === undefined || working !== ''}
+          title={fileId === undefined ? 'waiting for the tool result' : 'open in a new tab'}
+          onClick={() => run('open')}
+        >
+          {working === 'open' ? 'opening…' : 'Open'}
+        </ActionButton>
+        <ActionButton
+          disabled={fileId === undefined || working !== ''}
+          title={fileId === undefined ? 'waiting for the tool result' : 'download to this device'}
+          onClick={() => run('download')}
+        >
+          {working === 'download' ? 'downloading…' : 'Download'}
+        </ActionButton>
+      </div>
+      {display.path !== undefined && display.path !== display.name ? (
+        <div className="mt-1 truncate font-mono text-[10px] text-neutral-600" title={display.path}>
+          {display.path}
+        </div>
+      ) : null}
+      <ErrorLine error={actionError} />
     </div>
   );
 }

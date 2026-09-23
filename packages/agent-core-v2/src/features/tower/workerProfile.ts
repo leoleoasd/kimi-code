@@ -43,6 +43,7 @@ const TOWER_WORKER_TOOLS = [
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
   'mcp__*',
 ] as const;
 

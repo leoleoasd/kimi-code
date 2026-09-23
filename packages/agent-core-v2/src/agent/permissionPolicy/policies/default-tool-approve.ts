@@ -30,6 +30,7 @@ const DEFAULT_APPROVE_TOOLS = new Set([
   'NotifyUser',
   'ListHubSessions',
   'SendHubMessage',
+  'DeliverFile',
   'select_tools',
 ]);
 

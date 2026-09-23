@@ -1,5 +1,12 @@
-export function buildContentDisposition(name: string, mediaType?: string): string {
-  const disposition = /^(image|video|audio)\//.test(mediaType ?? '') ? 'inline' : 'attachment';
+export function buildContentDisposition(
+  name: string,
+  mediaType?: string,
+  options?: { readonly forceAttachment?: boolean },
+): string {
+  const disposition =
+    options?.forceAttachment === true || !/^(image|video|audio)\//.test(mediaType ?? '')
+      ? 'attachment'
+      : 'inline';
   if (/^[\w. ()+[\]-]+$/.test(name)) {
     return `${disposition}; filename="${name}"`;
   }

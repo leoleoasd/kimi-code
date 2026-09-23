@@ -350,6 +350,8 @@ export * from '#/agent/tools/goal/update-goal/update-goal';
 import '#/agent/tools/goal/update-goal/updateGoalTool';
 export * from '#/agent/tools/notify-user/notify-user';
 import '#/agent/tools/notify-user/notifyUserTool';
+export * from '#/agent/tools/deliver-file/deliver-file';
+import '#/agent/tools/deliver-file/deliverFileTool';
 export * from '#/hub/hubConnection';
 import '#/hub/hubConnectionService';
 export * from '#/mcpCore/oauth/callbackRegistry';

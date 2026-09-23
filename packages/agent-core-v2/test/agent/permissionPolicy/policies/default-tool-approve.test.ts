@@ -71,6 +71,7 @@ describe('DefaultToolApprovePermissionPolicyService', () => {
     ['NotifyUser', { title: 'done', body: 'work finished' }],
     ['ListHubSessions', {}],
     ['SendHubMessage', { session_id: 'ses_other', message: 'heads-up: I changed X' }],
+    ['DeliverFile', { path: '/tmp/report.pdf' }],
   ] as const)('approves %s', (toolName, args) => {
     expect(policy.evaluate(policyContext(toolName, args))).toEqual({ kind: 'approve' });
   });
