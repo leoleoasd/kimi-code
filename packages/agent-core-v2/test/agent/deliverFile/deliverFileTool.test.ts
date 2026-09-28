@@ -96,6 +96,12 @@ describe('DeliverFileTool', () => {
     expect(input.mimeType).toBe('text/plain');
     expect(input.size).toBe(11);
     expect(typeof input.stream).toBe('function');
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of input.stream() as AsyncIterable<Uint8Array>) {
+      expect(chunk).toBeInstanceOf(Uint8Array);
+      chunks.push(chunk);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe('hello world');
   });
 
   it('honors a custom display name', async () => {

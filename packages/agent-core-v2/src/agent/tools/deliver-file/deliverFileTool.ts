@@ -111,7 +111,7 @@ export class DeliverFileTool implements IDeliverFileTool {
       size: data.byteLength,
       name,
       mimeType,
-      stream: () => Readable.from(data),
+      stream: () => Readable.from([data]),
     });
     if (materialized === undefined) {
       return { isError: true, output: `Failed to store "${args.path}" for delivery.` };
