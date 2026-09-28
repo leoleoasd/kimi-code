@@ -72,6 +72,12 @@ async function install(target) {
   console.log(`installed ${out}`);
 }
 
+// The SEA bundles embed the workspace packages' compiled dist/ output, so a
+// source change under packages/* never reaches the binary unless the package
+// build runs first. Build packages before any SEA collector reads dist/.
+console.log('\n=== building packages ===');
+await run(['pnpm', 'run', 'build:packages']);
+
 for (const target of targets) {
   console.log(`\n=== building ${target.name} ===`);
   for (const step of target.build) {
