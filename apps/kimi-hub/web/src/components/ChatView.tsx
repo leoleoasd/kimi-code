@@ -69,7 +69,7 @@ import {
   undoSession,
 } from '#/sessions/api';
 import type { PromptQueueImage } from '#/sessions/api';
-import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
+import { sendPromptWithImages, buildBlobPreviewUrl, buildImagePreviewUrl, buildSessionMediaPreviewUrl, fetchSessionMediaText, revokePreviewUrl, type UploadedImage } from '#/sessions/files';
 import {
   lastAssistantText,
   runComposerCommand,
@@ -85,7 +85,7 @@ import { readParamsText, resolveReadDisplay, type ReadDisplay } from './readFile
 import { resolveLookupDisplay, resultLineCount, type LookupDisplay } from './lookup';
 import { resolveGoalDisplay, type GoalDisplay } from './goal';
 import { resolveWaitForDisplay, type WaitForDisplay } from './waitFor';
-import { formatDeliverSize, resolveDeliverFileDisplay, type DeliverFileDisplay } from './deliverFile';
+import { deliverFilePreviewKind, formatDeliverSize, resolveDeliverFileDisplay, type DeliverFileDisplay } from './deliverFile';
 import { resolveExitPlanDisplay, type ExitPlanDisplay } from './exit-plan-mode';
 import { HubMessageCard, readHubFromOrigin } from './hubMessage';
 import { Markdown } from './Markdown';
@@ -1955,7 +1955,91 @@ function DeliverFileCard({
           {display.path}
         </div>
       ) : null}
+      <DeliverFilePreview display={display} baseUrl={baseUrl} token={token} sessionId={sessionId} />
       <ErrorLine error={actionError} />
+    </div>
+  );
+}
+
+/**
+ * Inline body preview inside the DeliverFile card: images as an <ImageThumb>,
+ * PDFs through the browser's built-in viewer (blob URL in an <iframe>), text
+ * bodies as a scrollable <pre>. One fetch per mount — the object URL (image /
+ * pdf kinds) is revoked on unmount.
+ */
+function DeliverFilePreview({
+  display,
+  baseUrl,
+  token,
+  sessionId,
+}: {
+  display: DeliverFileDisplay;
+  baseUrl: string;
+  token: string;
+  sessionId: string;
+}) {
+  const kind = deliverFilePreviewKind(display.mediaType, display.size);
+  const fileId = display.fileId;
+  const [preview, setPreview] = useState<{ url?: string; text?: string; failed?: boolean }>({});
+  useEffect(() => {
+    if (kind === undefined || fileId === undefined) return;
+    let revoked: string | undefined;
+    let cancelled = false;
+    const applyPreview = (value: { url?: string; text?: string }) => {
+      if (cancelled) {
+        if (value.url !== undefined) revokePreviewUrl(value.url);
+      } else {
+        revoked = value.url;
+        setPreview(value);
+      }
+    };
+    if (kind === 'text') {
+      fetchSessionMediaText({ baseUrl, token, sessionId, fileId })
+        .then((text) => {
+          applyPreview({ text });
+        })
+        .catch(() => {
+          if (!cancelled) setPreview({ failed: true });
+        });
+    } else {
+      buildSessionMediaPreviewUrl({ baseUrl, token, sessionId, fileId })
+        .then((url) => {
+          applyPreview({ url });
+        })
+        .catch(() => {
+          if (!cancelled) setPreview({ failed: true });
+        });
+    }
+    return () => {
+      cancelled = true;
+      if (revoked !== undefined) revokePreviewUrl(revoked);
+    };
+  }, [kind, fileId, baseUrl, token, sessionId]);
+  if (kind === undefined || fileId === undefined) return null;
+  if (preview.failed === true) {
+    return <div className="mt-1 text-[10px] text-neutral-600">preview unavailable</div>;
+  }
+  if (kind === 'text') {
+    if (preview.text === undefined) return <div className="mt-1 text-[10px] text-neutral-600">loading preview…</div>;
+    return (
+      <pre className="mt-1.5 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded bg-neutral-950/70 px-2 py-1.5 font-mono text-[11px] text-neutral-300">
+        {preview.text}
+      </pre>
+    );
+  }
+  if (preview.url === undefined) return <div className="mt-1 text-[10px] text-neutral-600">loading preview…</div>;
+  if (kind === 'pdf') {
+    return (
+      <iframe
+        src={preview.url}
+        title={display.name ?? 'pdf preview'}
+        className="mt-1.5 h-96 w-full rounded border border-neutral-700 bg-neutral-900"
+      />
+    );
+  }
+  return (
+    <div className="mt-1.5">
+      <ImageThumb src={preview.url} alt={display.name ?? 'delivered image'} />
     </div>
   );
 }

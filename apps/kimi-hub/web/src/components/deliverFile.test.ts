@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { formatDeliverSize, resolveDeliverFileDisplay } from './deliverFile';
+import {
+  DELIVER_PREVIEW_CAPS,
+  deliverFilePreviewKind,
+  formatDeliverSize,
+  resolveDeliverFileDisplay,
+} from './deliverFile';
 
 function frame(over: Partial<Parameters<typeof resolveDeliverFileDisplay>[0]>) {
   return { name: 'DeliverFile', ...over };
@@ -81,5 +86,36 @@ describe('formatDeliverSize', () => {
     expect(formatDeliverSize(512)).toBe('512 B');
     expect(formatDeliverSize(2048)).toBe('2.0 KB');
     expect(formatDeliverSize(5 * 1024 * 1024)).toBe('5.0 MB');
+  });
+});
+
+describe('deliverFilePreviewKind', () => {
+  it('previews images, including svg', () => {
+    expect(deliverFilePreviewKind('image/png', 100)).toBe('image');
+    expect(deliverFilePreviewKind('image/svg+xml', 100)).toBe('image');
+  });
+
+  it('previews PDFs through the browser viewer', () => {
+    expect(deliverFilePreviewKind('application/pdf', 1024 * 1024)).toBe('pdf');
+  });
+
+  it('previews text media types and structured text bodies', () => {
+    expect(deliverFilePreviewKind('text/plain', 100)).toBe('text');
+    expect(deliverFilePreviewKind('text/markdown', 17_800)).toBe('text');
+    expect(deliverFilePreviewKind('application/json', 100)).toBe('text');
+    expect(deliverFilePreviewKind('application/x-yaml', 100)).toBe('text');
+    expect(deliverFilePreviewKind('application/atom+xml', 100)).toBe('text');
+    expect(deliverFilePreviewKind('application/geo+json', 100)).toBe('text');
+  });
+
+  it('skips binary and oversized bodies, and unknown media types', () => {
+    expect(deliverFilePreviewKind('application/octet-stream', 100)).toBeUndefined();
+    expect(deliverFilePreviewKind('application/zip', 100)).toBeUndefined();
+    expect(deliverFilePreviewKind(undefined, 100)).toBeUndefined();
+    expect(deliverFilePreviewKind('text/plain', DELIVER_PREVIEW_CAPS.text + 1)).toBeUndefined();
+    expect(deliverFilePreviewKind('text/plain', DELIVER_PREVIEW_CAPS.text)).toBe('text');
+    expect(deliverFilePreviewKind('application/pdf', DELIVER_PREVIEW_CAPS.pdf + 1)).toBeUndefined();
+    expect(deliverFilePreviewKind('image/png', DELIVER_PREVIEW_CAPS.image + 1)).toBeUndefined();
+    expect(deliverFilePreviewKind('text/plain', undefined)).toBe('text');
   });
 });

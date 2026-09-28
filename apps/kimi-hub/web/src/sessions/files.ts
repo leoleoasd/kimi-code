@@ -210,13 +210,9 @@ export async function buildBlobPreviewUrl(
  * media route (`/api/v1/sessions/{sid}/media/{fid}`). Same object-URL
  * contract as `buildImagePreviewUrl` — the caller MUST revoke.
  */
-export async function buildSessionMediaPreviewUrl(
-  endpoint: HttpEndpoint & {
-    sessionId: string;
-    fileId: string;
-    createObjectUrl?: (blob: Blob) => string;
-  },
-): Promise<string> {
+async function requestSessionMedia(
+  endpoint: HttpEndpoint & { sessionId: string; fileId: string },
+): Promise<Response> {
   const doFetch = endpoint.fetchImpl ?? fetch;
   const headers: Record<string, string> = {};
   if (endpoint.token !== '') headers['authorization'] = `Bearer ${endpoint.token}`;
@@ -230,9 +226,28 @@ export async function buildSessionMediaPreviewUrl(
   if (!res.ok) {
     throw new Error(`http ${res.status} ${res.statusText}`);
   }
+  return res;
+}
+
+export async function buildSessionMediaPreviewUrl(
+  endpoint: HttpEndpoint & {
+    sessionId: string;
+    fileId: string;
+    createObjectUrl?: (blob: Blob) => string;
+  },
+): Promise<string> {
+  const res = await requestSessionMedia(endpoint);
   const blob = await res.blob();
   const create = endpoint.createObjectUrl ?? ((b: Blob) => URL.createObjectURL(b));
   return create(blob);
+}
+
+/** Raw UTF-8 body of a session media file — used for inline text previews. */
+export async function fetchSessionMediaText(
+  endpoint: HttpEndpoint & { sessionId: string; fileId: string },
+): Promise<string> {
+  const res = await requestSessionMedia(endpoint);
+  return res.text();
 }
 
 // ------------------------------------------------------------------ prompts

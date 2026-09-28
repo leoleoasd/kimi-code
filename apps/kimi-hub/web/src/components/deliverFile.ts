@@ -60,3 +60,49 @@ export function formatDeliverSize(size: number): string {
   if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
   return `${(size / (1024 * 1024)).toFixed(1)} MB`;
 }
+
+export type DeliverFilePreviewKind = 'image' | 'pdf' | 'text';
+
+/** Bodies larger than their kind's cap are not inlined — Open/Download only. */
+export const DELIVER_PREVIEW_CAPS: Record<DeliverFilePreviewKind, number> = {
+  text: 256 * 1024,
+  image: 8 * 1024 * 1024,
+  pdf: 16 * 1024 * 1024,
+};
+
+const TEXT_PREVIEW_MIME_EXACT = new Set([
+  'application/json',
+  'application/ld+json',
+  'application/xml',
+  'application/javascript',
+  'application/typescript',
+  'application/yaml',
+  'application/x-yaml',
+  'application/toml',
+  'application/x-sh',
+]);
+
+/**
+ * Which inline preview the card renders for a delivered file: images get an
+ * <ImageThumb> (click to enlarge), PDFs render through the browser's built-in
+ * viewer in an <iframe>, and everything text-like renders as a scrollable
+ * <pre>. Unknown or oversized bodies render no preview.
+ */
+export function deliverFilePreviewKind(
+  mediaType: string | undefined,
+  size: number | undefined,
+): DeliverFilePreviewKind | undefined {
+  if (mediaType === undefined) return undefined;
+  let kind: DeliverFilePreviewKind | undefined;
+  if (mediaType === 'application/pdf') kind = 'pdf';
+  else if (TEXT_PREVIEW_MIME_EXACT.has(mediaType)) kind = 'text';
+  else {
+    const [major] = mediaType.split('/', 1);
+    if (major === 'image') kind = 'image';
+    else if (major === 'text' || mediaType.endsWith('+json') || mediaType.endsWith('+xml'))
+      kind = 'text';
+  }
+  if (kind === undefined) return undefined;
+  if (size !== undefined && size > DELIVER_PREVIEW_CAPS[kind]) return undefined;
+  return kind;
+}
