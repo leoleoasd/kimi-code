@@ -18,6 +18,13 @@
  *    (a hung REST round-trip must not leave the composer half-closed); on a
  *    send ERROR the text comes back for retry while chips stay dropped
  *    server-side anyway (object URLs revoked).
+ *  - Drop targets the whole WINDOW, not just the composer: window-level
+ *    dragenter/dragover/dragleave/drop listeners with a depth counter drive a
+ *    portal overlay, and `dataTransfer.files` is read at drop time — during
+ *    dragover the payload runs in drag-protection mode (item kinds readable,
+ *    `getAsFile()` null), so the "is this a file drag" check looks at kinds
+ *    only (`dragHasFiles`). Non-file drags (text selections, links) get NO
+ *    `preventDefault` at all, keeping native textarea text-drop alive.
  *  - Slash commands are intercepted BEFORE sending: every `/…` line forwards
  *    verbatim to the agent's command bridge (the connected TUI's dispatch —
  *    sessions/commands.ts keeps NO second grammar); only `/copy` and
@@ -29,6 +36,7 @@
  */
 
 import { useEffect, useLayoutEffect, useReducer, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { parseComposerCommand, type ComposerAction } from '#/sessions/commands';
 import type { ModelChoice, SessionCommandInfo, PromptQueueImage } from '#/sessions/api';
@@ -109,6 +117,20 @@ export function collectFilesFromClipboard(items: ArrayLike<ClipboardItemish>): F
     if (file !== null && file !== undefined) files.push(file);
   }
   return files;
+}
+
+/**
+ * Drag-protection-safe "is this a file drag" check. During dragover the
+ * payload is opaque — `getAsFile()` returns null and `files` is empty — but
+ * item KINDS are readable, so this decides from kinds alone. The drop itself
+ * reads `dataTransfer.files` (populated by then).
+ */
+export function dragHasFiles(items: ArrayLike<ClipboardItemish>): boolean {
+  for (let i = 0; i < items.length; i += 1) {
+    const item = items[i];
+    if (item !== undefined && item.kind === 'file') return true;
+  }
+  return false;
 }
 
 export type ComposerPlan =
@@ -400,6 +422,57 @@ export function Composer({
     textareaRef.current?.focus();
   };
 
+  // Latest addFiles for the stable window drop listener.
+  const addFilesRef = useRef(addFiles);
+  useEffect(() => {
+    addFilesRef.current = addFiles;
+  });
+
+  // Whole-window drag-and-drop. The depth counter cancels nested enter/leave
+  // pairs (moving across child elements fires leave+enter); only a real
+  // window exit returns to zero. Anything without files passes through with
+  // no preventDefault, so native text-drop into the textarea keeps working.
+  const dragDepthRef = useRef(0);
+  useEffect(() => {
+    const isFileDrag = (e: DragEvent): boolean =>
+      e.dataTransfer !== null && dragHasFiles(e.dataTransfer.items);
+    const onDragEnter = (e: DragEvent): void => {
+      if (!isFileDrag(e)) return;
+      dragDepthRef.current += 1;
+      setDragOver(true);
+    };
+    const onDragOver = (e: DragEvent): void => {
+      // preventDefault on every file dragover: required for drop to fire,
+      // and it blocks the browser's default open-the-file navigation.
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+    };
+    const onDragLeave = (e: DragEvent): void => {
+      if (!isFileDrag(e)) return;
+      dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+      if (dragDepthRef.current === 0) setDragOver(false);
+    };
+    const onDrop = (e: DragEvent): void => {
+      dragDepthRef.current = 0;
+      setDragOver(false);
+      if (e.dataTransfer === null) return;
+      const files = [...e.dataTransfer.files];
+      if (files.length === 0) return;
+      e.preventDefault();
+      addFilesRef.current(files, 'drop');
+    };
+    window.addEventListener('dragenter', onDragEnter);
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragenter', onDragEnter);
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
+
   const removeAttachment = (localId: string): void => {
     const target = attachments.find((a) => a.localId === localId);
     if (target?.previewUrl !== undefined) revokePreviewUrl(target.previewUrl);
@@ -477,31 +550,20 @@ export function Composer({
   };
 
   return (
-    <div
-      className={`relative border-t border-neutral-800 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] ${
-        dragOver ? 'bg-neutral-900/40' : ''
-      }`}
-      onDragOver={(e) => {
-        // Only advertise a drop when at least one file is offered.
-        if (collectFilesFromClipboard(e.dataTransfer.items).length > 0) {
-          e.preventDefault();
-          setDragOver(true);
-        }
-      }}
-      onDragLeave={(e) => {
-        // Ignore transitions into a child; clear only when truly leaving.
-        if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) {
-          setDragOver(false);
-        }
-      }}
-      onDrop={(e) => {
-        setDragOver(false);
-        const files = collectFilesFromClipboard(e.dataTransfer.items);
-        if (files.length === 0) return;
-        e.preventDefault();
-        addFiles(files, 'drop');
-      }}
-    >
+    <div className="relative border-t border-neutral-800 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+      {dragOver
+        ? // Portal: a fixed overlay must not get trapped by an ancestor's
+          // transform/filter; pointer-events-none keeps the drop target the
+          // window listener beneath.
+          createPortal(
+            <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center bg-neutral-950/70">
+              <div className="rounded-lg border-2 border-dashed border-sky-500 px-8 py-6 text-lg text-sky-300">
+                Drop files to attach
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       {hintOpen ? <CommandHint active={hintIndex} candidates={hints} onAccept={acceptHint} /> : null}
       {pickerOpen && modelPicker !== undefined ? (
         <ModelPicker

@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   collectFilesFromClipboard,
+  dragHasFiles,
   planComposerAction,
   planComposerKey,
   planSendOnEnter,
@@ -89,6 +90,23 @@ describe('collectFilesFromClipboard', () => {
     const second = new File(['x'], 'shot.jpg', { type: 'image/jpeg' });
     const items = [item('string', 'text/plain'), item('file', 'image/jpeg', second), item('file', 'image/png')];
     expect(collectFilesFromClipboard(items)).toEqual([second, file]);
+  });
+});
+
+describe('dragHasFiles', () => {
+  function item(kind: string, type: string): ClipboardItemish {
+    // Drag-protection mode: kinds/types readable, no blob accessor at all.
+    return { kind, type };
+  }
+
+  it('sees a file drag even without readable blobs', () => {
+    expect(dragHasFiles([item('string', 'text/plain'), item('file', 'application/pdf')])).toBe(true);
+  });
+
+  it('text and link drags are not file drags', () => {
+    expect(dragHasFiles([item('string', 'text/plain')])).toBe(false);
+    expect(dragHasFiles([item('string', 'text/uri-list')])).toBe(false);
+    expect(dragHasFiles([])).toBe(false);
   });
 });
 
