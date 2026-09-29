@@ -3,7 +3,7 @@
  *
  *   main.cjs (tsdown, all deps bundled) + embedded `web/dist` assets
  *     → node --experimental-sea-config → postject inject into a node copy
- *     → dist-native/bin/<platform-triple>/kimi-hub
+ *     → codesign (darwin) → dist-native/bin/<platform-triple>/kimi-hub
  *
  * Slimmed-down port of apps/kimi-code `scripts/native/` (its 01-bundle →
  * 02-sea-blob → 03-inject chain folded into one file). `--smoke` additionally
@@ -166,7 +166,7 @@ async function injectStep() {
     await chmod(out, 0o755);
   }
   // Strip signatures that would invalidate after injection (no-ops on hosts
-  // without the tooling — linux needs neither).
+  // without the tooling — linux needs neither). signStep re-applies on darwin.
   if (process.platform === 'darwin') {
     await tryRun('codesign', ['--remove-signature', out]);
   }
@@ -180,6 +180,34 @@ async function injectStep() {
   }
   await run(postjectPath(), args);
   console.log(`==> Native executable: ${out}`);
+}
+
+/**
+ * Re-sign the executable after injection. Mandatory on darwin: injectStep strips
+ * the signature, and the arm64 kernel SIGKILLs an unsigned Mach-O on exec, so an
+ * unsigned build dies with a bare "killed" and no diagnostics. Ad-hoc by default;
+ * APPLE_SIGNING_IDENTITY opts into a real identity for distribution.
+ */
+async function signStep() {
+  if (process.platform !== 'darwin') return;
+
+  const out = binPath();
+  const identity = process.env.APPLE_SIGNING_IDENTITY ?? '-';
+  const keychainPath = process.env.APPLE_KEYCHAIN_PATH ?? null;
+
+  const args =
+    identity === '-'
+      ? ['--sign', '-', '--force', out]
+      : ['--sign', identity, '--options', 'runtime', '--timestamp', '--force', out];
+  if (identity !== '-' && keychainPath) {
+    args.splice(args.length - 2, 0, '--keychain', keychainPath);
+  }
+
+  await run('codesign', args);
+  // A signature that does not verify is as fatal as none at all, and the failure
+  // only shows up at exec time — so gate the build on it here.
+  await run('codesign', ['--verify', out]);
+  console.log(`==> Signed (${identity === '-' ? 'ad-hoc' : identity}): ${out}`);
 }
 
 /* ---------------------------------- smoke ---------------------------------- */
@@ -276,6 +304,7 @@ console.log(`==> Native build (target=${targetTriple()})`);
 await bundleStep();
 await seaBlobStep();
 await injectStep();
+await signStep();
 if (values.smoke) {
   await smokeStep();
 }
