@@ -254,18 +254,28 @@ export async function fetchSessionMediaText(
 
 /**
  * The `MessageContent` wire parts of one composer submission: the READY image
- * attachments first (in chip order), then the text part when non-empty. Shape
- * per `packages/kap-server/src/protocol/message.ts` (`messageContentSchema`).
+ * attachments first (in chip order), then any non-image uploads as `file`
+ * parts (`fileContentSchema` — kap-server materializes them into the session
+ * attachments dir and hands the model a Read-tool path notice), then the text
+ * part when non-empty. Shape per
+ * `packages/kap-server/src/protocol/message.ts` (`messageContentSchema`).
  */
 export function buildPromptContent(
   text: string,
   images: readonly UploadedImage[],
 ): readonly Record<string, unknown>[] {
   return [
-    ...images.map((image) => ({
-      type: 'image',
-      source: { kind: image.refKind ?? 'file', file_id: image.id },
-    })),
+    ...images.map((image) =>
+      image.mediaType.startsWith('image/')
+        ? { type: 'image', source: { kind: image.refKind ?? 'file', file_id: image.id } }
+        : {
+            type: 'file',
+            file_id: image.id,
+            name: image.name,
+            media_type: image.mediaType,
+            size: image.size,
+          },
+    ),
     ...(text === '' ? [] : [{ type: 'text', text }]),
   ];
 }

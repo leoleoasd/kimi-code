@@ -1,5 +1,5 @@
 /**
- * Composer decision logic — headless: Enter/IME planning, clipboard image
+ * Composer decision logic — headless: Enter/IME planning, clipboard file
  * collection, and the send/slash boundary (`planComposerAction`). The DOM
  * side is not covered (this package has no component-test harness).
  */
@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  collectImagesFromClipboard,
+  collectFilesFromClipboard,
   planComposerAction,
   planComposerKey,
   planSendOnEnter,
@@ -61,7 +61,7 @@ describe('planComposerKey', () => {
   });
 });
 
-describe('collectImagesFromClipboard', () => {
+describe('collectFilesFromClipboard', () => {
   const file = new File(['bytes'], 'image.png', { type: 'image/png' });
 
   function item(kind: string, type: string, asFile: File | null = file): ClipboardItemish {
@@ -69,22 +69,26 @@ describe('collectImagesFromClipboard', () => {
   }
 
   it('collects image file items', () => {
-    expect(collectImagesFromClipboard([item('file', 'image/png')])).toEqual([file]);
+    expect(collectFilesFromClipboard([item('file', 'image/png')])).toEqual([file]);
   });
 
-  it('ignores plain-text and non-image items', () => {
-    expect(collectImagesFromClipboard([item('string', 'text/plain')])).toEqual([]);
-    expect(collectImagesFromClipboard([item('file', 'application/pdf')])).toEqual([]);
+  it('collects non-image file items (pdf, markdown, …)', () => {
+    const pdf = new File(['%PDF'], 'report.pdf', { type: 'application/pdf' });
+    expect(collectFilesFromClipboard([item('file', 'application/pdf', pdf)])).toEqual([pdf]);
+  });
+
+  it('ignores non-file items', () => {
+    expect(collectFilesFromClipboard([item('string', 'text/plain')])).toEqual([]);
   });
 
   it('drops items whose blob cannot be read', () => {
-    expect(collectImagesFromClipboard([item('file', 'image/png', null)])).toEqual([]);
+    expect(collectFilesFromClipboard([item('file', 'image/png', null)])).toEqual([]);
   });
 
   it('keeps order across a mixed payload', () => {
     const second = new File(['x'], 'shot.jpg', { type: 'image/jpeg' });
     const items = [item('string', 'text/plain'), item('file', 'image/jpeg', second), item('file', 'image/png')];
-    expect(collectImagesFromClipboard(items)).toEqual([second, file]);
+    expect(collectFilesFromClipboard(items)).toEqual([second, file]);
   });
 });
 

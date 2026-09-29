@@ -5,6 +5,45 @@ export type UserTextClassification =
 
 const HUB_MESSAGE_HEADER = /^\[kimi-hub message from ([^\]]+)\][ \t]*\r?\n/;
 
+/**
+ * One file the user attached to a prompt, recovered from the harness's
+ * model-facing notice. kap-server replaces non-media `file` wire parts with
+ * this notice before the engine ever sees them, so the notice text is the
+ * only in-band trace left in the message stream — both folds parse it back
+ * out for display and strip it from the bubble's text.
+ */
+export interface AttachedFileNotice {
+  readonly name: string;
+  readonly mediaType: string;
+  readonly size: number;
+  readonly path: string;
+}
+
+const ATTACHED_FILE_NOTICE =
+  /\s*Attached file "([\s\S]*?)" \(([^,]+), (\d+) bytes\): ([\s\S]*?) — open it with the Read tool/g;
+
+/**
+ * Peel `buildAttachedFileNotice` payloads (kap-server's promptMedia) out of a
+ * user-role text: returns the cleaned text plus one entry per attached file.
+ * The media type and size never collide with the `", "` separator; the path
+ * runs non-greedy up to the fixed terminator, so quoted filenames survive.
+ */
+export function stripAttachedFileNotices(text: string): {
+  readonly text: string;
+  readonly files: readonly AttachedFileNotice[];
+} {
+  const files: AttachedFileNotice[] = [];
+  const stripped = text.replaceAll(
+    ATTACHED_FILE_NOTICE,
+    (_match, name: string, mediaType: string, size: string, path: string) => {
+      files.push({ name, mediaType, size: Number(size), path });
+      return '\n';
+    },
+  );
+  if (files.length === 0) return { text, files };
+  return { text: stripped.replaceAll(/\n{3,}/g, '\n\n').trim(), files };
+}
+
 const INTERNAL_ENVELOPES: readonly RegExp[] = [
   /\s*<system-reminder>[\s\S]*?<\/system-reminder>\s*/g,
   /\s*Skill tool loaded instructions for this request\. Follow them\.\s*/g,

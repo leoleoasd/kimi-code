@@ -1,6 +1,7 @@
 /**
  * Prompt composer — the ONE input surface: auto-growing textarea, IME-safe
- * Enter-to-send, image attachments (paste + drag-and-drop → `/api/v1/files`),
+ * Enter-to-send, file attachments (paste + drag-and-drop + 📎 picker →
+ * `/api/v1/files`; image types get thumbnails, everything else a 📎 chip),
  * and the slash-command intercept.
  *
  *  - Enter sends, Shift+Enter newline; NEVER mid-IME-composition
@@ -9,8 +10,8 @@
  *    compositionstart/end tracker once co-guarded this, but a missed
  *    compositionend on mobile IMEs leaves the tracker stuck true and
  *    swallows EVERY later Enter forever.
- *  - Paste/drop: image items become attachment chips; `preventDefault` only
- *    fires when at least one image was actually present, so pasting plain
+ *  - Paste/drop/pick: file items become attachment chips; `preventDefault`
+ *    only fires when at least one file was actually present, so pasting plain
  *    text still lands in the textarea. A failed upload keeps the chip (red ✕,
  *    retry = re-upload once, or remove); SEND waits for every chip to be
  *    READY ("Uploading…" button state). Text and chips clear TOGETHER on send
@@ -23,7 +24,7 @@
  *    `/export-debug-zip` run browser-locally.
  *
  * The decision logic lives in the exported pure helpers (`planSendOnEnter`,
- * `planComposerKey`, `planComposerAction`, `collectImagesFromClipboard`) so
+ * `planComposerKey`, `planComposerAction`, `collectFilesFromClipboard`) so
  * tests stay headless — this package has no component-test harness.
  */
 
@@ -94,15 +95,16 @@ export interface ClipboardItemish {
 }
 
 /**
- * The images a clipboard payload actually carries: `kind === 'file'` with an
- * `image/*` type and a readable blob. Paste is intercepted ONLY when this is
- * non-empty (plain-text paste must flow into the textarea).
+ * The files a clipboard/drag payload actually carries: `kind === 'file'`
+ * with a readable blob — any media type (images, PDFs, markdown, …). Paste is
+ * intercepted ONLY when this is non-empty (plain-text paste must flow into
+ * the textarea).
  */
-export function collectImagesFromClipboard(items: ArrayLike<ClipboardItemish>): File[] {
+export function collectFilesFromClipboard(items: ArrayLike<ClipboardItemish>): File[] {
   const files: File[] = [];
   for (let i = 0; i < items.length; i += 1) {
     const item = items[i];
-    if (item === undefined || item.kind !== 'file' || !item.type.startsWith('image/')) continue;
+    if (item === undefined || item.kind !== 'file') continue;
     const file = item.getAsFile?.();
     if (file !== null && file !== undefined) files.push(file);
   }
@@ -214,6 +216,7 @@ export function Composer({
   const [pickerEffortDrafts, setPickerEffortDrafts] = useState<Record<string, string>>({});
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const filePickerRef = useRef<HTMLInputElement>(null);
   const pasteCounterRef = useRef(0);
   /** Latest attachments for the unmount cleanup (revoke dangling object URLs). */
   const attachmentsRef = useRef(attachments);
@@ -357,11 +360,14 @@ export function Composer({
       });
       dispatch({ type: 'resolve', localId: attachment.localId, fileId: uploaded.id });
       // Best-effort thumbnail: a failed read-back just leaves the name chip.
-      try {
-        const previewUrl = await buildImagePreviewUrl({ baseUrl, token, fileId: uploaded.id });
-        dispatch({ type: 'preview', localId: attachment.localId, previewUrl });
-      } catch {
-        // no thumbnail — the name+size chip is enough
+      // Non-images never read back — the 📎 chip is their whole preview.
+      if (attachment.mediaType.startsWith('image/')) {
+        try {
+          const previewUrl = await buildImagePreviewUrl({ baseUrl, token, fileId: uploaded.id });
+          dispatch({ type: 'preview', localId: attachment.localId, previewUrl });
+        } catch {
+          // no thumbnail — the name+size chip is enough
+        }
       }
     } catch (error) {
       dispatch({ type: 'fail', localId: attachment.localId, error: errorMessage(error) });
@@ -371,15 +377,20 @@ export function Composer({
   const addFiles = (files: readonly File[], source: 'paste' | 'drop'): void => {
     for (const file of files) {
       let name = file.name;
-      if (source === 'paste' || name === '') {
+      if (file.type.startsWith('image/')) {
+        if (source === 'paste' || name === '') {
+          pasteCounterRef.current += 1;
+          name = fallbackImageName(pasteCounterRef.current, file.type);
+        }
+      } else if (name === '') {
         pasteCounterRef.current += 1;
-        name = fallbackImageName(pasteCounterRef.current, file.type);
+        name = `pasted-${pasteCounterRef.current}`;
       }
       const attachment: ComposerAttachment = {
         localId: nextAttachmentId(),
         name,
         size: file.size,
-        mediaType: file.type,
+        mediaType: file.type || 'application/octet-stream',
         file,
         status: 'uploading',
       };
@@ -471,8 +482,8 @@ export function Composer({
         dragOver ? 'bg-neutral-900/40' : ''
       }`}
       onDragOver={(e) => {
-        // Only advertise a drop when at least one image is offered.
-        if (collectImagesFromClipboard(e.dataTransfer.items).length > 0) {
+        // Only advertise a drop when at least one file is offered.
+        if (collectFilesFromClipboard(e.dataTransfer.items).length > 0) {
           e.preventDefault();
           setDragOver(true);
         }
@@ -485,10 +496,10 @@ export function Composer({
       }}
       onDrop={(e) => {
         setDragOver(false);
-        const images = collectImagesFromClipboard(e.dataTransfer.items);
-        if (images.length === 0) return;
+        const files = collectFilesFromClipboard(e.dataTransfer.items);
+        if (files.length === 0) return;
         e.preventDefault();
-        addFiles(images, 'drop');
+        addFiles(files, 'drop');
       }}
     >
       {hintOpen ? <CommandHint active={hintIndex} candidates={hints} onAccept={acceptHint} /> : null}
@@ -531,9 +542,13 @@ export function Composer({
                 <span className="flex h-8 w-8 items-center justify-center">
                   <Spinner />
                 </span>
-              ) : (
+              ) : attachment.mediaType.startsWith('image/') ? (
                 <span className="flex h-8 w-8 items-center justify-center rounded bg-neutral-800 text-[10px] text-neutral-500">
                   img
+                </span>
+              ) : (
+                <span className="flex h-8 w-8 items-center justify-center rounded bg-neutral-800 text-[13px] text-neutral-400">
+                  📎
                 </span>
               )}
               <span className="min-w-0">
@@ -577,6 +592,25 @@ export function Composer({
       ) : null}
 
       <div className="flex items-end gap-2">
+        <input
+          type="file"
+          multiple
+          className="hidden"
+          ref={filePickerRef}
+          onChange={(e) => {
+            const files = e.target.files === null ? [] : [...e.target.files];
+            e.target.value = '';
+            if (files.length > 0) addFiles(files, 'drop');
+          }}
+        />
+        <button
+          type="button"
+          className="flex min-h-[40px] items-center justify-center rounded border border-neutral-700 px-2.5 text-[14px] text-neutral-400 hover:bg-neutral-800 hover:text-neutral-200"
+          title="attach files (images, PDFs, markdown, …)"
+          onClick={() => filePickerRef.current?.click()}
+        >
+          📎
+        </button>
         <textarea
           ref={textareaRef}
           rows={1}
@@ -588,7 +622,7 @@ export function Composer({
               ? 'The agent is working — your message is queued…'
               : attachments.length > 0
                 ? 'Add a caption… (Enter to send)'
-                : 'Send a prompt… (Enter to send, Shift+Enter for newline, paste or drop images)'
+                : 'Send a prompt… (Enter to send, Shift+Enter for newline, paste/drop/📎 files)'
           }
           value={input}
           onChange={(e) => {
@@ -683,10 +717,10 @@ export function Composer({
             }
           }}
           onPaste={(e) => {
-            const images = collectImagesFromClipboard(e.clipboardData.items);
-            if (images.length === 0) return; // plain-text paste flows through
+            const files = collectFilesFromClipboard(e.clipboardData.items);
+            if (files.length === 0) return; // plain-text paste flows through
             e.preventDefault();
-            addFiles(images, 'paste');
+            addFiles(files, 'paste');
           }}
         />
         {/* While busy the slot holds two buttons: Steer injects the typed

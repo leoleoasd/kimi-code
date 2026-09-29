@@ -161,6 +161,19 @@ describe('buildPromptContent', () => {
       { type: 'text', text: 'again' },
     ]);
   });
+
+  it('non-image uploads become `file` parts (kap-server materializes + Read notice)', () => {
+    expect(
+      buildPromptContent('read this', [
+        { id: 'f-2', name: 'report.pdf', mediaType: 'application/pdf', size: 1234 },
+        { id: 'f-3', name: 'notes.md', mediaType: 'text/markdown', size: 56 },
+      ]),
+    ).toEqual([
+      { type: 'file', file_id: 'f-2', name: 'report.pdf', media_type: 'application/pdf', size: 1234 },
+      { type: 'file', file_id: 'f-3', name: 'notes.md', media_type: 'text/markdown', size: 56 },
+      { type: 'text', text: 'read this' },
+    ]);
+  });
 });
 
 describe('sendPromptWithImages', () => {

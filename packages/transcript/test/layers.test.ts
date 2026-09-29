@@ -856,6 +856,85 @@ describe('groupMessagesIntoSnapshot (cold path)', () => {
     expect(firstTurn.attachmentIds).toEqual(['att_1', 'att_2', 'att_3']);
   });
 
+  it('strips harness attached-file notices into name-only attachment entities', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Attached file "report.pdf" (application/pdf, 1024 bytes): /sess/attachments/f_1-report.pdf — open it with the Read tool',
+          },
+          { type: 'text', text: 'summarize this' },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+      { role: 'assistant', content: [{ type: 'text', text: 'a summary' }], toolCalls: [] },
+    ]);
+
+    expect(snapshot.attachments).toHaveLength(1);
+    expect(snapshot.attachments[0]).toMatchObject({
+      attachmentId: 'att_1',
+      mediaType: 'application/pdf',
+      name: 'report.pdf',
+      size: 1024,
+    });
+    expect(snapshot.attachments[0]?.source).toBeUndefined();
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('summarize this');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('a notice-only opening message keeps its attachments on an empty prompt', () => {
+    const snapshot = groupMessagesIntoSnapshot([
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Attached file "notes.md" (text/markdown, 5 bytes): /sess/attachments/f_2-notes.md — open it with the Read tool',
+          },
+        ],
+        toolCalls: [],
+        origin: { kind: 'user' },
+      },
+    ]);
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    expect(turn.prompt).toBe('');
+    expect(turn.attachmentIds).toEqual(['att_1']);
+  });
+
+  it('strips attached-file notices from mid-turn user frames without minting entities', () => {
+    const snapshot = groupMessagesIntoSnapshot(
+      [
+        { role: 'user' as const, content: [{ type: 'text' as const, text: 'work' }], origin: { kind: 'user' } },
+        { role: 'assistant' as const, content: [{ type: 'text' as const, text: 'running' }], toolCalls: [] },
+        {
+          role: 'user' as const,
+          content: [
+            {
+              type: 'text' as const,
+              text: 'Attached file "a.md" (text/markdown, 5 bytes): /sess/attachments/f_3-a.md — open it with the Read toolalso check this',
+            },
+          ],
+          origin: { kind: 'task', taskId: 'task_1' } as { kind: string },
+        },
+      ],
+      [0, undefined, undefined],
+    );
+    const turn = snapshot.items[0];
+    if (turn?.kind !== 'turn') throw new Error('expected turn');
+    const frame = turn.steps
+      .flatMap((s) => s.frames)
+      .find((f) => f.kind === 'text' && f.role === 'user');
+    if (frame?.kind !== 'text') throw new Error('expected folded user frame');
+    expect(frame.text).toBe('also check this');
+    expect(snapshot.attachments).toHaveLength(0);
+  });
+
   it('maps persisted kimi-file media refs to attachments', () => {
     const snapshot = groupMessagesIntoSnapshot([
       {

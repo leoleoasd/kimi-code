@@ -4,7 +4,7 @@ import type { TranscriptFrame } from '../model/frame';
 import type { TranscriptItem, TranscriptMarker } from '../model/item';
 import type { TurnOrigin } from '../model/turn';
 import { daemonFileRefFromPairingPart } from '../contract/mediaRef';
-import { classifyUserText } from './userText';
+import { classifyUserText, stripAttachedFileNotices } from './userText';
 
 export type HistoryMediaSource =
   | { readonly kind: 'url'; readonly url: string }
@@ -206,7 +206,18 @@ export function groupMessagesIntoSnapshot(
         ids.push(entity.attachmentId);
       }
     }
-    return { text: texts.join(''), attachmentIds: ids.length > 0 ? ids : undefined };
+    const stripped = stripAttachedFileNotices(texts.join(''));
+    for (const file of stripped.files) {
+      const entity: TranscriptAttachment = {
+        attachmentId: `att_${attachments.length + 1}`,
+        mediaType: file.mediaType,
+        name: file.name,
+        size: file.size,
+      };
+      attachments.push(entity);
+      ids.push(entity.attachmentId);
+    }
+    return { text: stripped.text, attachmentIds: ids.length > 0 ? ids : undefined };
   };
 
   const ensureTurn = (origin: TurnOrigin = FALLBACK_ORIGIN): TurnDraft => {
@@ -241,7 +252,7 @@ export function groupMessagesIntoSnapshot(
   };
 
   const foldUserFrameIntoTurn = (message: HistoryMessage): void => {
-    const classification = classifyUserText(textOf(message));
+    const classification = classifyUserText(stripAttachedFileNotices(textOf(message)).text);
     if (classification.kind === 'internal') return;
     const current = ensureTurn();
     let step = current.steps.at(-1);

@@ -14,6 +14,8 @@ The cold rebuild is a two-level fold over `wire.jsonl` as the single source of t
 
 `history/userText.ts` (`classifyUserText`) is applied to every user-role text — cold fold and kap-server's live projection alike: a `[kimi-hub message from <from>]` envelope becomes a `hub` frame (envelope header + disclaimer stripped, `from` carried on `TextFrame.hubFrom` and merged into the turn origin payload); text that reduces to nothing after peeling `<system-reminder>` / skill-loaded harness envelopes is `internal` and never reaches the transcript (attachments on such a message still fold); anything else is a plain `user` bubble with the envelopes peeled. No new frame kind — older consumers that don't know `hubFrom` degrade to a regular user card.
 
+Its sibling `stripAttachedFileNotices` runs BEFORE classification in both folds: kap-server substitutes each non-media `file` prompt part with an `Attached file "name" (mime, N bytes): path — open it with the Read tool` text part (the path is the model's Read-tool handle), leaving that harness notice as the message stream's only trace of the file. The strip recovers `{name, mediaType, size}` into source-less attachment entities (turn-opening messages — folded in both timelines; mid-turn steered frames are text-stripped only) and removes the notice from the bubble text, so the transcript shows a chip instead of a server-local path.
+
 ## Plan content
 
 Plan content is a recorded fact too: each ExitPlanMode review submission offloads the document to `agents/<agentId>/plan/<planId>/v<N>.md` and persists a reference-only `plan.revision` record (`{id, version, path, sha256, bytes}`), which projects — live and cold — to a `plan.revision` marker and the `modes.plan` badge (`{reviewPath, version}`).

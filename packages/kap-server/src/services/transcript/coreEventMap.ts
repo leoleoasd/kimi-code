@@ -75,7 +75,7 @@ import type {
   TurnState,
 } from '@moonshot-ai/transcript';
 
-import { classifyUserText } from '@moonshot-ai/transcript';
+import { classifyUserText, stripAttachedFileNotices } from '@moonshot-ai/transcript';
 
 import { toLegacyPhase } from '../legacyStatus/legacyStatus';
 import { projectPromptContentParts } from '../messages/messageProjection';
@@ -399,10 +399,22 @@ export class AgentTranscriptProjector {
       ops.push({ op: 'attachment.upsert', attachment });
       attachmentIds.push(attachment.attachmentId);
     }
+    const stripped =
+      event.prompt === undefined
+        ? { text: '', files: [] as const }
+        : stripAttachedFileNotices(event.prompt);
+    for (const file of stripped.files) {
+      const attachment: TranscriptAttachment = {
+        attachmentId: `${turnId}.att${attachmentIds.length + 1}`,
+        mediaType: file.mediaType,
+        name: file.name,
+        size: file.size,
+      };
+      ops.push({ op: 'attachment.upsert', attachment });
+      attachmentIds.push(attachment.attachmentId);
+    }
     const classification =
-      event.prompt !== undefined && event.prompt !== ''
-        ? classifyUserText(event.prompt)
-        : undefined;
+      stripped.text !== '' ? classifyUserText(stripped.text) : undefined;
     let origin = mapTurnOrigin(event.origin);
     let prompt: string | undefined;
     if (classification?.kind === 'internal') {
@@ -1459,7 +1471,7 @@ export class AgentTranscriptProjector {
         : undefined;
     if (step !== undefined && this.currentTurn !== undefined) {
       const text = event.content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('');
-      const classification = classifyUserText(text);
+      const classification = classifyUserText(stripAttachedFileNotices(text).text);
       if (classification.kind !== 'internal') {
         this.frameOrdinal += 1;
         ops.push({

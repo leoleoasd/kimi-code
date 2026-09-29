@@ -185,6 +185,53 @@ describe('AgentTranscriptProjector', () => {
     });
   });
 
+  it('projects harness attached-file notices in the live prompt into attachment entities', () => {
+    const projector = new AgentTranscriptProjector('main');
+    const tx = new AgentTranscript('main');
+    const ops: TranscriptOperation[] = [];
+    const feed = (event: ProjectorBusEvent): void => {
+      const mapped = projector.map(event);
+      ops.push(...mapped);
+      tx.apply(mapped);
+    };
+
+    feed(
+      ev({
+        type: 'turn.started',
+        turnId: 0,
+        origin: { kind: 'user' },
+        prompt:
+          'Attached file "report.pdf" (application/pdf, 1024 bytes): /sess/attachments/f_1-report.pdf — open it with the Read toolread this',
+        promptAttachments: [{ kind: 'image', fileId: 'file_1' }],
+      }),
+    );
+    feed(ev({ type: 'turn.ended', turnId: 0, reason: 'completed' }));
+
+    expect(ops.filter((op) => op.op === 'attachment.upsert')).toEqual([
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 't0.att1',
+          mediaType: 'image/*',
+          source: { kind: 'session_media', fileId: 'file_1' },
+        },
+      },
+      {
+        op: 'attachment.upsert',
+        attachment: {
+          attachmentId: 't0.att2',
+          mediaType: 'application/pdf',
+          name: 'report.pdf',
+          size: 1024,
+        },
+      },
+    ]);
+
+    const turn = turnOps('t0', tx.getItems());
+    expect(turn.prompt).toBe('read this');
+    expect(turn.attachmentIds).toEqual(['t0.att1', 't0.att2']);
+  });
+
   it('places late-attach deltas into the engine-reported active step', () => {
     const tx = new AgentTranscript('main');
     const projector = new AgentTranscriptProjector('main', {
