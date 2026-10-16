@@ -46,6 +46,7 @@ import {
   type TurnState,
 } from '@moonshot-ai/transcript';
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 
 import { fetchTranscriptPage, TRANSCRIPT_PAGE_SIZE } from '#/transcript/api';
 import { oldestTurnId } from '#/transcript/store';
@@ -2569,18 +2570,24 @@ function ImageThumb({ src, alt }: { src: string; alt: string }) {
       >
         <img src={src} alt={alt} className="max-h-48 max-w-56 rounded border border-neutral-700 object-contain" />
       </button>
-      {enlarged ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
-          role="dialog"
-          aria-label={alt}
-          onClick={() => {
-            setEnlarged(false);
-          }}
-        >
-          <img src={src} alt={alt} className="max-h-[90vh] max-w-[90vw] rounded object-contain" />
-        </div>
-      ) : null}
+      {enlarged
+        ? // Portal: inline `fixed` gets trapped by an ancestor transform/filter
+          // in the transcript (the overlay then sizes to the message container,
+          // not the viewport).
+          createPortal(
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4"
+              role="dialog"
+              aria-label={alt}
+              onClick={() => {
+                setEnlarged(false);
+              }}
+            >
+              <img src={src} alt={alt} className="max-h-[90vh] max-w-[90vw] rounded object-contain" />
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

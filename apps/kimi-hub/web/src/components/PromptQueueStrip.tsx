@@ -121,7 +121,9 @@ export function PromptQueueStrip({
           {menuFor === row.promptId ? (
             <>
               {/* Outside-click/tap dismiss (mobile-first: a full-viewport
-                  transparent layer under the menu). */}
+                  transparent layer under the menu). Deliberately NOT
+                  portal-mounted: the menu below lives in the same stacking
+                  context, and a body-level scrim would paint OVER it. */}
               <button
                 type="button"
                 aria-label="close the queue menu"
